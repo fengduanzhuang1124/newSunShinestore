@@ -1,0 +1,47 @@
+
+.page.data-v-2e6dc883 { background: #f5f5f5; min-height: 100vh; padding-bottom: 120rpx;
+}
+.loading.data-v-2e6dc883 { text-align: center; color: #666; padding: 48rpx 0;
+}
+.cover.data-v-2e6dc883 { width: 100%; height: 480rpx; background: #f0f0f0;
+}
+.info.data-v-2e6dc883 { background: #fff; margin: 12rpx; border-radius: 12rpx; padding: 16rpx;
+}
+.name.data-v-2e6dc883 { font-size: 32rpx; color: #111; font-weight: 600;
+}
+.meta.data-v-2e6dc883 { display: flex; justify-content: space-between; margin-top: 8rpx;
+}
+.price.data-v-2e6dc883 { color: #e33; font-weight: 700;
+}
+.stock.data-v-2e6dc883 { color: #666;
+}
+.tags.data-v-2e6dc883 { margin-top: 8rpx;
+}
+.tag.data-v-2e6dc883 { display: inline-block; background: #f6f6f6; color: #666; border-radius: 999rpx; padding: 6rpx 16rpx; font-size: 22rpx; margin-right: 8rpx;
+}
+.tag.off.data-v-2e6dc883 { background: #ffecec; color: #e33;
+}
+.quantity.data-v-2e6dc883 { background: #fff; margin: 12rpx; border-radius: 12rpx; padding: 16rpx; display: flex; align-items: center; justify-content: space-between;
+}
+.q-label.data-v-2e6dc883 { color: #333;
+}
+.stepper.data-v-2e6dc883 { display: flex; align-items: center;
+}
+.q-btn.data-v-2e6dc883 { width: 64rpx; height: 64rpx; text-align: center; line-height: 64rpx; background: #f6f6f6; border-radius: 8rpx;
+}
+.q-input.data-v-2e6dc883 { width: 120rpx; margin: 0 8rpx; background: #fff; border: 1px solid #eee; border-radius: 8rpx; text-align: center;
+}
+.desc.data-v-2e6dc883 { background: #fff; margin: 12rpx; border-radius: 12rpx; padding: 16rpx;
+}
+.desc-title.data-v-2e6dc883 { font-size: 28rpx; color: #111; margin-bottom: 8rpx;
+}
+.desc-text.data-v-2e6dc883 { font-size: 26rpx; color: #666; line-height: 44rpx;
+}
+.bottom-bar.data-v-2e6dc883 { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: #fff; padding: 12rpx; box-shadow: 0 -6rpx 12rpx rgba(0,0,0,0.04);
+}
+.cart-btn.data-v-2e6dc883 { flex: 1; margin-right: 8rpx; background: #f2f2f2; color: #333; border-radius: 12rpx;
+}
+.add-btn.data-v-2e6dc883 { flex: 1; margin: 0 8rpx; background: #07c160; color: #fff; border-radius: 12rpx;
+}
+.buy-btn.data-v-2e6dc883 { flex: 1; margin-left: 8rpx; background: #ff6a00; color: #fff; border-radius: 12rpx;
+}

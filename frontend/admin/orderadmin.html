@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>订单管理 - 新阳光商城后台</title>
+    <!-- 移除外部CDN，使用本地图标或简化图标 -->
+    <link rel="stylesheet" href="styles.css">
+    <script src="script.js"></script>
+</head>
+<body>
+    <div class="admin-container">
+        <!-- 侧边栏 -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <h2>新阳光商城</h2>
+                <button class="sidebar-toggle" id="sidebar-toggle">
+                </button>
+            </div>
+            
+            <!-- 侧边栏宽度控制条 -->
+            <div class="sidebar-resizer" id="sidebar-resizer"></div>
+            
+            <ul class="sidebar-menu">
+                <li class="menu-item" data-page="dashboard">
+                    <div class="menu-item-header" onclick="window.location.href='index.html'">
+                        <span>数据总览</span>
+                    </div>
+                </li>
+                <li class="menu-item has-submenu active" data-page="orders">
+                    <div class="menu-item-header" onclick="toggleSubmenu(this)">
+                        <span>订单管理</span>
+                        <span class="submenu-arrow">▼</span>
+                    </div>
+                    <ul class="submenu open">
+                        <li class="active" data-page="order-list" onclick="showPage('order-list')">订单列表</li>
+                        <li data-page="order-ship" onclick="showPage('order-ship')">打单发货</li>
+                    </ul>
+                </li>
+                <li class="menu-item has-submenu" data-page="products">
+                    <div class="menu-item-header" onclick="toggleSubmenu(this)">
+                        <span>商品管理</span>
+                        <span class="submenu-arrow">▼</span>
+                    </div>
+                    <ul class="submenu">
+                        <li data-page="product-list" onclick="window.location.href='productadmin.html'">商品列表</li>
+                        <li data-page="brand-category" onclick="window.location.href='productadmin.html'">品牌&分类</li>
+                    </ul>
+                </li>
+                <li class="menu-item" data-page="shipping">
+                    <div class="menu-item-header">
+                        <a href="shippingadmin.html" style="text-decoration: none; color: inherit;">
+                            <span>运费管理</span>
+                        </a>
+                    </div>
+                </li>
+                <li class="menu-item" data-page="coupons">
+                    <div class="menu-item-header" onclick="showFeatureAlert('优惠券中心')">
+                        <span>优惠券中心</span>
+                    </div>
+                </li>
+                <li class="menu-item" data-page="store">
+                    <div class="menu-item-header" onclick="showFeatureAlert('店铺管理')">
+                        <span>店铺管理</span>
+                    </div>
+                </li>
+                <li class="menu-item" data-page="finance">
+                    <div class="menu-item-header" onclick="showFeatureAlert('财务管理')">
+                        <span>财务管理</span>
+                    </div>
+                </li>
+                <li class="menu-item" data-page="users">
+                    <div class="menu-item-header" onclick="showFeatureAlert('用户管理')">
+                        <span>用户管理</span>
+                    </div>
+                </li>
+            </ul>
+        </nav>
+
+        <!-- 侧边栏遮罩层 -->
+        <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 顶部导航栏 -->
+            <header class="top-header">
+                <div class="header-left">
+                    <button class="sidebar-toggle" id="sidebar-toggle-mobile">
+                    </button>
+                    <div class="search-bar">
+                        <input type="text" placeholder="Search" class="search-input">
+                    </div>
+                </div>
+                <div class="header-right">
+                    <div class="user-info">
+                        <span class="username">Admin_Sky</span>
+                        <div class="user-role">超级管理员</div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- 页面内容 -->
+            <div class="content-area">
+                <!-- 订单列表页面 -->
+                <div id="order-list-page" class="page active">
+                    <div class="page-header">
+                        <h1>全部订单</h1>
+                    </div>
+                    
+                    <!-- 筛选区域 -->
+                    <div class="filter-section">
+                        <div class="filter-row">
+                            <div class="filter-item">
+                                <input type="text" id="order-number-filter" placeholder="订单编号 请输入" class="filter-input">
+                            </div>
+                            <div class="filter-item">
+                                <input type="text" id="product-number-filter" placeholder="商品编号 请输入" class="filter-input">
+                            </div>
+                            <div class="filter-item">
+                                <input type="text" id="product-name-filter" placeholder="商品名称 请输入" class="filter-input">
+                            </div>
+                            <div class="filter-item">
+                                <select id="order-time-filter" class="filter-select">
+                                    <option value="">下单时间 近7天</option>
+                                    <option value="today">今天</option>
+                                    <option value="week">近7天</option>
+                                    <option value="month">近30天</option>
+                                </select>
+                            </div>
+                            <div class="filter-item">
+                                <select id="order-status-filter" class="filter-select">
+                                    <option value="">订单状态 全部</option>
+                                    <option value="pending">待支付</option>
+                                    <option value="paid">已支付</option>
+                                    <option value="shipped">已发货</option>
+                                    <option value="finished">已完成</option>
+                                    <option value="cancelled">已取消</option>
+                                </select>
+                            </div>
+                            <div class="filter-actions">
+                                <button class="btn btn-primary" id="search-orders-btn">查询</button>
+                                <button class="btn btn-secondary" id="reset-filters-btn">重置</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 订单统计 -->
+                    <div class="order-summary">
+                        <span id="order-count">共 234 条订单</span>
+                        <span class="order-status-count">
+                            <span class="status-pending">待发货: 89</span>
+                            <span class="status-shipped">已发货: 98</span>
+                            <span class="status-completed">已完成: 45</span>
+                            <span class="status-cancelled">已取消: 2</span>
+                        </span>
+                    </div>
+                    
+                    <!-- 订单列表 -->
+                    <div class="orders-list" id="orders-list">
+                        <!-- 订单项示例 -->
+                        <div class="order-item">
+                            <div class="order-header">
+                                <div class="order-checkbox">
+                                    <input type="checkbox" class="order-select">
+                                </div>
+                                <div class="order-info">
+                                    <span class="order-number">订单编号: 6347223062</span>
+                                    <span class="order-time">下单时间: 2005-07-31 14:01:23</span>
+                                </div>
+                                <div class="order-actions">
+                                    <a href="#" class="action-link">订单退款</a>
+                                    <a href="#" class="action-link">修改订单信息</a>
+                                    <a href="#" class="action-link">订单详情</a>
+                                </div>
+                            </div>
+                            
+                            <div class="order-products">
+                                <div class="product-item">
+                                    <div class="product-image">
+                                        <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBmaWxsPSIjRkY2NjY2Ii8+Cjx0ZXh0IHg9IjIwIiB5PSIyNSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjEyIiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5a6J5Y2zPC90ZXh0Pgo8L3N2Zz4K" alt="商品图片">
+                                    </div>
+                                    <div class="product-details">
+                                        <div class="product-name">名称名称名称名称名称名称名称名称名称名称名称名称名称名称</div>
+                                        <div class="product-specs">
+                                            <span class="unit-price">单价: 39.54</span>
+                                            <span class="quantity">数量: x1</span>
+                                            <span class="product-weight">重量: <span class="weight-value">0.5</span>kg</span>
+                                            <span class="shipping-fee">运费: $<span class="shipping-fee-value">3.99</span></span>
+                                            <span class="amount-payable">应付金额: $<span class="payable-amount">43.53</span></span>
+                                            <span class="amount-paid">实付金额: $<span class="paid-amount">43.53</span></span>
+                                            <span class="product-status status-pending">待发货</span>
+                                            <button class="btn btn-sm btn-primary" onclick="shipOrder('6347223062')">去发货</button>
+                                            <button class="btn btn-sm btn-secondary" onclick="editProductWeight('6347223062', '0.5')">修改重量</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="order-footer">
+                                <div class="buyer-info">
+                                    <span class="buyer">买家: 张三 (ididid)</span>
+                                </div>
+                                <div class="shipping-address">
+                                    <span class="address">收货地址: 河南省郑州市金水区人民路...</span>
+                                </div>
+                                <div class="order-total">
+                                    <span class="total-amount">合计: 39.54</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 更多订单项... -->
+                        <div class="order-item">
+                            <div class="order-header">
+                                <div class="order-checkbox">
+                                    <input type="checkbox" class="order-select">
+                                </div>
+                                <div class="order-info">
+                                    <span class="order-number">订单编号: 6347223063</span>
+                                    <span class="order-time">下单时间: 2005-07-31 15:30:45</span>
+                                </div>
+                                <div class="order-actions">
+                                    <a href="#" class="action-link">订单退款</a>
+                                    <a href="#" class="action-link">修改订单信息</a>
+                                    <a href="#" class="action-link">订单详情</a>
+                                </div>
+                            </div>
+                            
+                            <div class="order-products">
+                                <div class="product-item">
+                                    <div class="product-image">
+                                        <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBmaWxsPSIjRkY2NjY2Ii8+Cjx0ZXh0IHg9IjIwIiB5PSIyNSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjEyIiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5a6J5Y2zPC90ZXh0Pgo8L3N2Zz4K" alt="商品图片">
+                                    </div>
+                                    <div class="product-details">
+                                        <div class="product-name">名称名称名称名称名称名称名称名称名称名称名称名称名称名称</div>
+                                        <div class="product-specs">
+                                            <span class="unit-price">单价: 21.33</span>
+                                            <span class="quantity">数量: x2</span>
+                                            <span class="amount-payable">应付金额: 42.66</span>
+                                            <span class="amount-paid">实付金额: 21.33</span>
+                                            <span class="product-status status-shipped">已发货</span>
+                                            <a href="#" class="action-link" onclick="viewLogistics('6347223063')">查看物流</a>
+                                            <a href="#" class="action-link" onclick="modifyLogistics('6347223063')">修改物流</a>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="order-footer">
+                                <div class="buyer-info">
+                                    <span class="buyer">买家: 李四 (ididid)</span>
+                                </div>
+                                <div class="shipping-address">
+                                    <span class="address">收货地址: 北京市朝阳区建国路...</span>
+                                </div>
+                                <div class="order-total">
+                                    <span class="total-amount">合计: 21.33</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 打单发货页面 -->
+                <div id="order-ship-page" class="page">
+                    <div class="page-header">
+                        <h1>打单发货</h1>
+                    </div>
+                    
+                    <!-- 筛选区域 -->
+                    <div class="filter-section">
+                        <div class="filter-row">
+                            <div class="filter-item">
+                                <input type="text" id="ship-order-number-filter" placeholder="订单编号 请输入" class="filter-input">
+                            </div>
+                            <div class="filter-item">
+                                <input type="text" id="ship-product-number-filter" placeholder="商品编号 请输入" class="filter-input">
+                            </div>
+                            <div class="filter-item">
+                                <input type="text" id="ship-product-name-filter" placeholder="商品名称 请输入" class="filter-input">
+                            </div>
+                            <div class="filter-item">
+                                <select id="ship-order-time-filter" class="filter-select">
+                                    <option value="">下单时间 近7天</option>
+                                    <option value="today">今天</option>
+                                    <option value="week">近7天</option>
+                                    <option value="month">近30天</option>
+                                </select>
+                            </div>
+                            <div class="filter-item">
+                                <select id="ship-order-status-filter" class="filter-select">
+                                    <option value="">订单状态 全部</option>
+                                    <option value="pending">待发货</option>
+                                    <option value="shipped">已发货</option>
+                                    <option value="finished">已完成</option>
+                                </select>
+                            </div>
+                            <div class="filter-actions">
+                                <button class="btn btn-primary" id="search-ship-orders-btn">查询</button>
+                                <button class="btn btn-secondary" id="reset-ship-filters-btn">重置</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 批量操作 -->
+                    <div class="batch-actions">
+                        <button class="btn btn-primary" id="batch-ship-btn">
+ 批量发货
+                        </button>
+                        <button class="btn btn-secondary" id="batch-print-btn">
+                            批量打印
+                        </button>
+                        <button class="btn btn-success" id="batch-express-btn">
+                            批量设置快递
+                        </button>
+                        <button class="btn btn-warning" id="batch-urgent-btn">
+                            标记紧急
+                        </button>
+                        <div class="batch-info">
+                            <span>已选择 <span id="selected-count">0</span> 个订单</span>
+                        </div>
+                    </div>
+                    
+                    <!-- 订单统计 -->
+                    <div class="order-summary">
+                        <span id="ship-order-count">共 156 条待发货订单</span>
+                        <span class="order-status-count">
+                            <span class="status-pending">待发货: 89</span>
+                            <span class="status-urgent">紧急: 12</span>
+                            <span class="status-normal">普通: 44</span>
+                        </span>
+                    </div>
+                    
+                    <!-- 订单列表 -->
+                    <div class="orders-list" id="ship-orders-list">
+                        <!-- 待发货订单示例 -->
+                        <div class="order-item">
+                            <div class="order-header">
+                                <div class="order-checkbox">
+                                    <input type="checkbox" class="order-select">
+                                </div>
+                                <div class="order-info">
+                                    <span class="order-number">订单编号: 6347223062</span>
+                                    <span class="order-time">下单时间: 2005-07-31 14:01:23</span>
+                                </div>
+                                <div class="order-actions">
+                                    <button class="btn btn-sm btn-primary" onclick="shipOrder('6347223062')">去发货</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="printOrder('6347223062')">打印</button>
+                                </div>
+                            </div>
+                            
+                            <div class="order-products">
+                                <div class="product-item">
+                                    <div class="product-image">
+                                        <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBmaWxsPSIjRkY2NjY2Ii8+Cjx0ZXh0IHg9IjIwIiB5PSIyNSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjEyIiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5a6J5Y2zPC90ZXh0Pgo8L3N2Zz4K" alt="商品图片">
+                                    </div>
+                                    <div class="product-details">
+                                        <div class="product-name">名称名称名称名称名称名称名称名称名称名称名称名称名称名称</div>
+                                        <div class="product-specs">
+                                            <span class="unit-price">单价: 39.54</span>
+                                            <span class="quantity">数量: x1</span>
+                                            <span class="amount-payable">应付金额: 39.54</span>
+                                            <span class="amount-paid">实付金额: 39.54</span>
+                                            <span class="product-status status-pending">待发货</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="order-footer">
+                                <div class="buyer-info">
+                                    <span class="buyer">买家: 张三 (ididid)</span>
+                                </div>
+                                <div class="shipping-address">
+                                    <span class="address">收货地址: 河南省郑州市金水区人民路...</span>
+                                </div>
+                                <div class="order-total">
+                                    <span class="total-amount">合计: 39.54</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 模态框 -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">标题</h3>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- 动态内容 -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 页面特定的初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 刷新时重定向到数据总览
+            if (performance.navigation.type === 1) { // 刷新页面
+                window.location.href = 'index.html';
+            }
+            
+            // 使用公共工具栏逻辑设置菜单状态
+            setMenuState('orders');
+        });
+    </script>
+    <script>
+        // 页面切换功能
+        function showPage(pageId) {
+            // 隐藏所有页面
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+            
+            // 显示目标页面
+            const targetPage = document.getElementById(pageId + '-page');
+            if (targetPage) {
+                targetPage.classList.add('active');
+                
+                // 更新侧边栏活动状态
+                document.querySelectorAll('.submenu li').forEach(item => {
+                    item.classList.remove('active');
+                });
+                
+                const activeMenuItem = document.querySelector(`[data-page="${pageId}"]`);
+                if (activeMenuItem) {
+                    activeMenuItem.classList.add('active');
+                }
+            }
+        }
+
+        // 发货功能
+        function shipOrder(orderNumber) {
+            if (confirm(`确定要发货订单 ${orderNumber} 吗？`)) {
+                // 这里应该调用后端API更新订单状态
+                alert(`订单 ${orderNumber} 已发货！`);
+                // 刷新页面或更新订单状态
+                location.reload();
+            }
+        }
+
+        // 打印功能
+        function printOrder(orderNumber) {
+            alert(`正在打印订单 ${orderNumber} 的快递单...`);
+            // 这里应该调用打印功能
+        }
+
+        // 查看物流
+        function viewLogistics(orderNumber) {
+            alert(`查看订单 ${orderNumber} 的物流信息...`);
+            // 这里应该显示物流详情
+        }
+
+        // 修改物流
+        function modifyLogistics(orderNumber) {
+            alert(`修改订单 ${orderNumber} 的物流信息...`);
+            // 这里应该显示物流修改表单
+        }
+
+        // 订单退款
+        function refundOrder(orderNumber) {
+            if (confirm(`确定要退款订单 ${orderNumber} 吗？`)) {
+                alert(`订单 ${orderNumber} 退款申请已提交！`);
+            }
+        }
+
+        // 修改订单信息
+        function modifyOrder(orderNumber) {
+            alert(`修改订单 ${orderNumber} 的信息...`);
+            // 这里应该显示订单修改表单
+        }
+
+        // 订单详情
+        function viewOrderDetails(orderNumber) {
+            alert(`查看订单 ${orderNumber} 的详细信息...`);
+            // 这里应该显示订单详情
+        }
+
+        // 批量发货
+        document.getElementById('batch-ship-btn')?.addEventListener('click', function() {
+            const selectedOrders = document.querySelectorAll('.order-select:checked');
+            if (selectedOrders.length === 0) {
+                alert('请先选择要发货的订单！');
+                return;
+            }
+            
+            if (confirm(`确定要批量发货 ${selectedOrders.length} 个订单吗？`)) {
+                alert(`正在批量发货 ${selectedOrders.length} 个订单...`);
+                // 这里应该调用批量发货API
+            }
+        });
+
+        // 批量打印
+        document.getElementById('batch-print-btn')?.addEventListener('click', function() {
+            const selectedOrders = document.querySelectorAll('.order-select:checked');
+            if (selectedOrders.length === 0) {
+                alert('请先选择要打印的订单！');
+                return;
+            }
+            
+            alert(`正在批量打印 ${selectedOrders.length} 个订单的快递单...`);
+            // 这里应该调用批量打印功能
+        });
+
+        // 批量设置快递
+        document.getElementById('batch-express-btn')?.addEventListener('click', function() {
+            const selectedOrders = document.querySelectorAll('.order-select:checked');
+            if (selectedOrders.length === 0) {
+                alert('请先选择要设置快递的订单！');
+                return;
+            }
+            
+            const expressCompany = prompt('请输入快递公司名称：', '顺丰速运');
+            if (expressCompany) {
+                alert(`正在为 ${selectedOrders.length} 个订单设置快递公司：${expressCompany}`);
+                // 这里应该调用批量设置快递API
+            }
+        });
+
+        // 标记紧急
+        document.getElementById('batch-urgent-btn')?.addEventListener('click', function() {
+            const selectedOrders = document.querySelectorAll('.order-select:checked');
+            if (selectedOrders.length === 0) {
+                alert('请先选择要标记紧急的订单！');
+                return;
+            }
+            
+            if (confirm(`确定要将 ${selectedOrders.length} 个订单标记为紧急吗？`)) {
+                alert(`已将 ${selectedOrders.length} 个订单标记为紧急！`);
+                // 这里应该调用标记紧急API
+                updateSelectedCount();
+            }
+        });
+
+        // 更新选中数量
+        function updateSelectedCount() {
+            const selectedOrders = document.querySelectorAll('.order-select:checked');
+            const countElement = document.getElementById('selected-count');
+            if (countElement) {
+                countElement.textContent = selectedOrders.length;
+            }
+        }
+
+        // 监听复选框变化
+        document.addEventListener('change', function(e) {
+            if (e.target.classList.contains('order-select')) {
+                updateSelectedCount();
+            }
+        });
+
+        // 全选功能
+        function selectAllOrders() {
+            const checkboxes = document.querySelectorAll('.order-select');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            
+            checkboxes.forEach(cb => {
+                cb.checked = !allChecked;
+            });
+            updateSelectedCount();
+        }
+
+        // 查询功能
+        document.getElementById('search-orders-btn')?.addEventListener('click', function() {
+            const orderNumber = document.getElementById('order-number-filter').value;
+            const productNumber = document.getElementById('product-number-filter').value;
+            const productName = document.getElementById('product-name-filter').value;
+            const orderTime = document.getElementById('order-time-filter').value;
+            const orderStatus = document.getElementById('order-status-filter').value;
+            
+            console.log('查询条件:', { orderNumber, productNumber, productName, orderTime, orderStatus });
+            alert('正在查询订单...');
+            // 这里应该调用查询API
+        });
+
+        // 重置功能
+        document.getElementById('reset-filters-btn')?.addEventListener('click', function() {
+            document.getElementById('order-number-filter').value = '';
+            document.getElementById('product-number-filter').value = '';
+            document.getElementById('product-name-filter').value = '';
+            document.getElementById('order-time-filter').value = '';
+            document.getElementById('order-status-filter').value = '';
+            alert('筛选条件已重置');
+        });
+
+        // 发货页面查询功能
+        document.getElementById('search-ship-orders-btn')?.addEventListener('click', function() {
+            const orderNumber = document.getElementById('ship-order-number-filter').value;
+            const productNumber = document.getElementById('ship-product-number-filter').value;
+            const productName = document.getElementById('ship-product-name-filter').value;
+            const orderTime = document.getElementById('ship-order-time-filter').value;
+            const orderStatus = document.getElementById('ship-order-status-filter').value;
+            
+            console.log('发货查询条件:', { orderNumber, productNumber, productName, orderTime, orderStatus });
+            alert('正在查询待发货订单...');
+            // 这里应该调用查询API
+        });
+
+        // 发货页面重置功能
+        document.getElementById('reset-ship-filters-btn')?.addEventListener('click', function() {
+            document.getElementById('ship-order-number-filter').value = '';
+            document.getElementById('ship-product-number-filter').value = '';
+            document.getElementById('ship-product-name-filter').value = '';
+            document.getElementById('ship-order-time-filter').value = '';
+            document.getElementById('ship-order-status-filter').value = '';
+            alert('筛选条件已重置');
+        });
+
+        // 侧边栏拖拽功能
+        function initSidebarResizer() {
+            const sidebar = document.querySelector('.sidebar');
+            const resizer = document.getElementById('sidebar-resizer');
+            const mainContent = document.querySelector('.main-content');
+            
+            if (!sidebar || !resizer || !mainContent) return;
+            
+            let isResizing = false;
+            let startX = 0;
+            let startWidth = 0;
+            
+            resizer.addEventListener('mousedown', function(e) {
+                isResizing = true;
+                startX = e.clientX;
+                startWidth = parseInt(window.getComputedStyle(sidebar).width, 10);
+                
+                document.addEventListener('mousemove', handleResize);
+                document.addEventListener('mouseup', stopResize);
+                
+                e.preventDefault();
+            });
+            
+            function handleResize(e) {
+                if (!isResizing) return;
+                
+                const newWidth = startWidth + (e.clientX - startX);
+                const minWidth = 200;
+                const maxWidth = 500;
+                
+                if (newWidth >= minWidth && newWidth <= maxWidth) {
+                    sidebar.style.width = newWidth + 'px';
+                    mainContent.style.marginLeft = newWidth + 'px';
+                }
+            }
+            
+            function stopResize() {
+                isResizing = false;
+                document.removeEventListener('mousemove', handleResize);
+                document.removeEventListener('mouseup', stopResize);
+                
+                // 保存宽度到本地存储
+                const currentWidth = parseInt(window.getComputedStyle(sidebar).width, 10);
+                localStorage.setItem('sidebarWidth', currentWidth);
+            }
+            
+            // 从本地存储恢复宽度
+            const savedWidth = localStorage.getItem('sidebarWidth');
+            if (savedWidth) {
+                const width = parseInt(savedWidth, 10);
+                if (width >= 200 && width <= 500) {
+                    sidebar.style.width = width + 'px';
+                    mainContent.style.marginLeft = width + 'px';
+                }
+            }
+        }
+
+        // 功能提示函数
+        function showFeatureAlert(featureName) {
+            alert(`${featureName}功能正在开发中，敬请期待！`);
+        }
+
+        // 初始化拖拽功能
+        document.addEventListener('DOMContentLoaded', function() {
+            initSidebarResizer();
+        });
+    </script>
+
+    <!-- 修改商品重量模态框 -->
+    <div class="modal" id="edit-weight-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>修改商品重量</h3>
+                <button class="close-btn" onclick="closeEditWeightModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-weight-form">
+                    <div class="form-group">
+                        <label for="edit-product-name">商品名称</label>
+                        <input type="text" id="edit-product-name" class="form-input" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-current-weight">当前重量 (kg)</label>
+                        <input type="text" id="edit-current-weight" class="form-input" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-new-weight">新重量 (kg)</label>
+                        <input type="number" id="edit-new-weight" class="form-input" placeholder="0.00" step="0.01" min="0" max="999.99" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-shipping-region">配送地区</label>
+                        <select id="edit-shipping-region" class="form-select" required>
+                            <option value="mainland">中国大陆</option>
+                            <option value="nz">新西兰本地 (免邮)</option>
+                            <option value="au">澳洲奶粉 (免邮)</option>
+                            <option value="remote">偏远地区 (+$10)</option>
+                            <option value="taopu">Taopu品牌 (+$20)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-quantity">商品数量</label>
+                        <input type="number" id="edit-quantity" class="form-input" placeholder="1" min="1" value="1" required>
+                    </div>
+                    <div class="weight-calculation">
+                        <div class="calculation-item">
+                            <span class="label">总重量:</span>
+                            <span class="value" id="total-weight-display">0.00kg</span>
+                        </div>
+                        <div class="calculation-item">
+                            <span class="label">运费:</span>
+                            <span class="value" id="shipping-fee-display">¥0.00</span>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeEditWeightModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveProductWeight()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="order.js"></script>
+</body>
+</html>

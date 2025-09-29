@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>运费管理 - 新阳光商城后台</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="admin-container">
+        <!-- 侧边栏 -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span>新阳光商城</span>
+                </div>
+            </div>
+            
+            <!-- 侧边栏宽度控制条 -->
+            <div class="sidebar-resizer" id="sidebar-resizer"></div>
+            <ul class="sidebar-menu">
+                <li class="menu-item" data-page="dashboard">
+                    <div class="menu-item-header">
+                        <span onclick="window.location.href='index.html'">数据总览</span>
+                    </div>
+                </li>
+                <li class="menu-item has-submenu" data-page="orders">
+                    <div class="menu-item-header" onclick="toggleSubmenu(this)">
+                        <span>订单管理</span>
+                        <span class="submenu-arrow">▼</span>
+                    </div>
+                    <ul class="submenu">
+                        <li data-page="order-list" onclick="window.location.href='orderadmin.html'">订单列表</li>
+                        <li data-page="order-ship" onclick="window.location.href='orderadmin.html'">打单发货</li>
+                    </ul>
+                </li>
+                <li class="menu-item has-submenu" data-page="products">
+                    <div class="menu-item-header" onclick="toggleSubmenu(this)">
+                        <span>商品管理</span>
+                        <span class="submenu-arrow">▼</span>
+                    </div>
+                    <ul class="submenu">
+                        <li data-page="product-list" onclick="window.location.href='productadmin.html'">商品列表</li>
+                        <li data-page="brand-category" onclick="window.location.href='productadmin.html'">品牌&分类</li>
+                    </ul>
+                </li>
+                <li class="menu-item active" data-page="shipping">
+                    <div class="menu-item-header">
+                        <span>运费管理</span>
+                    </div>
+                </li>
+                <li class="menu-item" data-page="coupons">
+                    <div class="menu-item-header" onclick="showFeatureAlert('优惠券中心功能开发中')">
+                        <span>优惠券中心</span>
+                    </div>
+                </li>
+                <li class="menu-item has-submenu" data-page="store">
+                    <div class="menu-item-header" onclick="toggleSubmenu(this)">
+                        <span>店铺管理</span>
+                        <span class="submenu-arrow">▼</span>
+                    </div>
+                    <ul class="submenu">
+                        <li data-page="store-settings" onclick="showFeatureAlert('店铺设置功能开发中')">店铺设置</li>
+                        <li data-page="store-analytics" onclick="showFeatureAlert('店铺分析功能开发中')">店铺分析</li>
+                    </ul>
+                </li>
+                <li class="menu-item" data-page="finance">
+                    <div class="menu-item-header" onclick="showFeatureAlert('财务管理功能开发中')">
+                        <span>财务管理</span>
+                    </div>
+                </li>
+                <li class="menu-item" data-page="users">
+                    <div class="menu-item-header" onclick="showFeatureAlert('用户管理功能开发中')">
+                        <span>用户管理</span>
+                    </div>
+                </li>
+            </ul>
+        </div>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 顶部栏 -->
+            <header class="top-header">
+                <div class="header-left">
+                    <button class="sidebar-toggle" id="sidebar-toggle">☰</button>
+                    <h1>运费管理</h1>
+                </div>
+                <div class="header-right">
+                    <div class="search-box">
+                        <input type="text" placeholder="搜索运费规则..." id="search-rules">
+                        <button class="search-btn">搜索</button>
+                    </div>
+                    <div class="user-info">
+                        <span>Admin_Sky 超级管理员</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 运费规则设置 -->
+            <div class="content-section">
+                <div class="section-header">
+                    <h2>运费规则设置</h2>
+                    <div class="section-actions">
+                        <button class="btn btn-primary" onclick="openAddRuleModal()">新增规则</button>
+                        <button class="btn btn-secondary" onclick="batchEditRules()">批量编辑</button>
+                    </div>
+                </div>
+
+                <!-- 运费规则列表 -->
+                <div class="rules-list" id="rules-list">
+                    <!-- 规则项将通过JavaScript动态生成 -->
+                </div>
+            </div>
+
+            <!-- 地区运费设置 -->
+            <div class="content-section">
+                <div class="section-header">
+                    <h2>地区运费设置</h2>
+                </div>
+                
+                <div class="region-shipping-grid">
+                    <div class="region-card">
+                        <div class="region-header">
+                            <h3>中国大陆</h3>
+                            <button class="btn btn-sm btn-primary" onclick="editRegionShipping('mainland')">编辑</button>
+                        </div>
+                        <div class="shipping-rules">
+                            <div class="rule-item">
+                                <span class="weight-range">运费标准</span>
+                                <span class="shipping-fee">$7.99/公斤</span>
+                            </div>
+                            <div class="rule-item">
+                                <span class="weight-range">计费规则</span>
+                                <span class="shipping-fee">最低1公斤，不足1公斤按1公斤计算</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="region-card">
+                        <div class="region-header">
+                            <h3>新西兰本地</h3>
+                            <span class="conditional-shipping-badge">条件免邮</span>
+                        </div>
+                        <div class="shipping-rules">
+                            <div class="rule-item">
+                                <span class="weight-range">免邮条件</span>
+                                <span class="shipping-fee free">订单金额≥$200</span>
+                            </div>
+                            <div class="rule-item">
+                                <span class="weight-range">计费规则</span>
+                                <span class="shipping-fee">不满$200按$7.99/公斤</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="region-card">
+                        <div class="region-header">
+                            <h3>澳洲奶粉</h3>
+                            <span class="free-shipping-badge">免邮免税</span>
+                        </div>
+                        <div class="shipping-rules">
+                            <div class="rule-item">
+                                <span class="weight-range">运费标准</span>
+                                <span class="shipping-fee free">免邮</span>
+                            </div>
+                            <div class="rule-item">
+                                <span class="weight-range">计费规则</span>
+                                <span class="shipping-fee free">重量写0即可</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="region-card">
+                        <div class="region-header">
+                            <h3>偏远地区</h3>
+                            <span class="extra-fee-badge">额外运费</span>
+                        </div>
+                        <div class="shipping-rules">
+                            <div class="rule-item">
+                                <span class="weight-range">适用地区</span>
+                                <span class="shipping-fee">新疆、西藏、甘肃、宁夏、青海</span>
+                            </div>
+                            <div class="rule-item">
+                                <span class="weight-range">额外运费</span>
+                                <span class="shipping-fee">+$10纽币</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="region-card">
+                        <div class="region-header">
+                            <h3>Taopu品牌奶粉</h3>
+                            <span class="extra-fee-badge">品牌额外运费</span>
+                        </div>
+                        <div class="shipping-rules">
+                            <div class="rule-item">
+                                <span class="weight-range">适用地区</span>
+                                <span class="shipping-fee">海南、新疆、甘肃、青海、宁夏、内蒙古</span>
+                            </div>
+                            <div class="rule-item">
+                                <span class="weight-range">额外运费</span>
+                                <span class="shipping-fee">+$20纽币</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 运费计算器 -->
+            <div class="content-section">
+                <div class="section-header">
+                    <h2>运费计算器</h2>
+                </div>
+                
+                <div class="shipping-calculator">
+                    <div class="calculator-form">
+                        <div class="form-group">
+                            <label>配送地区</label>
+                            <select id="calc-region" class="form-select">
+                                <option value="mainland">中国大陆</option>
+                                <option value="nz">新西兰本地 (免邮)</option>
+                                <option value="au">澳洲奶粉 (免邮)</option>
+                                <option value="remote">偏远地区 (+$10)</option>
+                                <option value="taopu">Taopu品牌 (+$20)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>商品重量 (kg)</label>
+                            <input type="number" id="calc-weight" class="form-input" placeholder="0.00" step="0.01" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label>商品数量</label>
+                            <input type="number" id="calc-quantity" class="form-input" placeholder="1" min="1" value="1">
+                        </div>
+                        <div class="form-group">
+                            <label>订单金额 ($)</label>
+                            <input type="number" id="calc-amount" class="form-input" placeholder="0.00" step="0.01" min="0">
+                        </div>
+                        <button class="btn btn-primary" onclick="calculateShipping()">计算运费</button>
+                    </div>
+                    <div class="calculator-result" id="calculator-result">
+                        <div class="result-placeholder">请输入重量和数量进行计算</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 新增运费规则模态框 -->
+    <div class="modal" id="add-rule-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>新增运费规则</h3>
+                <button class="close-btn" onclick="closeAddRuleModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="add-rule-form">
+                    <div class="form-group">
+                        <label for="rule-name">规则名称</label>
+                        <input type="text" id="rule-name" name="ruleName" class="form-input" placeholder="请输入规则名称" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="rule-region">适用地区</label>
+                        <select id="rule-region" name="region" class="form-select" required>
+                            <option value="">请选择地区</option>
+                            <option value="nz">新西兰本地</option>
+                            <option value="au">澳洲奶粉</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="rule-type">计费方式</label>
+                        <select id="rule-type" name="type" class="form-select" required>
+                            <option value="">请选择计费方式</option>
+                            <option value="weight">按重量计费</option>
+                            <option value="quantity">按数量计费</option>
+                            <option value="fixed">固定运费</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="rule-min-weight">最小重量 (kg)</label>
+                        <input type="number" id="rule-min-weight" name="minWeight" class="form-input" placeholder="0.00" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="rule-max-weight">最大重量 (kg)</label>
+                        <input type="number" id="rule-max-weight" name="maxWeight" class="form-input" placeholder="999.99" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="rule-fee">运费 (元)</label>
+                        <input type="number" id="rule-fee" name="fee" class="form-input" placeholder="0.00" step="0.01" min="0" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="rule-status">状态</label>
+                        <select id="rule-status" name="status" class="form-select">
+                            <option value="active">启用</option>
+                            <option value="inactive">禁用</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeAddRuleModal()">取消</button>
+                <button class="btn btn-primary" onclick="submitAddRule()">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 编辑地区运费模态框 -->
+    <div class="modal" id="edit-region-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="edit-region-title">编辑地区运费</h3>
+                <button class="close-btn" onclick="closeEditRegionModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="region-rules-editor" id="region-rules-editor">
+                    <!-- 动态生成规则编辑器 -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeEditRegionModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveRegionRules()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+    <script src="shipping.js"></script>
+</body>
+</html>

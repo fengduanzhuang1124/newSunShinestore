@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>新阳光商城 - 管理后台</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- 移除外部CDN，使用本地图标或简化图标 -->
+</head>
+<body>
+    <div class="admin-container">
+        <!-- 侧边栏遮罩层 -->
+        <div class="sidebar-overlay" id="sidebar-overlay"></div>
+        
+        <!-- 侧边栏 -->
+        <nav class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-sun"></i>
+                    <span>新阳光商城</span>
+                </div>
+            </div>
+            
+            <!-- 侧边栏宽度控制条 -->
+            <div class="sidebar-resizer" id="sidebar-resizer"></div>
+            
+            <ul class="sidebar-menu">
+                <li class="menu-item active" data-page="dashboard">
+                    <div class="menu-item-header">
+                        <span>数据总览</span>
+                    </div>
+                </li>
+                <li class="menu-item has-submenu" data-page="orders">
+                    <div class="menu-item-header" onclick="toggleSubmenu(this)">
+                        <span>订单管理</span>
+                        <span class="submenu-arrow">▼</span>
+                    </div>
+                    <ul class="submenu">
+                        <li data-page="order-list" onclick="window.location.href='orderadmin.html'">订单列表</li>
+                        <li data-page="order-ship" onclick="window.location.href='orderadmin.html'">打单发货</li>
+                    </ul>
+                </li>
+                <li class="menu-item has-submenu" data-page="products">
+                    <div class="menu-item-header" onclick="toggleSubmenu(this)">
+                        <span>商品管理</span>
+                        <span class="submenu-arrow">▼</span>
+                    </div>
+                    <ul class="submenu">
+                        <li data-page="product-list" onclick="window.location.href='productadmin.html'">商品列表</li>
+                        <li data-page="brand-category" onclick="window.location.href='productadmin.html'">品牌&分类</li>
+                    </ul>
+                </li>
+                <li class="menu-item" data-page="shipping">
+                    <div class="menu-item-header">
+                        <a href="shippingadmin.html" style="text-decoration: none; color: inherit;">
+                            <span>运费管理</span>
+                        </a>
+                    </div>
+                </li>
+                <li class="menu-item" data-page="coupons">
+                    <div class="menu-item-header" onclick="showFeatureAlert('优惠券中心')">
+                        <span>优惠券中心</span>
+                    </div>
+                </li>
+                <li class="menu-item has-submenu" data-page="store">
+                    <div class="menu-item-header">
+                        <span>店铺管理</span>
+                        <span class="submenu-arrow">▼</span>
+                    </div>
+                    <ul class="submenu">
+                        <li data-page="store-decoration" onclick="showFeatureAlert('店铺装修')">店铺装修</li>
+                        <li data-page="account-management" onclick="showFeatureAlert('账号管理')">账号管理</li>
+                    </ul>
+                </li>
+                <li class="menu-item" data-page="finance">
+                    <div class="menu-item-header" onclick="showFeatureAlert('财务管理')">
+                        <span>财务管理</span>
+                    </div>
+                </li>
+                <li class="menu-item" data-page="users">
+                    <div class="menu-item-header" onclick="showFeatureAlert('用户管理')">
+                        <span>用户管理</span>
+                    </div>
+                </li>
+            </ul>
+        </nav>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 顶部栏 -->
+            <header class="top-header">
+                <div class="header-left">
+                    <button class="sidebar-toggle" id="sidebar-toggle">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <div class="search-bar">
+                        <i class="fas fa-search"></i>
+                        <input type="text" placeholder="Search" class="search-input">
+                    </div>
+                </div>
+                <div class="header-right">
+                    <div class="user-info">
+                        <span class="username">Admin_Sky</span>
+                        <i class="fas fa-chevron-down"></i>
+                        <div class="user-role">超级管理员</div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- 页面内容 -->
+            <div class="content-area">
+                <!-- 数据总览页面 -->
+                <div id="dashboard-page" class="page active">
+                    <!-- 统计卡片 -->
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <div class="stat-title">今日GMV</div>
+                                <div class="stat-icon blue">
+                                    <i class="fas fa-dollar-sign"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value" id="today-gmv">¥0.00</div>
+                            <div class="stat-change">
+                                <span class="change-value positive">0.00%</span>
+                                <span class="change-label">From yesterday</span>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <div class="stat-title">今日订单</div>
+                                <div class="stat-icon green">
+                                    <i class="fas fa-file-alt"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value" id="today-orders">0</div>
+                            <div class="stat-change">
+                                <span class="change-value positive">0.00%</span>
+                                <span class="change-label">From yesterday</span>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <div class="stat-title">本周GMV</div>
+                                <div class="stat-icon pink">
+                                    <i class="fas fa-dollar-sign"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value" id="week-gmv">¥0.00</div>
+                            <div class="stat-change">
+                                <span class="change-value positive">0.00%</span>
+                                <span class="change-label">From Last week</span>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <div class="stat-header">
+                                <div class="stat-title">本周订单</div>
+                                <div class="stat-icon orange">
+                                    <i class="fas fa-file-alt"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value" id="week-orders">0</div>
+                            <div class="stat-change">
+                                <span class="change-value positive">0.00%</span>
+                                <span class="change-label">From Last week</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 数据表格区域 -->
+                    <div class="dashboard-tables">
+                        <div class="table-section main-table">
+                            <div class="table-header">
+                                <h3>本周热卖商品</h3>
+                            </div>
+                            <div class="table-container">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>产品ID</th>
+                                            <th>产品名称</th>
+                                            <th>周销量</th>
+                                            <th>周GMV</th>
+                                            <th>分类</th>
+                                            <th>品牌</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="hot-products-table">
+                                        <tr>
+                                            <td colspan="7" class="loading">加载中...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <div class="table-section side-tables">
+                            <div class="table-section">
+                                <div class="table-header">
+                                    <h3>本周热卖品牌</h3>
+                                </div>
+                                <div class="table-container">
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>品牌ID</th>
+                                                <th>品牌名称</th>
+                                                <th>周销量</th>
+                                                <th>周GMV</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="hot-brands-table">
+                                            <tr>
+                                                <td colspan="4" class="loading">加载中...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            
+                            <div class="table-section">
+                                <div class="table-header">
+                                    <h3>本周热卖分类</h3>
+                                </div>
+                                <div class="table-container">
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>分类ID</th>
+                                                <th>分类名称</th>
+                                                <th>周销量</th>
+                                                <th>周GMV</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="hot-categories-table">
+                                            <tr>
+                                                <td colspan="4" class="loading">加载中...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- 模态框 -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">标题</h3>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- 动态内容 -->
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

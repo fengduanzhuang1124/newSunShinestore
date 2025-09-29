@@ -1,12 +1,44 @@
 {
   "pages": [
-    "pages/index/user/index"
+    "pages/home/index",
+    "pages/account/register",
+    "pages/account/login",
+    "pages/account/profile",
+    "pages/home/product-list",
+    "pages/home/product-detail",
+    "pages/home/shopping-cart",
+    "pages/home/my-orders",
+    "pages/home/checkout"
   ],
   "window": {
     "navigationBarTextStyle": "black",
-    "navigationBarTitleText": "uni-app",
+    "navigationBarTitleText": "新阳光商城",
     "navigationBarBackgroundColor": "#F8F8F8",
     "backgroundColor": "#F8F8F8"
+  },
+  "tabBar": {
+    "color": "#7A7E83",
+    "selectedColor": "#3cc51f",
+    "borderStyle": "black",
+    "backgroundColor": "#ffffff",
+    "list": [
+      {
+        "pagePath": "pages/home/index",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/home/product-list",
+        "text": "商品"
+      },
+      {
+        "pagePath": "pages/home/shopping-cart",
+        "text": "购物车"
+      },
+      {
+        "pagePath": "pages/account/profile",
+        "text": "我的"
+      }
+    ]
   },
   "usingComponents": {}
 }

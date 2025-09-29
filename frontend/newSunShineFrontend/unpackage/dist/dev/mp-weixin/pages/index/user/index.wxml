@@ -1,1 +1,0 @@
-<view><button bindtap="{{a}}">加载用户数据</button><view wx:for="{{b}}" wx:for-item="user" wx:key="b"> 用户名: {{user.a}}</view></view>

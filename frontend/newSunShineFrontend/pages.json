@@ -1,17 +1,89 @@
 {
-	"pages": [ //pages数组中第一项表示应用启动页，参考：https://uniapp.dcloud.io/collocation/pages
+	"pages": [
 		{
-			"path": "pages/index/user/index",
+			"path": "pages/home/index",
 			"style": {
-				"navigationBarTitleText": "uni-app"
+				"navigationBarTitleText": "新阳光商城"
+			}
+		},
+		{
+			"path": "pages/account/register",
+			"style": {
+				"navigationBarTitleText": "用户注册"
+			}
+		},
+		{
+			"path": "pages/account/login",
+			"style": {
+				"navigationBarTitleText": "用户登录"
+			}
+		},
+		{
+			"path": "pages/account/profile",
+			"style": {
+				"navigationBarTitleText": "个人中心"
+			}
+		},
+		{
+			"path": "pages/home/product-list",
+			"style": {
+				"navigationBarTitleText": "商品列表"
+			}
+		},
+		{
+			"path": "pages/home/product-detail",
+			"style": {
+				"navigationBarTitleText": "商品详情"
+			}
+		},
+		{
+			"path": "pages/home/shopping-cart",
+			"style": {
+				"navigationBarTitleText": "购物车"
+			}
+		},
+		{
+			"path": "pages/home/my-orders",
+			"style": {
+				"navigationBarTitleText": "我的订单"
+			}
+		},
+		{
+			"path": "pages/home/checkout",
+			"style": {
+				"navigationBarTitleText": "结算"
 			}
 		}
 	],
 	"globalStyle": {
 		"navigationBarTextStyle": "black",
-		"navigationBarTitleText": "uni-app",
+		"navigationBarTitleText": "新阳光商城",
 		"navigationBarBackgroundColor": "#F8F8F8",
 		"backgroundColor": "#F8F8F8"
+	},
+	"tabBar": {
+		"color": "#7A7E83",
+		"selectedColor": "#3cc51f",
+		"borderStyle": "black",
+		"backgroundColor": "#ffffff",
+		"list": [
+			{
+				"pagePath": "pages/home/index",
+				"text": "首页"
+			},
+			{
+				"pagePath": "pages/home/product-list",
+				"text": "商品"
+			},
+			{
+				"pagePath": "pages/home/shopping-cart",
+				"text": "购物车"
+			},
+			{
+				"pagePath": "pages/account/profile",
+				"text": "我的"
+			}
+		]
 	},
 	"uniIdRouter": {}
 }

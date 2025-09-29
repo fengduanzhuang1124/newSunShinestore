@@ -1,0 +1,20 @@
+{
+  "pages": [
+    "pages/home/index",
+    "pages/account/register",
+    "pages/account/login",
+    "pages/account/profile",
+    "pages/home/product-list",
+    "pages/home/product-detail",
+    "pages/home/shopping-cart",
+    "pages/home/my-orders"
+  ],
+  "window": {
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#F8F8F8",
+    "navigationBarTitleText": "新阳光商城",
+    "navigationBarTextStyle": "black"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

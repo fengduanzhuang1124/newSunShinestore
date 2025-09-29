@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>商品管理 - 新阳光商城后台</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="script.js" defer></script>
+    <script src="product.js" defer></script>
+    <!-- 移除外部CDN，使用本地图标或简化图标 -->
+</head>
+<body>
+    <div class="admin-container">
+        <!-- 侧边栏 -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h2>新阳光商城</h2>
+            </div>
+            <div class="sidebar-resizer" id="sidebar-resizer"></div>
+            <nav class="sidebar-nav">
+                <ul class="menu">
+                    <li class="menu-item" data-page="dashboard">
+                        <div class="menu-item-header" onclick="window.location.href='index.html'">
+                            <span>数据总览</span>
+                        </div>
+                    </li>
+                    <li class="menu-item has-submenu" data-page="orders">
+                        <div class="menu-item-header" onclick="toggleSubmenu(this)">
+                            <span>订单管理</span>
+                            <span class="submenu-arrow">▼</span>
+                        </div>
+                        <ul class="submenu">
+                        <li data-page="order-list" onclick="window.location.href='orderadmin.html'">订单列表</li>
+                        <li data-page="order-ship" onclick="window.location.href='orderadmin.html'">打单发货</li>
+                        </ul>
+                    </li>
+                    <li class="menu-item has-submenu active" data-page="products">
+                        <div class="menu-item-header" onclick="toggleSubmenu(this)">
+                            <span>商品管理</span>
+                            <span class="submenu-arrow">▼</span>
+                        </div>
+                        <ul class="submenu open">
+                            <li class="active" data-page="product-list" onclick="showProductModule('product-list')">商品列表</li>
+                            <li data-page="brand-category" onclick="showProductModule('brand-category')">品牌&分类</li>
+                        </ul>
+                    </li>
+                    <li class="menu-item" data-page="shipping">
+                        <div class="menu-item-header">
+                            <a href="shippingadmin.html" style="text-decoration: none; color: inherit;">
+                                <span>运费管理</span>
+                            </a>
+                        </div>
+                    </li>
+                    <li class="menu-item" data-page="coupons">
+                        <div class="menu-item-header" onclick="showFeatureAlert('优惠券中心')">
+                            <span>优惠券中心</span>
+                        </div>
+                    </li>
+                    <li class="menu-item has-submenu" data-page="store">
+                        <div class="menu-item-header">
+                            <span>店铺管理</span>
+                            <span class="submenu-arrow">▼</span>
+                        </div>
+                        <ul class="submenu">
+                            <li data-page="store-decoration" onclick="showFeatureAlert('店铺装修')">店铺装修</li>
+                            <li data-page="account-management" onclick="showFeatureAlert('账号管理')">账号管理</li>
+                        </ul>
+                    </li>
+                    <li class="menu-item" data-page="finance">
+                        <div class="menu-item-header" onclick="showFeatureAlert('财务管理')">
+                            <span>财务管理</span>
+                        </div>
+                    </li>
+                    <li class="menu-item" data-page="users">
+                        <div class="menu-item-header" onclick="showFeatureAlert('用户管理')">
+                            <span>用户管理</span>
+                        </div>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+
+        <!-- 主内容区 -->
+        <div class="main-content">
+            <!-- 顶部栏 -->
+            <div class="top-header">
+                <div class="header-left">
+                    <button class="sidebar-toggle" id="sidebar-toggle">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <h1 id="page-title">后台-商品列表</h1>
+                </div>
+                <div class="header-center">
+                    <div class="search-bar">
+                        <i class="fas fa-search"></i>
+                        <input type="text" placeholder="Search">
+                    </div>
+                </div>
+                <div class="header-right">
+                    <div class="user-profile">
+                        <span>Admin_Sky</span>
+                        <span class="user-role">超级管理员</span>
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 商品列表模块 -->
+            <div id="product-list-module" class="product-module active">
+                <div class="page-header">
+                    <h1>全部商品</h1>
+                </div>
+
+                <!-- 筛选区域 -->
+                <div class="filter-section">
+                    <div class="filter-row">
+                        <div class="filter-item">
+                            <label>商品编号</label>
+                            <input type="text" class="filter-input" placeholder="请输入" id="product-id-filter">
+                        </div>
+                        <div class="filter-item">
+                            <label>商品名称</label>
+                            <input type="text" class="filter-input" placeholder="请输入" id="product-name-filter">
+                        </div>
+                        <div class="filter-item">
+                            <label>品牌名称</label>
+                            <input type="text" class="filter-input" placeholder="请输入" id="brand-name-filter">
+                        </div>
+                        <div class="filter-item">
+                            <label>分类名称</label>
+                            <input type="text" class="filter-input" placeholder="请输入" id="category-name-filter">
+                        </div>
+                        <div class="filter-item status-filter-group">
+                            <label>上架状态</label>
+                            <div class="status-toggle">
+                                <button type="button" class="status-btn active" data-status="">全部</button>
+                                <button type="button" class="status-btn" data-status="on">已上架</button>
+                                <button type="button" class="status-btn" data-status="off">已下架</button>
+                            </div>
+                            <!-- 隐藏的select元素，保持与现有筛选逻辑兼容 -->
+                            <select class="filter-select" id="status-filter" style="display: none;">
+                                <option value="">全部</option>
+                                <option value="on">已上架</option>
+                                <option value="off">已下架</option>
+                            </select>
+                        </div>
+                        <div class="filter-actions">
+                            <button class="btn btn-primary" id="search-products-btn">查询</button>
+                            <button class="btn btn-secondary" id="reset-product-filters-btn">重置</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="action-buttons">
+                    <button class="btn btn-primary" onclick="showProductModule('add-product')">
+                        <i class="fas fa-plus"></i> 新增商品
+                    </button>
+                    <button class="btn btn-danger" id="batch-delete-btn" onclick="batchDeleteProducts()" style="display: none;">
+                        <i class="fas fa-trash"></i> 批量删除
+                    </button>
+                    <a href="#" class="action-link">批量修改运费模版</a>
+                    <a href="#" class="action-link">批量上架</a>
+                    <a href="#" class="action-link">批量下架</a>
+                </div>
+
+                <!-- 商品统计和分页 -->
+                <div class="product-summary">
+                    <span id="product-count">共 0 条</span>
+                    <div class="pagination-info">
+                        <span id="pagination-info">第 1 页，共 1 页</span>
+                    </div>
+                </div>
+
+                <!-- 商品列表 -->
+                <div class="products-list" id="products-list"></div>
+
+                <!-- 分页控件 -->
+                <div class="pagination-controls">
+                    <button class="btn btn-secondary" id="prev-page-btn" onclick="changePage(-1)" disabled>上一页</button>
+                    <div class="page-numbers" id="page-numbers">
+                        <!-- 页码按钮将通过JavaScript动态生成 -->
+                    </div>
+                    <button class="btn btn-secondary" id="next-page-btn" onclick="changePage(1)" disabled>下一页</button>
+                </div>
+            </div>
+
+            <!-- 新增商品模块 -->
+            <div id="add-product-module" class="product-module">
+                <div class="page-header">
+                    <h1>新增商品</h1>
+                    <button class="btn btn-secondary" onclick="showProductModule('product-list')">
+                        <i class="fas fa-arrow-left"></i> 返回商品列表
+                    </button>
+                </div>
+
+                <div class="add-product-container">
+                    <form class="product-form" id="add-product-form">
+                        <!-- 商品名称 -->
+                        <div class="form-group">
+                            <label for="product-name">商品名称</label>
+                            <div class="input-with-counter">
+                                <input type="text" id="product-name" name="productName" placeholder="请输入" maxlength="24">
+                                <span class="char-counter" id="name-counter">0/24</span>
+                            </div>
+                        </div>
+
+                        <!-- 所属品牌 -->
+                        <div class="form-group">
+                            <label for="product-brand">所属品牌</label>
+                            <select id="product-brand" name="brand" class="form-select">
+                                <option value="">请选择</option>
+                                <!-- 品牌选项将通过JavaScript动态加载 -->
+                            </select>
+                        </div>
+
+                        <!-- 商品分类 -->
+                        <div class="form-group">
+                            <label>商品分类</label>
+                            <div class="category-selector">
+                                <div class="category-column">
+                                    <div class="category-header">一级分类</div>
+                                    <div class="category-list">
+                                        <div class="category-item active" data-category="personal-care">洗护用品</div>
+                                        <div class="category-item" data-category="health-supplements">保健用品</div>
+                                        <div class="category-item" data-category="baby-formula">奶粉</div>
+                                        <div class="category-item" data-category="clothing">服饰专区</div>
+                                    </div>
+                                </div>
+                                <div class="category-column">
+                                    <div class="category-header">二级分类</div>
+                                    <div class="category-list" id="subcategory-list">
+                                        <div class="category-item active" data-subcategory="shampoo">洗发水</div>
+                                        <div class="category-item" data-subcategory="conditioner">护发素</div>
+                                        <div class="category-item" data-subcategory="body-wash">沐浴露</div>
+                                        <div class="category-item" data-subcategory="face-wash">洗面奶</div>
+                                    </div>
+                                </div>
+                                <div style="margin-top:10px;text-align:right">
+                                    <button type="button" class="btn btn-primary" id="confirm-category-btn">确定分类</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 商品特点 -->
+                        <div class="form-group">
+                            <label for="product-features">商品特点</label>
+                            <div class="input-with-counter">
+                                <input type="text" id="product-features" name="features" placeholder="请输入" maxlength="16">
+                                <span class="char-counter" id="features-counter">0/16</span>
+                            </div>
+                        </div>
+
+                        <!-- 商品重量 -->
+                        <div class="form-group">
+                            <label for="product-weight">商品重量 (kg)</label>
+                            <div class="weight-input-group">
+                                <input type="number" id="product-weight" name="weight" placeholder="0.00" step="0.01" min="0" max="999.99">
+                                <span class="weight-unit">kg</span>
+                            </div>
+                            <div class="weight-hint">用于计算运费，精确到0.01kg</div>
+                        </div>
+
+                        <!-- 商品主图（1-8张） -->
+                        <div class="form-group">
+                            <label>商品主图（1-8张）</label>
+                            <div class="image-upload-section">
+                                <div class="upload-info">
+                                    <span>图片比例1:1, 最小尺寸800*800</span>
+                                    <span class="upload-count" id="main-images-count">已上传 0/8</span>
+                                </div>
+                                <div class="image-upload-area" id="main-images">
+                                    <div class="preview-placeholder">点击右侧“上传图片”按钮添加主图</div>
+                                </div>
+                                <input type="file" id="main-image-file" accept="image/*" multiple style="display:none">
+                                <label for="main-image-file" class="upload-btn" style="cursor:pointer">
+                                    <i class="fas fa-plus"></i>
+                                    <span>上传主图</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- 商品详情 -->
+                        <div class="form-group">
+                            <label>商品详情</label>
+                            <div class="detail-editor">
+                                <div class="detail-preview">
+                                    <div class="preview-header">
+                                        <button type="button" class="btn btn-secondary" id="refresh-detail-preview">
+                                            <i class="fas fa-sync-alt"></i> 刷新
+                                        </button>
+                                    </div>
+                                    <div class="preview-content" id="detail-preview-content">
+                                        <div class="preview-placeholder">详情效果预览</div>
+                                    </div>
+                                </div>
+                                <div class="detail-upload">
+                                    <div class="upload-section">
+                                        <span>详情图片上传（1-8张）</span>
+                                        <span class="upload-count" id="detail-images-count">已上传0/8张</span>
+                                        <input type="file" id="detail-image-file" accept="image/*" multiple style="display:none">
+                                        <label for="detail-image-file" class="btn btn-primary" style="cursor:pointer">上传详情图</label>
+                                        <div class="image-upload-area" id="detail-images" style="margin-top:10px"></div>
+                                    </div>
+                                    <div class="edit-section">
+                                        <span>详情编辑</span>
+                                        <span class="edit-hint">可添加文字</span>
+                                        <textarea id="product-details" class="form-input" rows="6" placeholder="请输入商品详情"></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 商品规格 -->
+                        <div class="form-group">
+                            <label>商品规格</label>
+                            <div class="specs-section">
+                                <div class="spec-item">
+                                    <label>价格</label>
+                                    <input type="number" class="form-input" placeholder="请输入价格" step="0.01" name="price">
+                                </div>
+                                <div class="spec-item">
+                                    <label>库存</label>
+                                    <input type="number" class="form-input" placeholder="请输入库存" name="stock">
+                                </div>
+                                <div class="spec-item">
+                                    <!-- 移除重量字段 -->
+                                </div>
+                                <div class="spec-item">
+                                    <label>SKU</label>
+                                    <input type="text" class="form-input" placeholder="请输入SKU" name="sku">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 表单操作按钮 -->
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" onclick="showProductModule('product-list')">取消</button>
+                            <button type="button" class="btn btn-primary" id="save-draft-btn">保存草稿</button>
+                            <button type="submit" class="btn btn-success">提交商品</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- 品牌分类模块 -->
+            <div id="brand-category-module" class="product-module">
+                <div class="page-header">
+                    <h1>品牌分类</h1>
+                    <button class="btn btn-secondary" onclick="showProductModule('product-list')">
+                        <i class="fas fa-arrow-left"></i> 返回商品列表
+                    </button>
+                </div>
+
+                <!-- 筛选区域 -->
+                <div class="filter-section">
+                    <div class="filter-row">
+                        <div class="filter-item">
+                            <label>商品名称</label>
+                            <input type="text" class="filter-input" placeholder="请输入" id="brand-product-name-filter">
+                        </div>
+                        <div class="filter-item">
+                            <label>品牌ID</label>
+                            <input type="text" class="filter-input" placeholder="请输入" id="brand-id-filter">
+                        </div>
+                        <div class="filter-actions">
+                            <button class="btn btn-primary" id="search-brands-btn">查询</button>
+                            <button class="btn btn-secondary" id="reset-brand-filters-btn">重置</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="action-buttons">
+                    <button class="btn btn-primary" id="add-brand-btn">
+                        <i class="fas fa-plus"></i> 新增品牌
+                    </button>
+                    <button class="btn btn-secondary" id="batch-edit-brands-btn">
+                        <i class="fas fa-edit"></i> 批量编辑
+                    </button>
+                    <button class="btn btn-warning" id="batch-disable-brands-btn">
+                        <i class="fas fa-ban"></i> 批量禁用
+                    </button>
+                </div>
+
+                <!-- 品牌统计 -->
+                <div class="brand-summary">
+                    <span id="brand-count">共 234 条</span>
+                </div>
+
+                <!-- 品牌列表 -->
+                <div class="brands-list" id="brands-list">
+                    <!-- 品牌项示例 -->
+                    <div class="brand-item">
+                        <div class="brand-checkbox">
+                            <input type="checkbox" class="brand-select">
+                        </div>
+                        <div class="brand-logo">
+                            <img src="https://via.placeholder.com/60x60" alt="品牌Logo">
+                        </div>
+                        <div class="brand-info">
+                            <div class="brand-name">苹果 (Apple)</div>
+                            <div class="brand-id">ID: BR001</div>
+                            <div class="brand-description">全球知名科技品牌，专注于创新设计</div>
+                            <div class="brand-stats">
+                                <span class="stat-item">商品数: 156</span>
+                                <span class="stat-item">销量: 2,345</span>
+                                <span class="stat-item">评分: 4.8</span>
+                            </div>
+                        </div>
+                        <div class="brand-status">
+                            <span class="status-badge status-active">启用</span>
+                        </div>
+                        <div class="brand-time">
+                            <span>创建时间: 2025-05-12 12:23:24</span>
+                        </div>
+                        <div class="brand-actions">
+                            <a href="#" class="action-link">查看详情</a>
+                            <a href="#" class="action-link">修改品牌</a>
+                            <a href="#" class="action-link">禁用品牌</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新增品牌模态框 -->
+    <div id="add-brand-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>新增品牌</h3>
+                <button class="modal-close" onclick="closeAddBrandModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="add-brand-form">
+                    <div class="form-group">
+                        <label for="brand-name">品牌名称 *</label>
+                        <input type="text" id="brand-name" name="brandName" placeholder="请输入品牌名称" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="brand-description">品牌描述</label>
+                        <textarea id="brand-description" name="brandDescription" placeholder="请输入品牌描述" rows="3"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="brand-logo">品牌Logo</label>
+                        <div class="logo-upload-area">
+                            <div class="logo-preview" id="logo-preview">
+                                <img src="" alt="品牌Logo" style="display: none;">
+                                <div class="upload-placeholder">
+                                    <i class="fas fa-image"></i>
+                                    <span>点击上传Logo</span>
+                                </div>
+                            </div>
+                            <input type="file" id="brand-logo-file" accept="image/*" style="display: none;">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="brand-website">官方网站</label>
+                        <input type="url" id="brand-website" name="brandWebsite" placeholder="https://example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="brand-status">状态</label>
+                        <select id="brand-status" name="brandStatus">
+                            <option value="active">启用</option>
+                            <option value="inactive">禁用</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeAddBrandModal()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="submitAddBrand()">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 商品查看/编辑通用模态框 -->
+    <div id="product-modal" class="modal" style="display:none;">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">
+                <h3 id="product-modal-title">商品</h3>
+                <button class="modal-close" onclick="closeProductModal()">×</button>
+            </div>
+            <div class="modal-body" id="product-modal-body"></div>
+        </div>
+    </div>
+
+    <script>
+        // 注意：已将公共函数暴露到全局；此处仅做轻量页面初始化，避免与外部脚本重复
+        // 页面特定的初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 刷新时重定向到数据总览
+            if (performance.navigation.type === 1) { // 刷新页面
+                window.location.href = 'index.html';
+            }
+            
+            // 使用公共工具栏逻辑设置菜单状态
+            setMenuState('products');
+            
+            // 加载品牌数据到选择框
+            loadBrandsToSelect();
+        });
+        // 查询功能（其余交互已由外部脚本负责）
+        document.getElementById('search-products-btn')?.addEventListener('click', function() {
+            const productId = document.getElementById('product-id-filter').value;
+            const productName = document.getElementById('product-name-filter').value;
+            const brandName = document.getElementById('brand-name-filter').value;
+            const categoryName = document.getElementById('category-name-filter').value;
+            const status = document.getElementById('status-filter').value;
+            
+            alert(`正在查询商品...\n商品编号: ${productId}\n商品名称: ${productName}\n品牌名称: ${brandName}\n分类名称: ${categoryName}\n状态: ${status}`);
+        });
+
+        // 重置功能
+        document.getElementById('reset-product-filters-btn')?.addEventListener('click', function() {
+            document.getElementById('product-id-filter').value = '';
+            document.getElementById('product-name-filter').value = '';
+            document.getElementById('brand-name-filter').value = '';
+            document.getElementById('category-name-filter').value = '';
+            document.getElementById('status-filter').value = '';
+        });
+
+        // 品牌查询功能
+        document.getElementById('search-brands-btn')?.addEventListener('click', function() {
+            const productName = document.getElementById('brand-product-name-filter').value;
+            const brandId = document.getElementById('brand-id-filter').value;
+            
+            alert(`正在查询品牌...\n商品名称: ${productName}\n品牌ID: ${brandId}`);
+        });
+
+        // 品牌重置功能
+        document.getElementById('reset-brand-filters-btn')?.addEventListener('click', function() {
+            document.getElementById('brand-product-name-filter').value = '';
+            document.getElementById('brand-id-filter').value = '';
+        });
+
+        // 批量编辑品牌
+        document.getElementById('batch-edit-brands-btn')?.addEventListener('click', function() {
+            const selectedBrands = document.querySelectorAll('.brand-select:checked');
+            if (selectedBrands.length === 0) {
+                alert('请先选择要编辑的品牌！');
+                return;
+            }
+            alert(`正在批量编辑 ${selectedBrands.length} 个品牌...`);
+        });
+
+        // 批量禁用品牌
+        document.getElementById('batch-disable-brands-btn')?.addEventListener('click', function() {
+            const selectedBrands = document.querySelectorAll('.brand-select:checked');
+            if (selectedBrands.length === 0) {
+                alert('请先选择要禁用的品牌！');
+                return;
+            }
+            if (confirm(`确定要禁用 ${selectedBrands.length} 个品牌吗？`)) {
+                alert(`已禁用 ${selectedBrands.length} 个品牌！`);
+            }
+        });
+
+        // 状态切换按钮功能
+        document.querySelectorAll('.status-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                // 移除所有按钮的active类
+                document.querySelectorAll('.status-btn').forEach(b => b.classList.remove('active'));
+                // 给当前按钮添加active类
+                this.classList.add('active');
+                // 更新隐藏的select值
+                const statusFilter = document.getElementById('status-filter');
+                if (statusFilter) {
+                    statusFilter.value = this.getAttribute('data-status');
+                }
+                // 重新渲染列表
+                currentPage = 1;
+                renderProductListFromLocal();
+            });
+        });
+
+        // 搜索和重置功能
+        document.getElementById('search-products-btn')?.addEventListener('click', function() {
+            currentPage = 1; // 重置到第一页
+            renderProductListFromLocal();
+        });
+        
+        document.getElementById('reset-product-filters-btn')?.addEventListener('click', function() {
+            // 清空所有筛选条件
+            document.getElementById('product-id-filter').value = '';
+            document.getElementById('product-name-filter').value = '';
+            document.getElementById('brand-name-filter').value = '';
+            document.getElementById('category-name-filter').value = '';
+            // 重置状态按钮
+            document.querySelectorAll('.status-btn').forEach(b => b.classList.remove('active'));
+            document.querySelector('.status-btn[data-status=""]').classList.add('active');
+            const statusFilter = document.getElementById('status-filter');
+            if (statusFilter) statusFilter.value = '';
+            currentPage = 1; // 重置到第一页
+            renderProductListFromLocal();
+        });
+
+        // 其余初始化（字符计数/分类/图片/表单）由外部 product.js 负责，避免重复绑定
+    </script>
+</body>
+</html>
