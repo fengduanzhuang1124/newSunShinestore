@@ -1,205 +1,83 @@
-# **SunShineNewStore - 微信小程序电商系统与AI智能客服**
+# SunShineNewStore
 
-## **项目提案 (Project Proposal)**
+SunShineNewStore 是一个面向微信小程序和 Web 管理员的电商系统，后端采用 Node.js、Express 和 MySQL。项目目标包括商品、库存、购物车、订单、客户、运营管理，以及后续的支付和 AI 能力。
 
-### **1. 项目背景与目标 (Project Background & Objective)**
+当前仓库已经形成主要页面和 API 骨架，但仍处于“核心链路整合和质量治理”阶段，不应视为生产就绪系统。具体状态见 [项目现状与开发路线](docs/project-status-and-roadmap.md)。
 
-#### **1.1 项目背景 (Background)**
-本项目旨在开发一个综合性的电商管理系统，包含面向客户的微信小程序前端和具备AI智能功能的后端系统。该解决方案将为用户提供无缝的购物体验，同时集成人工智能技术来增强客户服务和产品推荐功能。
+当前第一优先级已经调整为独立开发 Sunshine Inventory Management System 外挂进销存系统。该系统第一阶段不修改、不替换和不连接第三方 POS，先实现多门店基础、扫码、到期日期、库存流水和临期提醒。
 
-#### **1.2 项目目标 (Objectives)**
-- 在微信小程序上提供流畅、安全的购物体验
-- 实现具有强大认证和基于角色访问控制的可扩展后端系统
-- 集成基于用户行为和偏好的AI智能产品推荐
-- 开发智能客服系统，减少人工客服工作负担
-- 实现前后端之间的高效数据管理和实时通信
+## 当前状态
 
-### **2. 项目愿景与概念 (Project Vision & Concept)**
+| 模块 | 状态 | 说明 |
+| --- | --- | --- |
+| 用户注册、登录、JWT | 已有基础 | 权限和安全默认值需要整改 |
+| 微信登录 | 已有基础 | 支持 mock 和真实微信流程 |
+| 商品、品牌 | 部分完成 | 后端 API 已有，管理端仍有本地数据 |
+| 购物车 | 已有基础 | 支持增删改查 |
+| 库存和订单 | 部分完成 | 事务、并发和状态机需要完善 |
+| 客户管理 | 部分完成 | 管理端尚未完整接通 |
+| 运费和优惠券 | 部分完成 | 运费 SQL 兼容性、优惠券结算待修复 |
+| 自动测试、CI/CD | 未完成 | 当前没有项目级测试体系 |
+| AI 推荐、智能客服 | 规划中 | 核心交易闭环稳定后开发 |
 
-#### **2.1 技术栈 (Technology Stack)**
-- **后端**: Node.js + Express + MySQL，采用MVC架构
-- **前端**: uni-app + Vue.js，实现跨平台开发
-- **AI集成**: OpenAI API / 预训练AI模型
-- **安全**: JWT认证、bcryptjs加密、微信域名验证
-- **数据库**: MySQL，优化数据库设计
+“已有基础”表示仓库中存在主要实现，不表示已经通过完整联调、安全或生产验收。
 
-#### **2.2 核心功能 (Core Features)**
+## 技术栈
 
-##### **2.2.1 用户管理系统 (User Management System)**
-- 用户注册和登录（用户名密码方式）
-- 微信小程序一键登录集成
-- 基于JWT token的认证
-- 基于角色的访问控制（管理员/客户）
-- 用户资料管理
+- 后端：Node.js、Express 5、MySQL、`mysql2/promise`
+- 认证：JWT、bcryptjs
+- 小程序：uni-app、Vue
+- 管理后台：Vue 3、Vite、Element Plus、Axios
+- 旧管理后台：原生 HTML/CSS/JavaScript，仅保留兼容维护
 
-##### **2.2.2 产品管理系统 (Product Management System)**
-- 产品目录和分类
-- 产品搜索和筛选
-- 产品状态管理（上架/下架）
-- 管理员产品CRUD操作
-- 产品图片管理
+## 项目结构
 
-##### **2.2.3 订单管理系统 (Order Management System)**
-- 购物车功能
-- 订单创建和处理
-- 订单状态跟踪
-- 支付集成（未来增强）
-- 订单历史管理
-
-##### **2.2.4 AI智能功能 (AI-Powered Features)**
-- **智能产品推荐**
-  - 用户行为分析（浏览、搜索、购买历史）
-  - 产品特征匹配
-  - 个性化推荐引擎
-  - 与现有产品数据库集成
-
-- **智能客服系统**
-  - 常见问题自动回复
-  - FAQ管理系统
-  - 客户咨询路由
-  - 回复质量监控
-
-#### **2.3 创新与改进 (Innovations & Improvements)**
-- 封装工具函数，提高代码复用性
-- 优化数据库设计，减少冗余
-- 集成微信域名验证，确保API调用安全
-- AI驱动的客户体验增强
-- 使用uni-app框架实现跨平台开发
-
-### **3. 技术实现细节 (Technical Implementation Details)**
-
-#### **3.1 后端架构 (Backend Architecture)**
-```
-控制器（业务逻辑）
-├── userController.js - 用户管理
-├── productController.js - 产品操作
-├── orderController.js - 订单处理
-└── aiController.js - AI智能功能
-
-路由（API端点）
-├── /api/users - 用户操作
-├── /api/products - 产品管理
-├── /api/orders - 订单处理
-└── /api/ai - AI服务
-
-中间件
-├── 认证
-├── 授权
-└── 错误处理
-```
-
-#### **3.2 前端架构 (Frontend Architecture)**
-```
-页面
-├── 账户（登录/注册/个人资料）
-├── 首页（产品浏览）
-├── 购物（购物车/订单）
-└── 管理（管理员仪表板）
-
-工具类
-├── request.js - API请求封装
-└── router.js - 导航管理
-```
-
-#### **3.3 AI集成策略 (AI Integration Strategy)**
-```
-用户交互 → 后端API → AI服务 → 响应
-     ↓
-数据收集 → 行为分析 → 模型优化
-```
-
-### **4. 项目时间线（10周规划）**
-
-| 阶段 | 时间 | 主要任务 | 交付物 |
-|------|------|----------|--------|
-| **第1周** | 2025-07-28 → 2025-08-03 | • 项目环境搭建<br>• 需求分析和设计<br>• 数据库设计<br>• 基础架构搭建 | • 项目框架<br>• 数据库schema<br>• 开发环境配置 |
-| **第2周** | 2025-08-04 → 2025-08-10 | • 后端API开发<br>• 用户认证系统<br>• 基础CRUD操作<br>• 前端页面结构 | • 用户注册/登录API<br>• 基础产品管理API<br>• 前端页面框架 |
-| **第3周** | 2025-08-11 → 2025-08-17 | • 前端功能开发<br>• 前后端集成<br>• 微信登录集成<br>• 基础UI/UX | • 完整的用户界面<br>• 微信登录功能<br>• 基础购物流程 |
-| **第4周** | 2025-08-18 → 2025-08-24 | • 订单系统开发<br>• 购物车功能<br>• 管理员后台<br>• 权限管理 | • 订单管理功能<br>• 购物车系统<br>• 管理员界面 |
-| **第5周** | 2025-08-25 → 2025-08-31 | • AI API集成<br>• 产品推荐系统<br>• 用户行为分析<br>• 数据收集 | • AI推荐功能<br>• 用户行为跟踪<br>• 推荐算法基础 |
-| **第6周** | 2025-09-01 → 2025-09-07 | • 智能客服开发<br>• FAQ系统<br>• 自动回复功能<br>• 客服路由 | • 智能客服系统<br>• FAQ管理<br>• 自动回复功能 |
-| **第7周** | 2025-09-08 → 2025-09-14 | • 系统优化<br>• 性能测试<br>• 安全审计<br>• 错误处理 | • 性能优化报告<br>• 安全测试结果<br>• 错误修复 |
-| **第8周** | 2025-09-15 → 2025-09-21 | • 全面测试<br>• 用户验收测试<br>• 功能完善<br>• 文档编写 | • 测试报告<br>• 用户手册<br>• 技术文档 |
-| **第9周** | 2025-09-22 → 2025-09-28 | • 部署准备<br>• 生产环境配置<br>• 监控系统<br>• 备份策略 | • 生产环境<br>• 监控仪表板<br>• 部署文档 |
-| **第10周** | 2025-09-29 → 2025-10-05 | • 最终测试<br>• 用户培训<br>• 系统交付<br>• 项目总结 | • 完整系统<br>• 培训材料<br>• 项目总结报告 |
-
-### **5. 风险评估与缓解 (Risk Assessment & Mitigation)**
-
-#### **5.1 技术风险 (Technical Risks)**
-- **AI API可靠性**: 实现备用机制
-- **微信平台变化**: 定期监控和更新
-- **数据库性能**: 优化查询和索引
-- **安全漏洞**: 定期安全审计
-
-#### **5.2 业务风险 (Business Risks)**
-- **用户采用**: 全面的用户测试和反馈
-- **数据隐私**: 实施严格的数据保护措施
-- **可扩展性**: 为未来增长和扩展而设计
-
-### **6. 成功指标 (Success Metrics)**
-
-#### **6.1 技术指标 (Technical Metrics)**
-- 系统响应时间 < 2秒
-- API正常运行时间 > 99.5%
-- 用户认证成功率 > 95%
-- AI推荐准确率 > 80%
-
-#### **6.2 业务指标 (Business Metrics)**
-- 用户参与率
-- 客户满意度评分
-- 支持工单减少
-- 转化率提升
-
-### **7. 未来增强功能 (Future Enhancements)**
-
-#### **7.1 第四阶段：高级功能**
-- 支付网关集成
-- 高级分析仪表板
-- 多语言支持
-- 推送通知系统
-- 社交媒体集成
-
-#### **7.2 第五阶段：AI增强**
-- 自定义AI模型训练
-- 高级推荐算法
-- 自然语言处理改进
-- 预测分析
-
-### **8. 结论 (Conclusion)**
-
-本项目代表了电商开发的现代方法，将传统Web技术与前沿AI功能相结合。智能功能的集成将提供竞争优势，同时保持现代电商平台所需的可靠性和安全性。
-
-10周的时间线确保了每个阶段都有充足的时间进行开发、测试和优化，模块化架构确保可扩展性和可维护性，而AI驱动的功能将增强用户体验和运营效率。项目规划现实可行，考虑了开发和测试阶段，确保最终产品的高质量交付。
-
----
-
-## **项目结构**
-
-```
+```text
 newSunShinestore/
-├── backend/                 # 后端服务
-│   ├── controllers/         # 控制器
-│   ├── models/             # 数据模型
-│   ├── routes/             # 路由
-│   ├── sql/                # 数据库脚本
-│   ├── db.js               # 数据库连接
-│   ├── index.js            # 服务器入口
-│   └── initDatabase.js     # 数据库初始化
-└── frontend/               # 前端应用
-    └── newSunShineFrontend/ # uni-app 项目
-        ├── pages/          # 页面
-        ├── components/     # 组件
-        └── static/         # 静态资源
+├── AGENTS.md                         # 仓库开发和代理规范
+├── CHANGELOG.md                      # 版本变更记录
+├── backend/
+│   ├── controllers/                  # 当前业务与数据库访问逻辑
+│   ├── middleware/                   # 认证和参数验证
+│   ├── routes/                       # REST API 路由
+│   └── sql/                          # 数据库初始化脚本
+├── frontend/
+│   ├── admin-vue/                    # 主 Web 管理后台
+│   ├── admin/                        # 旧版静态管理后台
+│   └── newSunShineFrontend/          # uni-app 微信小程序
+└── docs/
+    ├── README.md                     # 文档索引
+    ├── development-standards.md      # 开发流程与质量规范
+    ├── project-status-and-roadmap.md # 当前状态和阶段路线
+    └── templates/                    # 项目记录模板
 ```
 
-## **快速开始**
+## 本地运行
 
-### **1. 环境准备**
-- Node.js (v14+)
-- MySQL (v8.0+)
-- HBuilderX (用于运行uni-app)
+### 前置条件
 
-### **2. 后端设置**
+- Node.js：建议使用当前维护中的 LTS 版本
+- MySQL 8.x
+- HBuilderX 和微信开发者工具（运行小程序时）
+
+### 后端
+
+1. 在 `backend/` 中创建本地 `.env`，至少配置：
+
+```dotenv
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=replace_me
+DB_NAME=newstore
+JWT_SECRET=replace_with_a_long_random_secret
+WECHAT_APPID=
+WECHAT_SECRET=
+WECHAT_MOCK=true
+PORT=3000
+```
+
+2. 安装依赖并初始化本地数据库：
+
 ```bash
 cd backend
 npm install
@@ -207,5 +85,102 @@ npm run init-db
 npm start
 ```
 
-### **3. 前端设置**
-使用 HBuilderX 打开 `frontend/newSunShineFrontend` 目录进行编译和预览。
+健康检查：
+
+```text
+GET http://localhost:3000/health
+```
+
+警告：初始化脚本会创建示例账号和商品，只适用于本地开发。使用生产环境前必须建立正式 migration 和安全 seed 流程。
+
+### Vue 管理后台
+
+```bash
+cd frontend/admin-vue
+npm install
+npm run dev
+```
+
+当前管理端仍有 API 地址、token 键、模拟数据和本地存储等待整合的问题。不要使用 mock 登录作为生产认证。
+
+### 微信小程序
+
+使用 HBuilderX 打开 `frontend/newSunShineFrontend`，运行到微信小程序。API 地址统一通过 `utils/request.js` 的 BaseURL 配置，不要在页面中增加硬编码地址。
+
+## 核心业务范围
+
+当前优先交付：
+
+1. 安全的用户认证和管理员权限；
+2. 商品、品牌和分类管理；
+3. 购物车；
+4. 可靠的库存扣减与订单事务；
+5. 客户、订单、运费和发货管理；
+6. 测试、部署、监控和备份基线。
+
+后续增强：
+
+- 微信支付、退款、售后和物流追踪；
+- 客户标签、通知和高级运营报表；
+- AI 推荐、FAQ 和智能客服；
+- 多语言、预测分析和营销自动化。
+
+## 开发路线
+
+| 阶段 | 目标 |
+| --- | --- |
+| 0. 需求与环境 | 确认门店流程、数据库/API 设计并准备 Node.js 和 Docker |
+| 1. 库存数据与 API | 多门店、仓库、商品、多条码、多日期、流水、权限和审计 |
+| 2. 扫码库存 MVP | 扫码、初始库存、入库、手工出库、调拨、盘点和临期提醒 |
+| 3. 门店试运行 | 局域网部署、备份恢复、员工培训并发布 v0.1.0 |
+| 4. 统一销售管理 | 订单、物流、英文网页、小程序和人工微信订单 |
+| 5. 外部整合与 AI | POS 对账、销售分析和 AI 员工辅助客服 |
+
+## 开发和贡献
+
+开始修改前请阅读：
+
+- [AGENTS.md](AGENTS.md)
+- [外挂库存业务需求](docs/01-Business-Requirement.md)
+- [外挂库存技术设计](docs/02-Technical-Design.md)
+- [外挂库存数据库设计](docs/03-Database-Design.md)
+- [外挂库存 API 设计](docs/04-API-Documentation.md)
+- [开发日志](docs/05-Development-Log.md)
+- [测试报告](docs/06-Testing-Report.md)
+- [开发规范](docs/development-standards.md)
+- [集成检查清单](docs/integration-checklist.md)
+- [交互指南](docs/interaction-guide-v1.md)
+- [CHANGELOG.md](CHANGELOG.md)
+
+项目记录模板：
+
+- [开发日志](docs/templates/development-log-template.md)
+- [测试报告](docs/templates/test-report-template.md)
+- [部署记录](docs/templates/deployment-record-template.md)
+- [每周总结](docs/templates/weekly-summary-template.md)
+
+## 安全要求
+
+- 不提交 `.env`、密码、token、微信密钥或数据库备份。
+- 公共注册接口不得创建管理员。
+- 管理接口必须同时验证身份和管理员角色。
+- 订单和库存必须在同一数据库连接的事务中处理。
+- 禁止将 mock token、默认 JWT secret 或硬编码管理密码用于生产。
+- 发现安全问题时先记录为 P0 Issue，再进行最小范围修复和回归测试。
+
+## 原始项目计划
+
+项目最初按 10 周规划：
+
+1. 环境、需求和数据库设计；
+2. API、认证和基础 CRUD；
+3. 前端、微信登录和前后端集成；
+4. 订单、购物车、管理后台和权限；
+5. AI 推荐和行为分析；
+6. 智能客服和 FAQ；
+7. 性能、安全和错误处理；
+8. 全面测试、验收和文档；
+9. 生产环境、监控和备份；
+10. 最终测试、培训和交付。
+
+当前应从安全与核心交易闭环重新建立可验证基线，再继续第 5–10 周的高级功能。
