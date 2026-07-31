@@ -6,6 +6,8 @@ SunShineNewStore 是一个面向微信小程序和 Web 管理员的电商系统�
 
 当前第一优先级已经调整为独立开发 Sunshine Inventory Management System 外挂进销存系统。该系统第一阶段不修改、不替换和不连接第三方 POS，先实现多门店基础、扫码、到期日期、库存流水和临期提醒。
 
+截至2026-07-31，`inventory-system/` 独立工作区、NestJS API、Vue 3 管理端、Prisma 7 Schema 和首个 MySQL migration 已建立。当前只实现基础健康检查和地基展示页，登录、库存事务和扫码页面尚未实现。
+
 ## 当前状态
 
 | 模块 | 状态 | 说明 |
@@ -45,6 +47,10 @@ newSunShinestore/
 │   ├── admin-vue/                    # 主 Web 管理后台
 │   ├── admin/                        # 旧版静态管理后台
 │   └── newSunShineFrontend/          # uni-app 微信小程序
+├── inventory-system/                 # 新外挂库存系统（当前主线）
+│   ├── apps/api/                     # NestJS API
+│   ├── apps/admin-web/               # Vue 3 管理端
+│   └── packages/database/            # Prisma Schema 和 migration
 └── docs/
     ├── README.md                     # 文档索引
     ├── development-standards.md      # 开发流程与质量规范

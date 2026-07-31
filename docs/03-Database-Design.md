@@ -1,8 +1,8 @@
 # 03 — Database Design
 
 项目：Sunshine Inventory Management System  
-文档状态：Draft Baseline，尚未创建 migration  
-更新日期：2026-07-30
+文档状态：Schema and Initial Migration Implemented
+更新日期：2026-07-31
 
 ## 1. 原则
 
@@ -50,6 +50,13 @@ erDiagram
         varchar name
         varchar status
     }
+    store_products {
+        bigint store_id PK,FK
+        bigint product_id PK,FK
+        boolean enabled
+        int selling_price_cents
+        int minimum_stock
+    }
     product_barcodes {
         bigint id PK
         bigint organization_id FK
@@ -89,8 +96,12 @@ erDiagram
     organizations ||--o{ stores : owns
     stores ||--o{ warehouses : has
     organizations ||--o{ products : owns
+    stores ||--o{ store_products : configures
+    products ||--o{ store_products : available_as
     products ||--o{ product_barcodes : has
     products ||--o{ product_batches : has
+    products ||--o{ stock_movements : moves
+    products ||--o{ inventory_balances : stocked_as
     warehouses ||--o{ stock_movements : records
     product_batches ||--o{ stock_movements : affects
     warehouses ||--o{ inventory_balances : summarizes
@@ -179,6 +190,18 @@ erDiagram
 
 条码必须使用字符串保存，避免前导零丢失。
 
+### 3.5A `store_products`
+
+门店和商品为多对多关系。商品主档属于企业，门店不复制商品，而是在此表保存门店级设置：
+
+- `store_id`
+- `product_id`
+- `enabled`
+- `selling_price_cents`（可空，使用整数分避免浮点金额）
+- `minimum_stock`（可空）
+
+复合主键：`(store_id, product_id)`。库存数量不保存在此表，仍由仓库、商品、到期批次和库存流水计算。
+
 ### 3.6 `product_batches`
 
 员工无需填写批次号，系统用内部 `id` 区分记录。
@@ -188,13 +211,16 @@ erDiagram
 | `id` | BIGINT | 主键 |
 | `organization_id` | BIGINT | 企业范围 |
 | `product_id` | BIGINT | 所属商品 |
-| `expiry_date` | DATE | 必填 |
+| `expiry_date` | DATE | 必填；只知道年月时内部使用该月最后一天计算临期 |
+| `expiry_precision` | ENUM | `MONTH`=只知道年月，`DATE`=完整日期 |
 | `supplier_batch_no` | VARCHAR(100) | 可空 |
 | `status` | VARCHAR(20) | `active/expired/quarantined` |
 | `created_by` | BIGINT | 操作人 |
 | `created_at` | DATETIME | 创建时间 |
 
-第一阶段建议唯一约束：`(organization_id, product_id, expiry_date)`，即同一商品和同一日期合并为一个内部批次。
+唯一约束：`(organization_id, product_id, expiry_date, expiry_precision)`。月份精度和完整日期分开保存，API 在 `MONTH` 精度下只返回 `YYYY-MM`，不得向员工显示内部计算日。
+
+商品名称完全相同、但条码或到期日期不同的记录应使用同一个 `products.id`。条码保存在 `product_barcodes`，日期库存保存在 `product_batches`；总库存为该商品全部日期余额之和，不为每个条码创建独立商品主档。
 
 ### 3.7 `stock_movements`
 
@@ -343,7 +369,7 @@ reference_type = SHELF_REPLENISHMENT
 ## 5. 关键索引
 
 - `product_barcodes(organization_id, barcode)` 唯一索引；
-- `product_batches(organization_id, product_id, expiry_date)` 唯一索引；
+- `product_batches(organization_id, product_id, expiry_date, expiry_precision)` 唯一索引；
 - `inventory_balances(warehouse_id, product_id, batch_id)` 主键；
 - `stock_movements(organization_id, created_at)`；
 - `stock_movements(product_id, batch_id, created_at)`；
@@ -364,12 +390,61 @@ reference_type = SHELF_REPLENISHMENT
 
 ## 7. migration 状态
 
-本文件只完成逻辑设计，尚未：
+已完成：
 
-- 创建 Prisma Schema；
-- 创建 migration；
-- 连接 MySQL；
-- 创建 seed；
-- 执行升级或回滚测试。
+- Prisma 7 Schema；
+- 初始 MySQL migration：`202607310001_inventory_foundation`；
+- 公司、门店、门店商品配置、仓库、商品、多条码、多日期、权限、流水、余额、调拨、临期设置和审计模型；
+- Schema format、validate 和 Client generate；
+- 关键模型及唯一约束的契约测试；
+- migration 中的数量和临期阈值 CHECK 约束。
+- 在 MySQL 8.4.11 容器从空数据库成功应用初始 migration；
+- 验证20张数据库表、migration 完成状态和7个 CHECK 约束。
 
-因此数据库状态为“设计完成初稿，尚未实施”。
+尚未完成：
+
+- migration 回滚/恢复演练；
+- 正式开发环境 seed 命令；
+- 完整库存事务服务与并发测试；
+- 企业范围跨表一致性的服务层校验；
+- 调拨来源仓库与目标仓库不得相同的服务层校验（MySQL 不允许在当前外键列上使用该 CHECK）。
+
+## 8. 数据库连接与集成测试
+
+- `@sunshine/database` 提供统一的 Prisma Client 创建方法；
+- NestJS `PrismaService` 在模块启动和关闭时连接、释放数据库；
+- 开发库使用 `DATABASE_URL`；
+- 集成测试使用独立的 `TEST_DATABASE_URL`，数据库名必须以 `_test` 结尾；
+- 测试夹具只创建虚构的企业、门店、仓库、员工、商品、条码和到期日期；
+- 每项集成测试前按外键顺序清理测试业务表，不关闭外键保护，不处理 `_prisma_migrations`。
+
+已实测：
+
+- 初始 migration 可应用到空测试库；
+- Prisma 可真实连接 MySQL 8.4；
+- 企业内重复条码被拒绝；
+- 同商品、同到期日期的重复批次行被拒绝；
+- 负库存汇总被拒绝；
+- 事务中流水违反非零约束时，先前的库存汇总写入一并回滚。
+
+## 9. 登录与首个开发账号
+
+第二个 migration：`202607310002_user_password_state`。
+
+- `users.password_hash`：bcrypt 哈希，不保存或返回明文密码；
+- `users.must_change_password`：临时密码账号为 `true`；
+- 首个开发员工由一次性初始化命令创建，同时建立企业、第一门店、主仓库、管理员角色、门店角色关系和仓库权限；
+- 初始化命令发现同名账号时拒绝覆盖，避免意外重置已有密码；
+- 临时密码只在命令成功时输出一次，不写入代码、文档、日志模板或 Git。
+
+2026-07-31扫码联调已在开发库产生一条虚构测试商品数据和一条 `RECEIPT` 流水，用于验证页面到数据库的完整链路；上线前必须清理开发测试数据。
+
+## 10. 多条码库存聚合规则
+
+- 一个 `products.id` 可以关联多个 `product_barcodes.barcode`；
+- 条码只用于识别商品，不是库存汇总维度；
+- 库存维度为 `organization_id + warehouse_id + product_id + batch_id`；
+- 商品总数量为该商品所有到期批次 `inventory_balances.quantity` 之和；
+- SQL查询同时连接多条码和多批次时会形成笛卡尔重复，报表必须分别聚合或使用子查询，不能直接对连接结果求和；
+- 上货架出库写入 `stock_movements.quantity_delta < 0`，并同步减少对应日期的 `inventory_balances.quantity`；
+- 上架商品暂不建立货架余额，因此仓库总库存会减少，门店全量可售库存仍不可得。

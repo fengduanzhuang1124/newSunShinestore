@@ -1,9 +1,9 @@
 # 04 — API Documentation
 
 项目：Sunshine Inventory Management System  
-版本：Draft v0.1  
-状态：设计稿，接口尚未实现  
-更新日期：2026-07-30
+版本：Foundation v0.1
+状态：仅健康检查已实现，业务接口仍为设计稿
+更新日期：2026-07-31
 
 ## 1. 通用约定
 
@@ -57,6 +57,23 @@ Idempotency-Key: <uuid>
 权限还必须限定门店和仓库范围。
 
 ## 3. 认证
+
+### `GET /health`
+
+实施状态：已实现。
+
+```json
+{
+  "code": 200,
+  "message": "Inventory API is healthy",
+  "data": {
+    "service": "sunshine-inventory-api",
+    "status": "ok"
+  }
+}
+```
+
+以下认证与业务接口仍未实现。
 
 ### `POST /auth/login`
 
@@ -153,11 +170,22 @@ Idempotency-Key: <uuid>
 
 ```json
 {
-  "expiryDate": "2027-08-01"
+  "expiryMonth": "2027-08",
+  "expiryDay": 1
 }
 ```
 
-同一商品和日期已存在时返回现有记录，不重复创建。
+`expiryDay` 可省略；年份和月份必填。省略时响应日期显示为 `YYYY-MM`，并返回 `expiryPrecision: "MONTH"`。同一商品、日期和日期精度已存在时返回现有记录，不重复创建。
+
+前端应把 `expiryMonth` 与可选的 `expiryDay` 组合显示为一个“到期日期”控件区域；这是视觉合并，API 字段仍分开传输，从而准确表达“日未标明”。
+
+桌面端请求表单按“条码、商品名、到期日期、数量”一行呈现；这只是前端布局约定，不改变 `POST /inventory/scan-receive` 请求结构。
+
+USB HID扫码枪只产生本地键盘输入，扫码就绪状态不调用后端API。扫码文本提交后才调用现有搜索或入库接口。
+
+未来PWA或Tauri管理员小工具复用本文件现有登录、搜索、入库和出库接口。桌面壳不得直接持有数据库凭据或绕过JWT、门店角色及仓库权限。
+
+管理页面不得直接显示 class-validator 的英文属性错误；到期字段校验失败时统一转为简短中文提示。网页与 API DTO 发生版本不一致时，应先重启 API，失败请求不会生成库存流水。
 
 ## 7. 当前库存
 
@@ -351,4 +379,71 @@ GET /audit-logs
 
 ## 14. 实施状态
 
-本文件为 API 契约初稿。当前没有对应 NestJS controller、service、数据库 migration 或自动测试，不得标记为已上线接口。
+NestJS API 骨架、`GET /api/v1/health`、Prisma Schema、初始 migration、Prisma 数据库连接服务和自动测试已经实现。API 应用启动时建立数据库连接，关闭时释放连接；当前健康接口仍只表示 API 进程健康，不等同于完整业务就绪检查。
+
+已实现：
+
+| 方法 | 路径 | 状态 |
+| --- | --- | --- |
+| POST | `/auth/login` | 已实现，返回JWT与员工资料 |
+| GET | `/inventory/barcode/:barcode` | 已实现，要求查看权限 |
+| GET | `/inventory/search?q=` | 已实现，按关键词或条码返回商品聚合库存 |
+| POST | `/inventory/scan-receive` | 已实现，要求入库权限 |
+| POST | `/inventory/manual-issue` | 已实现，按日期出库上货架 |
+
+`POST /inventory/scan-receive`：
+
+```json
+{
+  "barcode": "0942999999001",
+  "productName": "扫码测试商品",
+  "expiryMonth": "2027-07",
+  "expiryDay": 31,
+  "quantity": 6
+}
+```
+
+成功响应增加 `receivedAt`（ISO 8601），来源为本次不可变入库流水的 `created_at`。该时间由服务器生成，不接受客户端传入或修改。
+
+登录接口允许既有密码进入凭据验证，不在登录DTO重复执行密码强度规则；正式密码强度应在管理员创建员工或修改密码时检查。登录资料中的 `roles[].storeName` 用于页面显示门店，实际库存权限仍以后端仓库授权为准。
+
+完整商品维护、调拨、盘点、临期、导入和审计查询接口仍是契约草案，不得标记为已上线。当前登录尚未实现员工自行修改临时密码。
+
+扫码入库请求可选传入已有 `productId`，用于把未知新条码绑定到已有商品。服务端会验证商品属于当前企业。
+
+入库页面通过同一个 `GET /inventory/search?q=` 支持条码和商品名称部分关键词查询。完全相同的商品名称复用已有商品主档并绑定新条码；关键词命中多个不同名称时仍由员工选择。查询响应按商品主档聚合全部条码、日期库存和 `totalQuantity`。
+
+`GET /inventory/search?q=bepur` 返回：
+
+```json
+{
+  "products": [
+    {
+      "productId": "1",
+      "productName": "bepur镁",
+      "barcodes": ["9421907983356", "9421907983357"],
+      "batches": [
+        { "batchId": "1", "expiryDate": "2026-11", "expiryPrecision": "MONTH", "quantity": 7 },
+        { "batchId": "2", "expiryDate": "2027-01-03", "expiryPrecision": "DATE", "quantity": 250 }
+      ],
+      "totalQuantity": 257
+    }
+  ]
+}
+```
+
+管理页面在一次 `POST /inventory/scan-receive` 成功后会暂存本次条码；员工切换到“库存查询”时，页面自动调用 `GET /inventory/search?q=<刚入库条码>` 核对最新余额。该行为只是页面自动查询，不新增接口，也不会再次写入库存。
+
+管理页面必须把响应中每个 `batches[].expiryDate` 明确标为“到期日期”，并与同一批次的 `batches[].quantity` 成对显示；`totalQuantity` 只作为该商品全部到期日期的库存合计，不能代替批次日期信息。
+
+`POST /inventory/manual-issue`：
+
+```json
+{
+  "batchId": "1",
+  "quantity": 2,
+  "reason": "上货架"
+}
+```
+
+当前已实现扫码入库、搜索查询和手工出库上货架。调拨、盘点、临期列表、导入和审计查询接口仍是契约草案。

@@ -10,6 +10,7 @@
 # Dependencies
 node_modules/
 **/node_modules/
+.pnpm-store/
 
 # Build and generated output
 dist/
@@ -20,6 +21,7 @@ unpackage/
 **/unpackage/
 *.tsbuildinfo
 *.map
+**/generated/prisma/
 
 # Runtime data
 logs/

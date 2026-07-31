@@ -1,0 +1,414 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum RecordStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProductBatchStatus {
+  ACTIVE
+  EXPIRED
+  QUARANTINED
+}
+
+enum ExpiryPrecision {
+  MONTH
+  DATE
+}
+
+enum MovementType {
+  INITIAL_STOCK
+  RECEIPT
+  MANUAL_ISSUE
+  TRANSFER_OUT
+  TRANSFER_IN
+  STOCKTAKE_GAIN
+  STOCKTAKE_LOSS
+  DAMAGE
+  EXPIRED
+  RETURN_IN
+  RETURN_TO_SUPPLIER
+  REVERSAL
+}
+
+enum TransferStatus {
+  DRAFT
+  APPROVED
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
+}
+
+model Organization {
+  id                  BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  code                String              @unique @db.VarChar(32)
+  name                String              @db.VarChar(120)
+  timezone            String              @default("Pacific/Auckland") @db.VarChar(64)
+  currency            String              @default("NZD") @db.Char(3)
+  status              RecordStatus        @default(ACTIVE)
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+  stores              Store[]
+  products            Product[]
+  productBarcodes     ProductBarcode[]
+  productBatches      ProductBatch[]
+  users               User[]
+  roles               Role[]
+  stockMovements      StockMovement[]
+  inventoryBalances   InventoryBalance[]
+  stockTransfers      StockTransfer[]
+  expiryAlertSettings ExpiryAlertSetting?
+  auditLogs           AuditLog[]
+
+  @@map("organizations")
+}
+
+model Store {
+  id             BigInt          @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt          @map("organization_id") @db.UnsignedBigInt
+  code           String          @db.VarChar(32)
+  name           String          @db.VarChar(120)
+  address        String?         @db.VarChar(255)
+  status         RecordStatus    @default(ACTIVE)
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  warehouses     Warehouse[]
+  storeProducts  StoreProduct[]
+  userStoreRoles UserStoreRole[]
+  stockMovements StockMovement[]
+  auditLogs      AuditLog[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, status])
+  @@map("stores")
+}
+
+model StoreProduct {
+  storeId           BigInt   @map("store_id") @db.UnsignedBigInt
+  productId         BigInt   @map("product_id") @db.UnsignedBigInt
+  enabled           Boolean  @default(true)
+  sellingPriceCents Int?     @map("selling_price_cents")
+  minimumStock      Int?     @map("minimum_stock")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  store             Store    @relation(fields: [storeId], references: [id])
+  product           Product  @relation(fields: [productId], references: [id])
+
+  @@id([storeId, productId])
+  @@index([productId])
+  @@map("store_products")
+}
+
+model Warehouse {
+  id                   BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
+  storeId              BigInt                    @map("store_id") @db.UnsignedBigInt
+  code                 String                    @db.VarChar(32)
+  name                 String                    @db.VarChar(120)
+  status               RecordStatus              @default(ACTIVE)
+  createdAt            DateTime                  @default(now()) @map("created_at")
+  updatedAt            DateTime                  @updatedAt @map("updated_at")
+  store                Store                     @relation(fields: [storeId], references: [id])
+  inventoryBalances    InventoryBalance[]
+  stockMovements       StockMovement[]
+  warehousePermissions UserWarehousePermission[]
+  outgoingTransfers    StockTransfer[]           @relation("TransferFromWarehouse")
+  incomingTransfers    StockTransfer[]           @relation("TransferToWarehouse")
+  auditLogs            AuditLog[]
+
+  @@unique([storeId, code])
+  @@index([storeId, status])
+  @@map("warehouses")
+}
+
+model Product {
+  id                BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId    BigInt              @map("organization_id") @db.UnsignedBigInt
+  sku               String              @db.VarChar(64)
+  name              String              @db.VarChar(255)
+  description       String?             @db.Text
+  unit              String              @default("piece") @db.VarChar(20)
+  status            RecordStatus        @default(ACTIVE)
+  createdById       BigInt?             @map("created_by") @db.UnsignedBigInt
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+  organization      Organization        @relation(fields: [organizationId], references: [id])
+  createdBy         User?               @relation("ProductCreatedBy", fields: [createdById], references: [id])
+  storeProducts     StoreProduct[]
+  barcodes          ProductBarcode[]
+  batches           ProductBatch[]
+  stockMovements    StockMovement[]
+  inventoryBalances InventoryBalance[]
+  transferItems     StockTransferItem[]
+
+  @@unique([organizationId, sku])
+  @@index([organizationId, name])
+  @@map("products")
+}
+
+model ProductBarcode {
+  id             BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt       @map("organization_id") @db.UnsignedBigInt
+  productId      BigInt       @map("product_id") @db.UnsignedBigInt
+  barcode        String       @db.VarChar(128)
+  barcodeType    String?      @map("barcode_type") @db.VarChar(30)
+  isPrimary      Boolean      @default(false) @map("is_primary")
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  product        Product      @relation(fields: [productId], references: [id])
+
+  @@unique([organizationId, barcode])
+  @@index([productId, status])
+  @@map("product_barcodes")
+}
+
+model ProductBatch {
+  id                BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId    BigInt              @map("organization_id") @db.UnsignedBigInt
+  productId         BigInt              @map("product_id") @db.UnsignedBigInt
+  expiryDate        DateTime            @map("expiry_date") @db.Date
+  expiryPrecision   ExpiryPrecision     @default(DATE) @map("expiry_precision")
+  supplierBatchNo   String?             @map("supplier_batch_no") @db.VarChar(100)
+  status            ProductBatchStatus  @default(ACTIVE)
+  createdById       BigInt?             @map("created_by") @db.UnsignedBigInt
+  createdAt         DateTime            @default(now()) @map("created_at")
+  organization      Organization        @relation(fields: [organizationId], references: [id])
+  product           Product             @relation(fields: [productId], references: [id])
+  createdBy         User?               @relation("BatchCreatedBy", fields: [createdById], references: [id])
+  stockMovements    StockMovement[]
+  inventoryBalances InventoryBalance[]
+  transferItems     StockTransferItem[]
+
+  @@unique([organizationId, productId, expiryDate, expiryPrecision], map: "product_batches_org_product_expiry_precision_key")
+  @@index([expiryDate, status])
+  @@map("product_batches")
+}
+
+model User {
+  id                      BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId          BigInt                    @map("organization_id") @db.UnsignedBigInt
+  username                String                    @db.VarChar(80)
+  passwordHash            String                    @map("password_hash") @db.VarChar(255)
+  mustChangePassword      Boolean                   @default(true) @map("must_change_password")
+  displayName             String                    @map("display_name") @db.VarChar(120)
+  status                  RecordStatus              @default(ACTIVE)
+  createdAt               DateTime                  @default(now()) @map("created_at")
+  updatedAt               DateTime                  @updatedAt @map("updated_at")
+  organization            Organization              @relation(fields: [organizationId], references: [id])
+  storeRoles              UserStoreRole[]
+  warehousePermissions    UserWarehousePermission[]
+  performedStockMovements StockMovement[]           @relation("MovementPerformedBy")
+  createdProducts         Product[]                 @relation("ProductCreatedBy")
+  createdBatches          ProductBatch[]            @relation("BatchCreatedBy")
+  requestedTransfers      StockTransfer[]           @relation("TransferRequestedBy")
+  dispatchedTransfers     StockTransfer[]           @relation("TransferDispatchedBy")
+  receivedTransfers       StockTransfer[]           @relation("TransferReceivedBy")
+  auditLogs               AuditLog[]
+
+  @@unique([organizationId, username])
+  @@map("users")
+}
+
+model Role {
+  id             BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt           @map("organization_id") @db.UnsignedBigInt
+  code           String           @db.VarChar(50)
+  name           String           @db.VarChar(100)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  permissions    RolePermission[]
+  userStoreRoles UserStoreRole[]
+
+  @@unique([organizationId, code])
+  @@map("roles")
+}
+
+model Permission {
+  id          BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  code        String           @unique @db.VarChar(80)
+  description String?          @db.VarChar(255)
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       BigInt     @map("role_id") @db.UnsignedBigInt
+  permissionId BigInt     @map("permission_id") @db.UnsignedBigInt
+  role         Role       @relation(fields: [roleId], references: [id])
+  permission   Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserStoreRole {
+  userId    BigInt   @map("user_id") @db.UnsignedBigInt
+  storeId   BigInt   @map("store_id") @db.UnsignedBigInt
+  roleId    BigInt   @map("role_id") @db.UnsignedBigInt
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id])
+  store     Store    @relation(fields: [storeId], references: [id])
+  role      Role     @relation(fields: [roleId], references: [id])
+
+  @@id([userId, storeId, roleId])
+  @@index([storeId, roleId])
+  @@map("user_store_roles")
+}
+
+model UserWarehousePermission {
+  userId      BigInt    @map("user_id") @db.UnsignedBigInt
+  warehouseId BigInt    @map("warehouse_id") @db.UnsignedBigInt
+  canView     Boolean   @default(false) @map("can_view")
+  canReceive  Boolean   @default(false) @map("can_receive")
+  canIssue    Boolean   @default(false) @map("can_issue")
+  canTransfer Boolean   @default(false) @map("can_transfer")
+  canCount    Boolean   @default(false) @map("can_count")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  user        User      @relation(fields: [userId], references: [id])
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+
+  @@id([userId, warehouseId])
+  @@map("user_warehouse_permissions")
+}
+
+model StockMovement {
+  id             BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
+  movementNo     String         @unique @map("movement_no") @db.VarChar(40)
+  organizationId BigInt         @map("organization_id") @db.UnsignedBigInt
+  storeId        BigInt         @map("store_id") @db.UnsignedBigInt
+  warehouseId    BigInt         @map("warehouse_id") @db.UnsignedBigInt
+  productId      BigInt         @map("product_id") @db.UnsignedBigInt
+  batchId        BigInt         @map("batch_id") @db.UnsignedBigInt
+  movementType   MovementType   @map("movement_type")
+  quantityDelta  Int            @map("quantity_delta")
+  referenceType  String?        @map("reference_type") @db.VarChar(30)
+  referenceId    BigInt?        @map("reference_id") @db.UnsignedBigInt
+  reason         String?        @db.VarChar(255)
+  reversalOfId   BigInt?        @unique @map("reversal_of_id") @db.UnsignedBigInt
+  performedById  BigInt         @map("performed_by") @db.UnsignedBigInt
+  idempotencyKey String         @map("idempotency_key") @db.VarChar(64)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  store          Store          @relation(fields: [storeId], references: [id])
+  warehouse      Warehouse      @relation(fields: [warehouseId], references: [id])
+  product        Product        @relation(fields: [productId], references: [id])
+  batch          ProductBatch   @relation(fields: [batchId], references: [id])
+  performedBy    User           @relation("MovementPerformedBy", fields: [performedById], references: [id])
+  reversalOf     StockMovement? @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reversedBy     StockMovement? @relation("MovementReversal")
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, createdAt])
+  @@index([productId, batchId, createdAt])
+  @@index([warehouseId, createdAt])
+  @@map("stock_movements")
+}
+
+model InventoryBalance {
+  organizationId BigInt       @map("organization_id") @db.UnsignedBigInt
+  warehouseId    BigInt       @map("warehouse_id") @db.UnsignedBigInt
+  productId      BigInt       @map("product_id") @db.UnsignedBigInt
+  batchId        BigInt       @map("batch_id") @db.UnsignedBigInt
+  quantity       Int          @default(0)
+  version        Int          @default(0)
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  warehouse      Warehouse    @relation(fields: [warehouseId], references: [id])
+  product        Product      @relation(fields: [productId], references: [id])
+  batch          ProductBatch @relation(fields: [batchId], references: [id])
+
+  @@id([organizationId, warehouseId, productId, batchId])
+  @@index([warehouseId, productId, batchId])
+  @@map("inventory_balances")
+}
+
+model StockTransfer {
+  id              BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId  BigInt              @map("organization_id") @db.UnsignedBigInt
+  transferNo      String              @unique @map("transfer_no") @db.VarChar(40)
+  fromWarehouseId BigInt              @map("from_warehouse_id") @db.UnsignedBigInt
+  toWarehouseId   BigInt              @map("to_warehouse_id") @db.UnsignedBigInt
+  status          TransferStatus      @default(DRAFT)
+  reason          String?             @db.VarChar(255)
+  requestedById   BigInt              @map("requested_by") @db.UnsignedBigInt
+  dispatchedById  BigInt?             @map("dispatched_by") @db.UnsignedBigInt
+  receivedById    BigInt?             @map("received_by") @db.UnsignedBigInt
+  dispatchedAt    DateTime?           @map("dispatched_at")
+  receivedAt      DateTime?           @map("received_at")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+  organization    Organization        @relation(fields: [organizationId], references: [id])
+  fromWarehouse   Warehouse           @relation("TransferFromWarehouse", fields: [fromWarehouseId], references: [id])
+  toWarehouse     Warehouse           @relation("TransferToWarehouse", fields: [toWarehouseId], references: [id])
+  requestedBy     User                @relation("TransferRequestedBy", fields: [requestedById], references: [id])
+  dispatchedBy    User?               @relation("TransferDispatchedBy", fields: [dispatchedById], references: [id])
+  receivedBy      User?               @relation("TransferReceivedBy", fields: [receivedById], references: [id])
+  items           StockTransferItem[]
+
+  @@index([fromWarehouseId, status])
+  @@index([toWarehouseId, status])
+  @@map("stock_transfers")
+}
+
+model StockTransferItem {
+  id         BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  transferId BigInt        @map("transfer_id") @db.UnsignedBigInt
+  productId  BigInt        @map("product_id") @db.UnsignedBigInt
+  batchId    BigInt        @map("batch_id") @db.UnsignedBigInt
+  quantity   Int
+  transfer   StockTransfer @relation(fields: [transferId], references: [id])
+  product    Product       @relation(fields: [productId], references: [id])
+  batch      ProductBatch  @relation(fields: [batchId], references: [id])
+
+  @@unique([transferId, productId, batchId])
+  @@map("stock_transfer_items")
+}
+
+model ExpiryAlertSetting {
+  organizationId     BigInt       @id @map("organization_id") @db.UnsignedBigInt
+  earlyWarningMonths Int          @default(7) @map("early_warning_months")
+  warningMonths      Int          @default(6) @map("warning_months")
+  urgentMonths       Int          @default(3) @map("urgent_months")
+  earlyWarningLabel  String       @default("提前关注") @map("early_warning_label") @db.VarChar(50)
+  warningLabel       String       @default("临期预警") @map("warning_label") @db.VarChar(50)
+  urgentLabel        String       @default("紧急处理") @map("urgent_label") @db.VarChar(50)
+  expiredLabel       String       @default("已到期") @map("expired_label") @db.VarChar(50)
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+  organization       Organization @relation(fields: [organizationId], references: [id])
+
+  @@map("expiry_alert_settings")
+}
+
+model AuditLog {
+  id             BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt       @map("organization_id") @db.UnsignedBigInt
+  userId         BigInt       @map("user_id") @db.UnsignedBigInt
+  storeId        BigInt?      @map("store_id") @db.UnsignedBigInt
+  warehouseId    BigInt?      @map("warehouse_id") @db.UnsignedBigInt
+  action         String       @db.VarChar(100)
+  entityType     String       @map("entity_type") @db.VarChar(80)
+  entityId       String?      @map("entity_id") @db.VarChar(80)
+  requestId      String       @map("request_id") @db.VarChar(64)
+  beforeSummary  Json?        @map("before_summary")
+  afterSummary   Json?        @map("after_summary")
+  ipAddress      String?      @map("ip_address") @db.VarChar(64)
+  userAgent      String?      @map("user_agent") @db.VarChar(255)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+  store          Store?       @relation(fields: [storeId], references: [id])
+  warehouse      Warehouse?   @relation(fields: [warehouseId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@map("audit_logs")
+}

@@ -12,16 +12,23 @@
 - 多门店、多仓库、多条码和多到期日期设计初稿；
 - 权限矩阵、库存流水类型和 API 初稿；
 - Mac 开发环境检查。
+- `inventory-system/` pnpm workspace；
+- NestJS API 与健康检查；
+- Vue 3 管理端地基页面；
+- Prisma 7 Schema 和初始 MySQL migration；
+- 门店商品中间表 `store_products`；
+- 基础类型检查、Schema 契约测试和构建。
+- Node.js 24 LTS 与 Docker Desktop 开发环境；
+- MySQL 8.4.11 本地容器及初始 migration 实库验证。
 
 尚未开始：
 
-- `inventory-system/` 代码骨架；
-- NestJS/Vue 项目；
-- Prisma Schema 和 migration；
 - 扫码页面；
-- 数据库或硬件测试。
+- 登录与实际权限服务；
+- 库存写入事务；
+- 扫码枪硬件测试。
 
-当前阻塞：Node.js、npm、Docker 和 MySQL 开发环境尚未安装或不可用。
+当前环境：系统 Node.js 24.18.1、npm 11.16.0 和 Docker Desktop 29.6.2 可用；MySQL 8.4.11 容器健康运行于本机端口3307。
 
 ## 状态说明
 

@@ -1,8 +1,8 @@
 # 02 — Technical Design
 
 项目：Sunshine Inventory Management System  
-文档状态：Draft Baseline  
-更新日期：2026-07-30
+文档状态：Foundation Implemented
+更新日期：2026-07-31
 
 ## 1. 设计目标
 
@@ -44,7 +44,7 @@ newSunShinestore/
 └── docs/
 ```
 
-本次仅确认设计，不创建 `inventory-system/` 代码。
+`inventory-system/` 已于2026-07-31创建，包含 pnpm workspace、NestJS API、Vue 3 管理端、Prisma 7 Schema、首个 migration 和基础测试。登录、权限服务、库存事务和扫码页面尚未实现。
 
 ## 4. 系统架构
 
@@ -68,6 +68,8 @@ erDiagram
     ORGANIZATIONS ||--o{ STORES : owns
     STORES ||--o{ WAREHOUSES : has
     ORGANIZATIONS ||--o{ PRODUCTS : owns
+    STORES ||--o{ STORE_PRODUCTS : configures
+    PRODUCTS ||--o{ STORE_PRODUCTS : available_as
     PRODUCTS ||--o{ PRODUCT_BARCODES : identifies
     PRODUCTS ||--o{ PRODUCT_BATCHES : expires_as
     WAREHOUSES ||--o{ INVENTORY_BALANCES : holds
@@ -186,22 +188,24 @@ DRAFT → APPROVED → IN_TRANSIT → RECEIVED
 | Cursor | 已安装 |
 | Google Chrome | 已安装 |
 | Git | 2.50.1，可用 |
-| Node.js | 未找到 |
-| npm | 未找到 |
-| Docker CLI/Desktop | 未找到 |
-| MySQL CLI | 未找到 |
+| Node.js | 24.18.1，已安装 |
+| npm | 11.16.0，已安装 |
+| Docker CLI/Desktop | 29.6.2，已安装并运行 |
+| MySQL | 8.4.11，通过 Docker，端口仅绑定 `127.0.0.1:3307` |
 | 数据库 GUI | 未确认 |
 | API 测试工具 | 未确认 |
 
-开始编码前需要安装：
+开发环境建议：
 
-1. Node.js 24 LTS，建议通过 `nvm` 或 `fnm`；
+1. Node.js 24 LTS；
 2. Apple Silicon 版本 Docker Desktop；
 3. DBeaver、TablePlus 或 MySQL Workbench 之一；
 4. Bruno、Postman 或 Insomnia 之一；
 5. Cursor 的 Vue、ESLint、Prettier、Prisma 和 Docker 扩展。
 
 MySQL 建议只通过 Docker 运行，不在 macOS 同时安装第二套服务。
+
+2026-07-31补充：系统已安装 Node.js 24.18.1、npm 11.16.0 和 Docker Desktop 29.6.2。MySQL 8.4.11 容器健康运行，初始 migration 已在全新本地数据库成功执行。
 
 ## 11. 暂缓设计
 
@@ -214,3 +218,63 @@ MySQL 建议只通过 Docker 运行，不在 macOS 同时安装第二套服务�
 - 销售大屏；
 - AI 客服；
 - 多区域和门店离线双向同步。
+
+## 12. 登录与扫码入库实现
+
+- 密码使用 bcrypt 成本因子12保存，不存储明文；
+- 登录成功签发8小时 JWT，接口通过 Bearer Token 验证；
+- `must_change_password` 标记初始化账号仍在使用临时密码；
+- 扫码查询要求仓库 `can_view` 权限，扫码入库要求 `can_receive` 权限；
+- 新商品、条码、门店商品启用、到期批次、库存余额、库存流水和审计日志在一个数据库事务中写入；
+- 同一商品同一到期日期通过数据库唯一约束合并到同一内部批次；
+- 页面 API 默认连接 `http://127.0.0.1:3100/api/v1`，后续部署通过 `VITE_API_BASE_URL` 配置；
+- 第一阶段仅允许明确的本机开发页面来源跨域访问。
+- 本地开发统一在 `inventory-system/` 运行 `npm run dev`，由Corepack调用项目指定的pnpm，同时启动3100端口API和5174端口管理页面；仅启动前端无法执行查询或入库。
+
+## 13. 商品聚合与手工出库
+
+- `products` 是商品主档，`product_barcodes` 是一对多条码映射；总库存按 `product_id` 聚合，不能按条码分别相加；
+- 完全相同的商品名称复用已有商品ID；关键词命中不同名称时由员工明确选择，避免模糊匹配误合并；
+- 搜索同时匹配商品名称和条码，返回最多20个商品主档；
+- 每个商品返回全部有效条码、各到期日期库存和仓库总库存；
+- 上货架出库在事务内使用“余额大于等于出库量”的条件更新，避免并发情况下产生负库存；
+- 成功扣减后写入负数 `MANUAL_ISSUE` 流水和审计日志；任何步骤失败则整体回滚。
+
+## 14. 门店身份、入库时间与员工创建
+
+- 入库时间使用 `stock_movements.created_at` 自动生成，API同时返回 `receivedAt`，员工不填写时间；
+- 周转分析以入库流水和后续出库流水的时间差为基础；POS未接入前不得称为真实销售速度；
+- 登录资料返回员工门店角色，管理页面显示首个授权门店名称；库存接口继续按仓库权限解析实际操作范围；
+- 当前 `wf66` 绑定门店ID 1，开发环境显示名为 `sunshine1`；
+- 新员工由管理员工具创建，必须传入门店代码和名称并建立 `user_store_roles`、`user_warehouse_permissions`；不增加公共员工注册接口；
+- 固定测试密码只存在本机数据库bcrypt哈希中，不写入Git文件或文档。
+
+## 15. 管理端视觉规范
+
+- 使用阳光特产 Logo，资源位于管理端 `public/`；
+- 健康绿色为主色，橙色只用于品牌点缀；背景使用低对比网格和柔和渐变；
+- 入库、出库、查询切换使用约200ms淡入和水平位移动画；
+- 支持 `prefers-reduced-motion`，用户要求减少动画时基本关闭过渡；
+- 动画不能阻塞扫码、键盘操作或库存请求。
+- 常见USB扫码枪以HID键盘模式接入，不需要设备API、ID或序列号；页面监听条码文本和Enter后缀；
+- 页面加载和切换模式后自动聚焦扫码输入框，并根据真实焦点显示“扫码输入就绪”；无法通过浏览器焦点状态判断具体USB设备是否已连接。
+
+## 16. 管理员悬浮小工具路线
+
+### 阶段A：PWA小窗口
+
+- 为现有Vue管理端增加Web App Manifest、图标和安装入口；
+- 安装后从桌面独立窗口启动，继续访问同一NestJS API；
+- 工作量小，适合先验证紧凑查询界面，但跨平台“始终置顶”能力有限。
+
+### 阶段B：Tauri桌面壳
+
+- 使用Tauri承载现有Vue构建产物，不重写业务页面；
+- 默认窗口约420×680，可调整大小，并支持置顶、系统托盘和全局快捷键；
+- 小工具只保存短期会话Token，不包含MySQL账号，不直接连接数据库；
+- 所有查询和库存操作仍通过HTTPS/局域网NestJS API，并继续执行门店、仓库和角色权限；
+- USB扫码枪仍以HID键盘方式输入，窗口获得焦点后直接扫码；如需全局扫码必须单独评估操作系统权限。
+
+### 推荐顺序
+
+先完成当前库存MVP和门店试用，再做PWA紧凑模式；确认管理员确实需要始终置顶后再加入Tauri，避免过早维护Windows/macOS安装包和自动更新。
