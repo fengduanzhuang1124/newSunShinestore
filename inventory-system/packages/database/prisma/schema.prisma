@@ -45,6 +45,12 @@ enum TransferStatus {
   CANCELLED
 }
 
+enum StockReceiptStatus {
+  OPEN
+  COMPLETED
+  CANCELLED
+}
+
 model Organization {
   id                  BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
   code                String              @unique @db.VarChar(32)
@@ -61,6 +67,7 @@ model Organization {
   users               User[]
   roles               Role[]
   stockMovements      StockMovement[]
+  stockReceipts       StockReceipt[]
   inventoryBalances   InventoryBalance[]
   stockTransfers      StockTransfer[]
   expiryAlertSettings ExpiryAlertSetting?
@@ -83,6 +90,7 @@ model Store {
   storeProducts  StoreProduct[]
   userStoreRoles UserStoreRole[]
   stockMovements StockMovement[]
+  stockReceipts  StockReceipt[]
   auditLogs      AuditLog[]
 
   @@unique([organizationId, code])
@@ -117,6 +125,7 @@ model Warehouse {
   store                Store                     @relation(fields: [storeId], references: [id])
   inventoryBalances    InventoryBalance[]
   stockMovements       StockMovement[]
+  stockReceipts        StockReceipt[]
   warehousePermissions UserWarehousePermission[]
   outgoingTransfers    StockTransfer[]           @relation("TransferFromWarehouse")
   incomingTransfers    StockTransfer[]           @relation("TransferToWarehouse")
@@ -146,6 +155,7 @@ model Product {
   stockMovements    StockMovement[]
   inventoryBalances InventoryBalance[]
   transferItems     StockTransferItem[]
+  receiptItems      StockReceiptItem[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, name])
@@ -185,6 +195,7 @@ model ProductBatch {
   stockMovements    StockMovement[]
   inventoryBalances InventoryBalance[]
   transferItems     StockTransferItem[]
+  receiptItems      StockReceiptItem[]
 
   @@unique([organizationId, productId, expiryDate, expiryPrecision], map: "product_batches_org_product_expiry_precision_key")
   @@index([expiryDate, status])
@@ -205,6 +216,8 @@ model User {
   storeRoles              UserStoreRole[]
   warehousePermissions    UserWarehousePermission[]
   performedStockMovements StockMovement[]           @relation("MovementPerformedBy")
+  openedStockReceipts     StockReceipt[]            @relation("ReceiptOpenedBy")
+  completedStockReceipts  StockReceipt[]            @relation("ReceiptCompletedBy")
   createdProducts         Product[]                 @relation("ProductCreatedBy")
   createdBatches          ProductBatch[]            @relation("BatchCreatedBy")
   requestedTransfers      StockTransfer[]           @relation("TransferRequestedBy")
@@ -281,36 +294,83 @@ model UserWarehousePermission {
 }
 
 model StockMovement {
-  id             BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
-  movementNo     String         @unique @map("movement_no") @db.VarChar(40)
-  organizationId BigInt         @map("organization_id") @db.UnsignedBigInt
-  storeId        BigInt         @map("store_id") @db.UnsignedBigInt
-  warehouseId    BigInt         @map("warehouse_id") @db.UnsignedBigInt
-  productId      BigInt         @map("product_id") @db.UnsignedBigInt
-  batchId        BigInt         @map("batch_id") @db.UnsignedBigInt
-  movementType   MovementType   @map("movement_type")
-  quantityDelta  Int            @map("quantity_delta")
-  referenceType  String?        @map("reference_type") @db.VarChar(30)
-  referenceId    BigInt?        @map("reference_id") @db.UnsignedBigInt
-  reason         String?        @db.VarChar(255)
-  reversalOfId   BigInt?        @unique @map("reversal_of_id") @db.UnsignedBigInt
-  performedById  BigInt         @map("performed_by") @db.UnsignedBigInt
-  idempotencyKey String         @map("idempotency_key") @db.VarChar(64)
-  createdAt      DateTime       @default(now()) @map("created_at")
-  organization   Organization   @relation(fields: [organizationId], references: [id])
-  store          Store          @relation(fields: [storeId], references: [id])
-  warehouse      Warehouse      @relation(fields: [warehouseId], references: [id])
-  product        Product        @relation(fields: [productId], references: [id])
-  batch          ProductBatch   @relation(fields: [batchId], references: [id])
-  performedBy    User           @relation("MovementPerformedBy", fields: [performedById], references: [id])
-  reversalOf     StockMovement? @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  reversedBy     StockMovement? @relation("MovementReversal")
+  id             BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  movementNo     String            @unique @map("movement_no") @db.VarChar(40)
+  organizationId BigInt            @map("organization_id") @db.UnsignedBigInt
+  storeId        BigInt            @map("store_id") @db.UnsignedBigInt
+  warehouseId    BigInt            @map("warehouse_id") @db.UnsignedBigInt
+  productId      BigInt            @map("product_id") @db.UnsignedBigInt
+  batchId        BigInt            @map("batch_id") @db.UnsignedBigInt
+  movementType   MovementType      @map("movement_type")
+  quantityDelta  Int               @map("quantity_delta")
+  referenceType  String?           @map("reference_type") @db.VarChar(30)
+  referenceId    BigInt?           @map("reference_id") @db.UnsignedBigInt
+  reason         String?           @db.VarChar(255)
+  reversalOfId   BigInt?           @unique @map("reversal_of_id") @db.UnsignedBigInt
+  performedById  BigInt            @map("performed_by") @db.UnsignedBigInt
+  idempotencyKey String            @map("idempotency_key") @db.VarChar(64)
+  createdAt      DateTime          @default(now()) @map("created_at")
+  organization   Organization      @relation(fields: [organizationId], references: [id])
+  store          Store             @relation(fields: [storeId], references: [id])
+  warehouse      Warehouse         @relation(fields: [warehouseId], references: [id])
+  product        Product           @relation(fields: [productId], references: [id])
+  batch          ProductBatch      @relation(fields: [batchId], references: [id])
+  performedBy    User              @relation("MovementPerformedBy", fields: [performedById], references: [id])
+  reversalOf     StockMovement?    @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reversedBy     StockMovement?    @relation("MovementReversal")
+  receiptItem    StockReceiptItem?
 
   @@unique([organizationId, idempotencyKey])
   @@index([organizationId, createdAt])
   @@index([productId, batchId, createdAt])
   @@index([warehouseId, createdAt])
   @@map("stock_movements")
+}
+
+model StockReceipt {
+  id             BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  receiptNo      String             @unique @map("receipt_no") @db.VarChar(40)
+  organizationId BigInt             @map("organization_id") @db.UnsignedBigInt
+  storeId        BigInt             @map("store_id") @db.UnsignedBigInt
+  warehouseId    BigInt             @map("warehouse_id") @db.UnsignedBigInt
+  receiptDate    DateTime           @map("receipt_date") @db.Date
+  status         StockReceiptStatus @default(OPEN)
+  openedById     BigInt             @map("opened_by") @db.UnsignedBigInt
+  completedById  BigInt?            @map("completed_by") @db.UnsignedBigInt
+  completedAt    DateTime?          @map("completed_at")
+  notes          String?            @db.VarChar(255)
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+  organization   Organization       @relation(fields: [organizationId], references: [id])
+  store          Store              @relation(fields: [storeId], references: [id])
+  warehouse      Warehouse          @relation(fields: [warehouseId], references: [id])
+  openedBy       User               @relation("ReceiptOpenedBy", fields: [openedById], references: [id])
+  completedBy    User?              @relation("ReceiptCompletedBy", fields: [completedById], references: [id])
+  items          StockReceiptItem[]
+
+  @@index([organizationId, receiptDate])
+  @@index([warehouseId, status, receiptDate])
+  @@index([openedById, status, receiptDate])
+  @@map("stock_receipts")
+}
+
+model StockReceiptItem {
+  id         BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  receiptId  BigInt        @map("receipt_id") @db.UnsignedBigInt
+  productId  BigInt        @map("product_id") @db.UnsignedBigInt
+  batchId    BigInt        @map("batch_id") @db.UnsignedBigInt
+  movementId BigInt        @unique @map("movement_id") @db.UnsignedBigInt
+  barcode    String        @db.VarChar(128)
+  quantity   Int
+  createdAt  DateTime      @default(now()) @map("created_at")
+  receipt    StockReceipt  @relation(fields: [receiptId], references: [id])
+  product    Product       @relation(fields: [productId], references: [id])
+  batch      ProductBatch  @relation(fields: [batchId], references: [id])
+  movement   StockMovement @relation(fields: [movementId], references: [id])
+
+  @@index([receiptId, createdAt])
+  @@index([productId, batchId])
+  @@map("stock_receipt_items")
 }
 
 model InventoryBalance {
@@ -375,13 +435,13 @@ model StockTransferItem {
 
 model ExpiryAlertSetting {
   organizationId     BigInt       @id @map("organization_id") @db.UnsignedBigInt
-  earlyWarningMonths Int          @default(7) @map("early_warning_months")
-  warningMonths      Int          @default(6) @map("warning_months")
-  urgentMonths       Int          @default(3) @map("urgent_months")
+  earlyWarningMonths Int          @default(6) @map("early_warning_months")
+  warningMonths      Int          @default(3) @map("warning_months")
+  urgentMonths       Int          @default(2) @map("urgent_months")
   earlyWarningLabel  String       @default("提前关注") @map("early_warning_label") @db.VarChar(50)
   warningLabel       String       @default("临期预警") @map("warning_label") @db.VarChar(50)
-  urgentLabel        String       @default("紧急处理") @map("urgent_label") @db.VarChar(50)
-  expiredLabel       String       @default("已到期") @map("expired_label") @db.VarChar(50)
+  urgentLabel        String       @default("紧急临期") @map("urgent_label") @db.VarChar(50)
+  expiredLabel       String       @default("已过期") @map("expired_label") @db.VarChar(50)
   updatedAt          DateTime     @updatedAt @map("updated_at")
   organization       Organization @relation(fields: [organizationId], references: [id])
 

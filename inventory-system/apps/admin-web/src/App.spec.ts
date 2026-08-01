@@ -5,6 +5,7 @@ import App from './App.vue';
 describe('App', () => {
   beforeEach(() => {
     localStorage.clear();
+    delete document.documentElement.dataset.theme;
     vi.restoreAllMocks();
   });
 
@@ -15,11 +16,22 @@ describe('App', () => {
     expect(wrapper.text()).toContain('点货入库、上货架出库和库存日期查询');
   });
 
+  it('switches between light and dark themes and remembers the choice', async () => {
+    const wrapper = mount(App);
+    const toggle = wrapper.get('button[aria-label="切换到深色模式"]');
+
+    await toggle.trigger('click');
+
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(localStorage.getItem('sunshine_inventory_theme')).toBe('dark');
+    expect(wrapper.get('button[aria-label="切换到浅色模式"]').text()).toContain('Light');
+  });
+
   it('automatically shows the recently received product after switching to inventory query', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        data: { productName: '测试商品', currentQuantity: 8 },
+        data: { productName: '测试商品', currentQuantity: 8, receiptNo: 'RK-TEST-001' },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         data: {
@@ -41,7 +53,7 @@ describe('App', () => {
     await wrapper.get('form.receive-form').trigger('submit');
     await flushPromises();
 
-    expect(wrapper.text()).toContain('可到“查询”核对');
+    expect(wrapper.text()).toContain('已加入入库单 RK-TEST-001');
     await wrapper.get('nav').findAll('button')[2].trigger('click');
     await flushPromises();
 
@@ -78,5 +90,89 @@ describe('App', () => {
     expect(wrapper.text()).toContain('纽乐植物酵素60粒');
     expect(wrapper.text()).toContain('选择这个商品入库');
     expect(wrapper.text()).toContain('到期日期');
+  });
+
+  it('shows daily receipts in the records and reports tab', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      data: {
+        warehouseName: '主仓库',
+        summary: { receiptCount: 1, productCount: 2, totalQuantity: 15 },
+        receipts: [{
+          receiptId: '1', receiptNo: 'RK-20260801-ABC123', status: 'OPEN', employeeName: '员工1',
+          createdAt: '2026-08-01T01:00:00.000Z', completedAt: null, productCount: 2, totalQuantity: 15,
+          items: [{ itemId: '1', barcode: '9400000000001', productName: '测试商品', expiryDate: '2027-08', quantity: 15, createdAt: '2026-08-01T01:00:00.000Z' }],
+        }],
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const wrapper = mount(App);
+    const tabs = wrapper.get('nav').findAll('button');
+    expect(tabs).toHaveLength(4);
+    await tabs[3].trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('记录与报表');
+    expect(wrapper.text()).toContain('RK-20260801-ABC123');
+    expect(wrapper.text()).toContain('测试商品');
+    expect(wrapper.text()).toContain('15 件');
+    expect(wrapper.text()).toContain('导出 CSV');
+  });
+
+  it('shows expiry inventory grouped by the 2, 3 and 6 month levels', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { warehouseName: '主仓库', summary: { receiptCount: 0, productCount: 0, totalQuantity: 0 }, receipts: [] },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: {
+          warehouseName: '主仓库', thresholds: { urgentMonths: 2, warningMonths: 3, earlyWarningMonths: 6 },
+          summary: { EXPIRED: 1, URGENT: 2, WARNING: 3, EARLY: 4 },
+          items: [{ productId: '1', productName: '临期测试商品', barcodes: ['9400000000002'], batchId: '9', expiryDate: '2026-09', quantity: 7, level: 'URGENT', levelLabel: '紧急临期', daysRemaining: 31 }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[3].trigger('click');
+    await flushPromises();
+    const reportButtons = wrapper.findAll('.report-switch button');
+    expect(reportButtons).toHaveLength(4);
+    await reportButtons[2].trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('2个月内紧急临期');
+    expect(wrapper.text()).toContain('临期测试商品');
+    expect(wrapper.text()).toContain('紧急临期');
+    expect(wrapper.text()).toContain('剩余 31 天');
+    expect(wrapper.text()).toContain('导出 CSV');
+  });
+
+  it('shows stocktake controls and immutable inventory movements', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { warehouseName: '主仓库', summary: { receiptCount: 0, productCount: 0, totalQuantity: 0 }, receipts: [] },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { warehouseName: '主仓库', movements: [{ movementId: '1', movementNo: 'RCV-1', movementType: 'RECEIPT', movementLabel: '入库', productName: '测试商品', barcodes: ['9400000000001'], expiryDate: '2027-08', quantityDelta: 10, reason: null, performedBy: '门店账号', createdAt: '2026-08-01T01:00:00.000Z' }] },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { warehouseName: '主仓库', productCount: 1, totalQuantity: 10, products: [{ productId: '1', productName: '测试商品', barcodes: ['9400000000001'], batches: [{ batchId: '1', expiryDate: '2027-08', expiryPrecision: 'MONTH', quantity: 10 }], totalQuantity: 10 }] },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[3].trigger('click');
+    await flushPromises();
+    const reportButtons = wrapper.findAll('.report-switch button');
+    expect(reportButtons).toHaveLength(4);
+    await reportButtons[3].trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('库存盘点');
+    expect(wrapper.text()).toContain('最近库存流水');
+    expect(wrapper.text()).toContain('确认调整');
+    expect(wrapper.text()).toContain('测试商品');
+    expect(wrapper.text()).toContain('+10');
   });
 });

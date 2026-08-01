@@ -17,6 +17,8 @@ describe('inventory database contract', () => {
     'model ProductBarcode',
     'model ProductBatch',
     'model StockMovement',
+    'model StockReceipt',
+    'model StockReceiptItem',
     'model InventoryBalance',
     'model AuditLog',
   ])('contains %s', (modelName) => {
@@ -36,5 +38,19 @@ describe('inventory database contract', () => {
     expect(schema).toContain('model StockMovement');
     expect(schema).toContain('idempotencyKey');
     expect(schema).toContain('reversalOfId');
+  });
+
+  it('groups receiving movements into auditable receipt documents', () => {
+    expect(schema).toContain('enum StockReceiptStatus');
+    expect(schema).toContain('movementId');
+    expect(schema).toContain('receiptDate');
+  });
+
+  it('uses the approved 2, 3 and 6 month expiry thresholds', () => {
+    expect(schema).toContain('urgentMonths       Int          @default(2)');
+    expect(schema).toContain('warningMonths      Int          @default(3)');
+    expect(schema).toContain('earlyWarningMonths Int          @default(6)');
+    expect(schema).toContain('urgentLabel        String       @default("紧急临期")');
+    expect(schema).toContain('expiredLabel       String       @default("已过期")');
   });
 });

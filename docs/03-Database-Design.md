@@ -2,7 +2,7 @@
 
 项目：Sunshine Inventory Management System  
 文档状态：Schema and Initial Migration Implemented
-更新日期：2026-07-31
+更新日期：2026-08-01
 
 ## 1. 原则
 
@@ -317,12 +317,13 @@ stock_transfer_items
 ```text
 expiry_alert_settings
 ├── organization_id
-├── early_warning_months = 7
-├── warning_months = 6
-├── urgent_months = 3
+├── early_warning_months = 6
+├── warning_months = 3
+├── urgent_months = 2
 ├── early_warning_label = 提前关注
 ├── warning_label = 临期预警
-└── urgent_label = 紧急处理
+├── urgent_label = 紧急临期
+└── expired_label = 已过期
 ```
 
 ### 3.12 审计
@@ -388,6 +389,8 @@ reference_type = SHELF_REPLENISHMENT
 
 已过期且仍有库存必须单独列出，不与普通临期提示混合。
 
+当前默认分级为：到期日小于门店当天日期为 `EXPIRED`；当天至2个月内为 `URGENT`；超过2个月至3个月为 `WARNING`；超过3个月至6个月为 `EARLY`。只查询当前员工有查看权限的仓库及 `quantity > 0` 的余额。只标注到期年月的批次以该月最后一天参与计算，页面仍显示 `YYYY-MM`。
+
 ## 7. migration 状态
 
 已完成：
@@ -398,6 +401,9 @@ reference_type = SHELF_REPLENISHMENT
 - Schema format、validate 和 Client generate；
 - 关键模型及唯一约束的契约测试；
 - migration 中的数量和临期阈值 CHECK 约束。
+- 入库单 migration：`202608010001_stock_receipts_and_reports`；
+- 临期默认阈值 migration：`202608010002_expiry_alert_thresholds`，开发库和独立测试库均已应用；
+- 临期默认名称 migration：`202608010003_expiry_alert_labels`，开发库和独立测试库均已应用；
 - 在 MySQL 8.4.11 容器从空数据库成功应用初始 migration；
 - 验证20张数据库表、migration 完成状态和7个 CHECK 约束。
 
@@ -448,3 +454,17 @@ reference_type = SHELF_REPLENISHMENT
 - SQL查询同时连接多条码和多批次时会形成笛卡尔重复，报表必须分别聚合或使用子查询，不能直接对连接结果求和；
 - 上货架出库写入 `stock_movements.quantity_delta < 0`，并同步减少对应日期的 `inventory_balances.quantity`；
 - 上架商品暂不建立货架余额，因此仓库总库存会减少，门店全量可售库存仍不可得。
+## 12. Local MySQL 8 authentication
+
+- 本地 Docker MySQL 8 使用 `caching_sha2_password`；容器重启后，本机非 TLS 连接允许驱动读取服务器 RSA 公钥。
+- 自动读取公钥只允许 `localhost` 和 `127.0.0.1`，远程数据库必须配置 TLS，不能沿用本地开发设置。
+
+## 13. 入库单模型
+
+第四个 migration：`202608010001_stock_receipts_and_reports`。
+
+- `stock_receipts`：入库单号、门店、仓库、业务日期、状态、创建/完成人和完成时间；
+- `stock_receipt_items`：商品、日期批次、实际扫描条码、数量及唯一库存流水；
+- 入库单是业务归组，`stock_movements` 仍是库存事实来源；
+- 一张入库单可包含多种商品，同商品重复扫描保留多条明细，报表按需汇总；
+- migration 已在开发库和名称以 `_test` 结尾的独立测试库成功应用。

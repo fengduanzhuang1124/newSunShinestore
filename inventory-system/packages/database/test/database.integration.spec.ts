@@ -12,6 +12,8 @@ const prisma = testDatabaseUrl ? createPrismaClient(testDatabaseUrl) : undefined
 
 const tablesToReset = [
   'audit_logs',
+  'stock_receipt_items',
+  'stock_receipts',
   'stock_transfer_items',
   'stock_transfers',
   'stock_movements',
@@ -118,6 +120,49 @@ describeWithDatabase('MySQL inventory integration', () => {
     await expect(prisma?.warehouse.count()).resolves.toBe(1);
     await expect(prisma?.productBarcode.count()).resolves.toBe(1);
     await expect(prisma?.productBatch.count()).resolves.toBe(1);
+  });
+
+  it('groups an immutable receipt movement into a daily receipt document', async () => {
+    const fixture = await seedTestFixture();
+    const receipt = await prisma?.stockReceipt.create({
+      data: {
+        receiptNo: 'RK-TEST-001',
+        organizationId: fixture.organization.id,
+        storeId: fixture.store.id,
+        warehouseId: fixture.warehouse.id,
+        receiptDate: new Date('2026-08-01T00:00:00.000Z'),
+        openedById: fixture.user.id,
+      },
+    });
+    const movement = await prisma?.stockMovement.create({
+      data: {
+        movementNo: 'RCV-TEST-001',
+        organizationId: fixture.organization.id,
+        storeId: fixture.store.id,
+        warehouseId: fixture.warehouse.id,
+        productId: fixture.product.id,
+        batchId: fixture.batch.id,
+        movementType: 'RECEIPT',
+        quantityDelta: 9,
+        performedById: fixture.user.id,
+        idempotencyKey: 'receipt-test-001',
+      },
+    });
+    await prisma?.stockReceiptItem.create({
+      data: {
+        receiptId: receipt!.id,
+        productId: fixture.product.id,
+        batchId: fixture.batch.id,
+        movementId: movement!.id,
+        barcode: '0942000000001',
+        quantity: 9,
+      },
+    });
+
+    await expect(prisma?.stockReceiptItem.aggregate({
+      where: { receiptId: receipt!.id },
+      _sum: { quantity: true },
+    })).resolves.toMatchObject({ _sum: { quantity: 9 } });
   });
 
   it('rejects a duplicate barcode inside one organization', async () => {

@@ -10,6 +10,13 @@ describe('database client configuration', () => {
       password: 'p@ss',
       database: 'inventory_test',
       connectionLimit: 5,
+      allowPublicKeyRetrieval: true,
+    });
+  });
+
+  it('does not retrieve an RSA public key automatically from a remote database', () => {
+    expect(parseDatabaseUrl('mysql://user:pass@db.example.com/inventory')).toMatchObject({
+      allowPublicKeyRetrieval: false,
     });
   });
 

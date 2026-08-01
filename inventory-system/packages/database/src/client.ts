@@ -8,6 +8,7 @@ export interface DatabaseConnectionConfig {
   password: string;
   database: string;
   connectionLimit: number;
+  allowPublicKeyRetrieval: boolean;
 }
 
 export function parseDatabaseUrl(databaseUrl: string): DatabaseConnectionConfig {
@@ -22,6 +23,8 @@ export function parseDatabaseUrl(databaseUrl: string): DatabaseConnectionConfig 
     throw new Error('DATABASE_URL must include host, user, and database');
   }
 
+  const isLocalDatabase = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+
   return {
     host: url.hostname,
     port: Number(url.port || 3306),
@@ -29,6 +32,10 @@ export function parseDatabaseUrl(databaseUrl: string): DatabaseConnectionConfig 
     password: decodeURIComponent(url.password),
     database,
     connectionLimit: 5,
+    // MySQL 8 uses caching_sha2_password. The local Docker connection is not
+    // TLS-enabled, so the driver must retrieve the server RSA key after a restart.
+    // Never enable this automatically for a remote database; production must use TLS.
+    allowPublicKeyRetrieval: isLocalDatabase,
   };
 }
 

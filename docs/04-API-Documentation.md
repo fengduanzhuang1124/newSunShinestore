@@ -324,17 +324,25 @@ GET /stock-movements
 
 ```json
 {
-  "earlyWarningMonths": 7,
-  "warningMonths": 6,
-  "urgentMonths": 3,
+  "earlyWarningMonths": 6,
+  "warningMonths": 3,
+  "urgentMonths": 2,
   "labels": {
     "earlyWarning": "提前关注",
     "warning": "临期预警",
-    "urgent": "紧急处理",
-    "expired": "已到期"
+    "urgent": "紧急临期",
+    "expired": "已过期"
   }
 }
 ```
+
+已实现的查询接口为 `GET /api/v1/inventory/expiry-alerts`，支持：
+
+- `q`：可选，按商品名称部分关键词或条码查询；
+- `level`：可选，值为 `EXPIRED`、`URGENT`、`WARNING` 或 `EARLY`；
+- 仓库范围由登录员工的 JWT 和仓库查看权限确定，客户端不能指定其他仓库；
+- 响应包含企业时区当天日期、2/3/6个月阈值、各等级汇总及商品、条码、到期日期、剩余天数和库存数量；
+- 等级筛选只过滤明细，顶部汇总仍保留当前关键词范围内的完整等级分布。
 
 ## 11. 初始库存导入
 
@@ -390,6 +398,9 @@ NestJS API 骨架、`GET /api/v1/health`、Prisma Schema、初始 migration、Pr
 | GET | `/inventory/search?q=` | 已实现，按关键词或条码返回商品聚合库存 |
 | POST | `/inventory/scan-receive` | 已实现，要求入库权限 |
 | POST | `/inventory/manual-issue` | 已实现，按日期出库上货架 |
+| GET | `/inventory/receipts?date=YYYY-MM-DD` | 已实现，查询当天入库单与明细 |
+| POST | `/inventory/receipts/current/complete` | 已实现，完成当前员工最新入库单 |
+| GET | `/inventory/inventory-report` | 已实现，查询当前仓库总库存表 |
 
 `POST /inventory/scan-receive`：
 
@@ -407,7 +418,7 @@ NestJS API 骨架、`GET /api/v1/health`、Prisma Schema、初始 migration、Pr
 
 登录接口允许既有密码进入凭据验证，不在登录DTO重复执行密码强度规则；正式密码强度应在管理员创建员工或修改密码时检查。登录资料中的 `roles[].storeName` 用于页面显示门店，实际库存权限仍以后端仓库授权为准。
 
-完整商品维护、调拨、盘点、临期、导入和审计查询接口仍是契约草案，不得标记为已上线。当前登录尚未实现员工自行修改临时密码。
+完整商品维护、调拨、临期设置维护、导入和审计查询接口仍是契约草案；临期库存查询、盘点调整和库存流水查询已上线。当前登录尚未实现员工自行修改临时密码。
 
 扫码入库请求可选传入已有 `productId`，用于把未知新条码绑定到已有商品。服务端会验证商品属于当前企业。
 
@@ -446,4 +457,33 @@ NestJS API 骨架、`GET /api/v1/health`、Prisma Schema、初始 migration、Pr
 }
 ```
 
-当前已实现扫码入库、搜索查询和手工出库上货架。调拨、盘点、临期列表、导入和审计查询接口仍是契约草案。
+当前已实现扫码入库、搜索查询、手工出库上货架、入库/总库存报表、临期库存列表、盘点调整和库存流水查询。调拨、临期设置维护、导入和审计查询接口仍是契约草案。
+
+## 14. 已实现的盘点与库存流水接口
+
+### `GET /api/v1/inventory/movements?q=`
+
+- 权限：当前仓库 `can_view`；
+- `q` 可按商品名称、条码或流水号部分匹配；
+- 最多返回当前仓库最近100条流水；
+- 返回流水类型、商品、多条码、到期日期、数量变化、原因、操作账号和时间。
+
+### `POST /api/v1/inventory/stocktake-adjustment`
+
+权限：当前仓库 `can_count`。
+
+```json
+{
+  "batchId": "31",
+  "actualQuantity": 18,
+  "reason": "现场盘点"
+}
+```
+
+- `actualQuantity` 必须是0或正整数；
+- 实际数量与系统数量相同返回400；
+- 盘盈/盘亏余额、流水和审计日志在同一事务写入；
+- 余额版本已变化返回409，客户端必须重新查询；
+- 盘点不能直接修改或删除历史流水。
+
+扫码入库成功响应增加 `receiptId` 和 `receiptNo`；流水使用 `referenceType=STOCK_RECEIPT` 与入库单关联。入库记录返回每日入库单汇总及逐条商品明细，总库存接口按商品主档返回多条码、各到期日期数量和总数量。三个报表接口都从JWT仓库权限解析仓库，不接受客户端指定仓库范围。

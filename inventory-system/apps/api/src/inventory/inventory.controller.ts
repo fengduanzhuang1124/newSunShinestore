@@ -13,6 +13,7 @@ import type { AuthenticatedRequest } from '../auth/jwt-auth.guard.js';
 import { InventoryService } from './inventory.service.js';
 import { ScanReceiveDto } from './scan-receive.dto.js';
 import { ManualIssueDto } from './manual-issue.dto.js';
+import { StocktakeAdjustmentDto } from './stocktake-adjustment.dto.js';
 
 @Controller('inventory')
 @UseGuards(JwtAuthGuard)
@@ -79,6 +80,84 @@ export class InventoryController {
         user.id,
         input,
       ),
+    };
+  }
+
+  @Get('receipts')
+  async receipts(
+    @Req() request: AuthenticatedRequest,
+    @Query('date') date?: string,
+  ) {
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: '入库记录查询成功',
+      data: await this.inventory.listReceipts(user.organizationId, user.id, date),
+    };
+  }
+
+  @Post('receipts/current/complete')
+  async completeReceipt(@Req() request: AuthenticatedRequest) {
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: '入库单已完成',
+      data: await this.inventory.completeCurrentReceipt(user.organizationId, user.id),
+    };
+  }
+
+  @Get('inventory-report')
+  async inventoryReport(@Req() request: AuthenticatedRequest) {
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: '总库存查询成功',
+      data: await this.inventory.inventoryReport(user.organizationId, user.id),
+    };
+  }
+
+  @Get('expiry-alerts')
+  async expiryAlerts(
+    @Req() request: AuthenticatedRequest,
+    @Query('q') query?: string,
+    @Query('level') level?: string,
+  ) {
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: '临期库存查询成功',
+      data: await this.inventory.expiryAlerts(
+        user.organizationId,
+        user.id,
+        query,
+        level,
+      ),
+    };
+  }
+
+  @Get('movements')
+  async movements(
+    @Req() request: AuthenticatedRequest,
+    @Query('q') query?: string,
+  ) {
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: '库存流水查询成功',
+      data: await this.inventory.listMovements(user.organizationId, user.id, query),
+    };
+  }
+
+  @Post('stocktake-adjustment')
+  async stocktakeAdjustment(
+    @Req() request: AuthenticatedRequest,
+    @Body() input: StocktakeAdjustmentDto,
+  ) {
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: '盘点调整成功',
+      data: await this.inventory.stocktakeAdjustment(user.organizationId, user.id, input),
     };
   }
 }

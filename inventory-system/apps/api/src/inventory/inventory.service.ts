@@ -9,16 +9,43 @@ import {
 import { PrismaService } from '../database/prisma.service.js';
 import { ScanReceiveDto } from './scan-receive.dto.js';
 import { ManualIssueDto } from './manual-issue.dto.js';
+import { StocktakeAdjustmentDto } from './stocktake-adjustment.dto.js';
 import { parseExpiryInput } from './expiry-date.js';
 
 @Injectable()
 export class InventoryService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private localDate(timeZone: string, now = new Date()) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(now);
+  }
+
+  private dateValue(date: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new BadRequestException('日期格式必须为 YYYY-MM-DD');
+    }
+    const value = new Date(`${date}T00:00:00.000Z`);
+    if (Number.isNaN(value.getTime()) || value.toISOString().slice(0, 10) !== date) {
+      throw new BadRequestException('日期不是有效的日历日期');
+    }
+    return value;
+  }
+
+  private addUtcMonths(value: Date, months: number) {
+    const result = new Date(value);
+    result.setUTCMonth(result.getUTCMonth() + months);
+    return result;
+  }
+
   private async warehousePermission(
     organizationId: bigint,
     userId: bigint,
-    capability: 'canView' | 'canReceive' | 'canIssue',
+    capability: 'canView' | 'canReceive' | 'canIssue' | 'canCount',
   ) {
     const permission = await this.prisma.client.userWarehousePermission.findFirst({
       where: {
@@ -155,6 +182,34 @@ export class InventoryService {
       input.expiryDay,
     );
     return this.prisma.client.$transaction(async (transaction) => {
+      const organization = await transaction.organization.findUniqueOrThrow({
+        where: { id: organizationId },
+        select: { timezone: true },
+      });
+      const receiptDateText = this.localDate(organization.timezone);
+      const receiptDate = this.dateValue(receiptDateText);
+      let receipt = await transaction.stockReceipt.findFirst({
+        where: {
+          organizationId,
+          warehouseId: permission.warehouseId,
+          openedById: userId,
+          receiptDate,
+          status: 'OPEN',
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!receipt) {
+        receipt = await transaction.stockReceipt.create({
+          data: {
+            receiptNo: `RK-${receiptDateText.replaceAll('-', '')}-${randomUUID().slice(0, 6).toUpperCase()}`,
+            organizationId,
+            storeId: permission.warehouse.storeId,
+            warehouseId: permission.warehouseId,
+            receiptDate,
+            openedById: userId,
+          },
+        });
+      }
       let productBarcode = await transaction.productBarcode.findUnique({
         where: {
           organizationId_barcode: {
@@ -260,9 +315,20 @@ export class InventoryService {
           batchId: batch.id,
           movementType: 'RECEIPT',
           quantityDelta: input.quantity,
-          referenceType: 'BARCODE_RECEIPT',
+          referenceType: 'STOCK_RECEIPT',
+          referenceId: receipt.id,
           performedById: userId,
           idempotencyKey: requestId,
+        },
+      });
+      await transaction.stockReceiptItem.create({
+        data: {
+          receiptId: receipt.id,
+          productId: productBarcode.productId,
+          batchId: batch.id,
+          movementId: movement.id,
+          barcode: input.barcode,
+          quantity: input.quantity,
         },
       });
       await transaction.auditLog.create({
@@ -294,6 +360,8 @@ export class InventoryService {
         quantityAdded: input.quantity,
         currentQuantity: balance.quantity,
         receivedAt: movement.createdAt.toISOString(),
+        receiptId: receipt.id.toString(),
+        receiptNo: receipt.receiptNo,
         warehouseName: permission.warehouse.name,
       };
     });
@@ -395,6 +463,351 @@ export class InventoryService {
         quantityIssued: input.quantity,
         currentQuantity: balance.quantity,
         reason: input.reason,
+      };
+    });
+  }
+
+  async listReceipts(
+    organizationId: bigint,
+    userId: bigint,
+    requestedDate?: string,
+  ) {
+    const permission = await this.warehousePermission(organizationId, userId, 'canView');
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const date = requestedDate || this.localDate(organization.timezone);
+    const receipts = await this.prisma.client.stockReceipt.findMany({
+      where: {
+        organizationId,
+        warehouseId: permission.warehouseId,
+        receiptDate: this.dateValue(date),
+        status: { not: 'CANCELLED' },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        openedBy: { select: { displayName: true } },
+        items: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            product: { select: { name: true } },
+            batch: { select: { expiryDate: true, expiryPrecision: true } },
+          },
+        },
+      },
+    });
+    const allItems = receipts.flatMap((receipt) => receipt.items);
+    return {
+      date,
+      warehouseName: permission.warehouse.name,
+      summary: {
+        receiptCount: receipts.length,
+        productCount: new Set(allItems.map((item) => item.productId.toString())).size,
+        totalQuantity: allItems.reduce((sum, item) => sum + item.quantity, 0),
+      },
+      receipts: receipts.map((receipt) => ({
+        receiptId: receipt.id.toString(),
+        receiptNo: receipt.receiptNo,
+        status: receipt.status,
+        employeeName: receipt.openedBy.displayName,
+        createdAt: receipt.createdAt.toISOString(),
+        completedAt: receipt.completedAt?.toISOString() ?? null,
+        productCount: new Set(receipt.items.map((item) => item.productId.toString())).size,
+        totalQuantity: receipt.items.reduce((sum, item) => sum + item.quantity, 0),
+        items: receipt.items.map((item) => ({
+          itemId: item.id.toString(),
+          barcode: item.barcode,
+          productName: item.product.name,
+          expiryDate: item.batch.expiryPrecision === 'MONTH'
+            ? item.batch.expiryDate.toISOString().slice(0, 7)
+            : item.batch.expiryDate.toISOString().slice(0, 10),
+          quantity: item.quantity,
+          createdAt: item.createdAt.toISOString(),
+        })),
+      })),
+    };
+  }
+
+  async completeCurrentReceipt(organizationId: bigint, userId: bigint) {
+    const permission = await this.warehousePermission(organizationId, userId, 'canReceive');
+    const receipt = await this.prisma.client.stockReceipt.findFirst({
+      where: {
+        organizationId,
+        warehouseId: permission.warehouseId,
+        openedById: userId,
+        status: 'OPEN',
+      },
+      orderBy: { createdAt: 'desc' },
+      include: { items: true },
+    });
+    if (!receipt || receipt.items.length === 0) {
+      throw new NotFoundException('当前没有可完成的入库单');
+    }
+    const completed = await this.prisma.client.stockReceipt.update({
+      where: { id: receipt.id },
+      data: { status: 'COMPLETED', completedById: userId, completedAt: new Date() },
+    });
+    return {
+      receiptId: completed.id.toString(),
+      receiptNo: completed.receiptNo,
+      status: completed.status,
+      totalQuantity: receipt.items.reduce((sum, item) => sum + item.quantity, 0),
+    };
+  }
+
+  async inventoryReport(organizationId: bigint, userId: bigint) {
+    const permission = await this.warehousePermission(organizationId, userId, 'canView');
+    const products = await this.prisma.client.product.findMany({
+      where: {
+        organizationId,
+        status: 'ACTIVE',
+        inventoryBalances: { some: { warehouseId: permission.warehouseId, quantity: { gt: 0 } } },
+      },
+      orderBy: { name: 'asc' },
+      include: {
+        barcodes: { where: { status: 'ACTIVE' }, orderBy: { isPrimary: 'desc' } },
+        batches: {
+          where: {
+            inventoryBalances: {
+              some: { warehouseId: permission.warehouseId, quantity: { gt: 0 } },
+            },
+          },
+          orderBy: { expiryDate: 'asc' },
+          include: { inventoryBalances: { where: { warehouseId: permission.warehouseId, quantity: { gt: 0 } } } },
+        },
+      },
+    });
+    const serialized = products.map((product) => this.serializeProduct(product));
+    return {
+      warehouseName: permission.warehouse.name,
+      productCount: serialized.length,
+      totalQuantity: serialized.reduce((sum, product) => sum + product.totalQuantity, 0),
+      products: serialized,
+    };
+  }
+
+  async expiryAlerts(
+    organizationId: bigint,
+    userId: bigint,
+    rawQuery = '',
+    requestedLevel = '',
+  ) {
+    const permission = await this.warehousePermission(organizationId, userId, 'canView');
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      include: { expiryAlertSettings: true },
+    });
+    const settings = organization.expiryAlertSettings ?? {
+      urgentMonths: 2,
+      warningMonths: 3,
+      earlyWarningMonths: 6,
+      urgentLabel: '紧急临期',
+      warningLabel: '临期预警',
+      earlyWarningLabel: '提前关注',
+      expiredLabel: '已过期',
+    };
+    const allowedLevels = ['EXPIRED', 'URGENT', 'WARNING', 'EARLY'];
+    const levelFilter = requestedLevel.trim().toUpperCase();
+    if (levelFilter && !allowedLevels.includes(levelFilter)) {
+      throw new BadRequestException('临期级别不正确');
+    }
+    const todayText = this.localDate(organization.timezone);
+    const today = this.dateValue(todayText);
+    const urgentEnd = this.addUtcMonths(today, settings.urgentMonths);
+    const warningEnd = this.addUtcMonths(today, settings.warningMonths);
+    const earlyEnd = this.addUtcMonths(today, settings.earlyWarningMonths);
+    const query = rawQuery.trim();
+    const balances = await this.prisma.client.inventoryBalance.findMany({
+      where: {
+        organizationId,
+        warehouseId: permission.warehouseId,
+        quantity: { gt: 0 },
+        batch: { expiryDate: { lte: earlyEnd } },
+        product: {
+          status: 'ACTIVE',
+          ...(query ? {
+            OR: [
+              { name: { contains: query } },
+              { barcodes: { some: { barcode: { contains: query }, status: 'ACTIVE' } } },
+            ],
+          } : {}),
+        },
+      },
+      orderBy: { batch: { expiryDate: 'asc' } },
+      include: {
+        product: {
+          select: {
+            name: true,
+            barcodes: { where: { status: 'ACTIVE' }, orderBy: { isPrimary: 'desc' } },
+          },
+        },
+        batch: { select: { expiryDate: true, expiryPrecision: true } },
+      },
+    });
+    const labels: Record<string, string> = {
+      EXPIRED: settings.expiredLabel,
+      URGENT: settings.urgentLabel,
+      WARNING: settings.warningLabel,
+      EARLY: settings.earlyWarningLabel,
+    };
+    const classifiedItems = balances.map((balance) => {
+      const expiryDate = balance.batch.expiryDate;
+      const level = expiryDate < today
+        ? 'EXPIRED'
+        : expiryDate <= urgentEnd
+          ? 'URGENT'
+          : expiryDate <= warningEnd
+            ? 'WARNING'
+            : 'EARLY';
+      return {
+        productId: balance.productId.toString(),
+        productName: balance.product.name,
+        barcodes: balance.product.barcodes.map(({ barcode }) => barcode),
+        batchId: balance.batchId.toString(),
+        expiryDate: balance.batch.expiryPrecision === 'MONTH'
+          ? expiryDate.toISOString().slice(0, 7)
+          : expiryDate.toISOString().slice(0, 10),
+        expiryPrecision: balance.batch.expiryPrecision,
+        quantity: balance.quantity,
+        level,
+        levelLabel: labels[level],
+        daysRemaining: Math.ceil((expiryDate.getTime() - today.getTime()) / 86_400_000),
+      };
+    });
+    const items = classifiedItems.filter((item) => !levelFilter || item.level === levelFilter);
+    return {
+      today: todayText,
+      warehouseName: permission.warehouse.name,
+      thresholds: {
+        urgentMonths: settings.urgentMonths,
+        warningMonths: settings.warningMonths,
+        earlyWarningMonths: settings.earlyWarningMonths,
+      },
+      summary: Object.fromEntries(allowedLevels.map((level) => [
+        level,
+        classifiedItems.filter((item) => item.level === level).length,
+      ])),
+      items,
+    };
+  }
+
+  async listMovements(organizationId: bigint, userId: bigint, rawQuery = '') {
+    const permission = await this.warehousePermission(organizationId, userId, 'canView');
+    const query = rawQuery.trim();
+    const movements = await this.prisma.client.stockMovement.findMany({
+      where: {
+        organizationId,
+        warehouseId: permission.warehouseId,
+        ...(query ? {
+          OR: [
+            { movementNo: { contains: query } },
+            { product: { name: { contains: query } } },
+            { product: { barcodes: { some: { barcode: { contains: query }, status: 'ACTIVE' } } } },
+          ],
+        } : {}),
+      },
+      take: 100,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        product: { select: { name: true, barcodes: { where: { status: 'ACTIVE' }, orderBy: { isPrimary: 'desc' } } } },
+        batch: { select: { expiryDate: true, expiryPrecision: true } },
+        performedBy: { select: { displayName: true } },
+      },
+    });
+    const labels: Record<string, string> = {
+      RECEIPT: '入库', MANUAL_ISSUE: '出库', STOCKTAKE_GAIN: '盘盈', STOCKTAKE_LOSS: '盘亏',
+      DAMAGE: '破损', EXPIRED: '过期处理', RETURN_IN: '退货入库', RETURN_TO_SUPPLIER: '退供应商',
+      TRANSFER_IN: '调拨入库', TRANSFER_OUT: '调拨出库', REVERSAL: '冲销', INITIAL_STOCK: '初始库存',
+    };
+    return {
+      warehouseName: permission.warehouse.name,
+      movements: movements.map((movement) => ({
+        movementId: movement.id.toString(),
+        movementNo: movement.movementNo,
+        movementType: movement.movementType,
+        movementLabel: labels[movement.movementType] ?? movement.movementType,
+        productName: movement.product.name,
+        barcodes: movement.product.barcodes.map(({ barcode }) => barcode),
+        expiryDate: movement.batch.expiryPrecision === 'MONTH'
+          ? movement.batch.expiryDate.toISOString().slice(0, 7)
+          : movement.batch.expiryDate.toISOString().slice(0, 10),
+        quantityDelta: movement.quantityDelta,
+        reason: movement.reason,
+        performedBy: movement.performedBy.displayName,
+        createdAt: movement.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  async stocktakeAdjustment(
+    organizationId: bigint,
+    userId: bigint,
+    input: StocktakeAdjustmentDto,
+  ) {
+    const permission = await this.warehousePermission(organizationId, userId, 'canCount');
+    const batchId = BigInt(input.batchId);
+    return this.prisma.client.$transaction(async (transaction) => {
+      const batch = await transaction.productBatch.findFirst({
+        where: { id: batchId, organizationId },
+        select: { productId: true },
+      });
+      if (!batch) throw new NotFoundException('商品日期不存在');
+      const balance = await transaction.inventoryBalance.findUnique({
+        where: {
+          organizationId_warehouseId_productId_batchId: {
+            organizationId,
+            warehouseId: permission.warehouseId,
+            productId: batch.productId,
+            batchId,
+          },
+        },
+        include: { product: true, batch: true },
+      });
+      if (!balance) throw new NotFoundException('该商品日期没有库存记录');
+      const difference = input.actualQuantity - balance.quantity;
+      if (difference === 0) throw new BadRequestException('实际数量与系统数量相同，无需调整');
+      const updated = await transaction.inventoryBalance.updateMany({
+        where: {
+          organizationId,
+          warehouseId: permission.warehouseId,
+          productId: balance.productId,
+          batchId,
+          quantity: balance.quantity,
+          version: balance.version,
+        },
+        data: { quantity: input.actualQuantity, version: { increment: 1 } },
+      });
+      if (updated.count !== 1) throw new ConflictException('库存刚刚发生变化，请重新查询后盘点');
+      const requestId = randomUUID();
+      const movement = await transaction.stockMovement.create({
+        data: {
+          movementNo: `STK-${Date.now()}-${randomUUID().slice(0, 6)}`,
+          organizationId,
+          storeId: permission.warehouse.storeId,
+          warehouseId: permission.warehouseId,
+          productId: balance.productId,
+          batchId,
+          movementType: difference > 0 ? 'STOCKTAKE_GAIN' : 'STOCKTAKE_LOSS',
+          quantityDelta: difference,
+          referenceType: 'STOCKTAKE',
+          reason: input.reason,
+          performedById: userId,
+          idempotencyKey: requestId,
+        },
+      });
+      await transaction.auditLog.create({
+        data: {
+          organizationId, userId, storeId: permission.warehouse.storeId, warehouseId: permission.warehouseId,
+          action: 'inventory.stocktake_adjustment', entityType: 'StockMovement', entityId: movement.id.toString(), requestId,
+          beforeSummary: { quantity: balance.quantity },
+          afterSummary: { quantity: input.actualQuantity, difference, reason: input.reason },
+        },
+      });
+      return {
+        movementId: movement.id.toString(), productName: balance.product.name,
+        expiryDate: balance.batch.expiryPrecision === 'MONTH' ? balance.batch.expiryDate.toISOString().slice(0, 7) : balance.batch.expiryDate.toISOString().slice(0, 10),
+        previousQuantity: balance.quantity, actualQuantity: input.actualQuantity, difference,
       };
     });
   }
