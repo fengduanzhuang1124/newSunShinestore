@@ -14,6 +14,7 @@ import { InventoryService } from './inventory.service.js';
 import { ScanReceiveDto } from './scan-receive.dto.js';
 import { ManualIssueDto } from './manual-issue.dto.js';
 import { StocktakeAdjustmentDto } from './stocktake-adjustment.dto.js';
+import { ReverseMovementDto } from './reverse-movement.dto.js';
 
 @Controller('inventory')
 @UseGuards(JwtAuthGuard)
@@ -158,6 +159,25 @@ export class InventoryController {
       code: 200,
       message: '盘点调整成功',
       data: await this.inventory.stocktakeAdjustment(user.organizationId, user.id, input),
+    };
+  }
+
+  @Post('movements/:movementId/reverse')
+  async reverseMovement(
+    @Req() request: AuthenticatedRequest,
+    @Param('movementId') movementId: string,
+    @Body() input: ReverseMovementDto,
+  ) {
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: '库存流水已撤销',
+      data: await this.inventory.reverseMovement(
+        user.organizationId,
+        user.id,
+        movementId,
+        input,
+      ),
     };
   }
 }

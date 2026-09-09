@@ -11,7 +11,22 @@
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand",
     "typecheck": "tsc --noEmit",
     "bootstrap:admin": "tsx scripts/bootstrap-admin.ts",
-    "set-user-password": "tsx scripts/set-user-password.ts"
+    "set-user-password": "tsx scripts/set-user-password.ts",
+    "pos:check:login": "tsx scripts/check-moni-login.ts",
+    "pos:check:brands": "tsx scripts/check-moni-brands.ts",
+    "pos:check:categories": "tsx scripts/check-moni-categories.ts",
+    "pos:check:products": "tsx scripts/check-moni-products.ts",
+    "pos:check:order-product-link": "tsx scripts/check-moni-order-product-link.ts",
+    "pos:check:daily-orders": "tsx scripts/check-moni-daily-orders.ts",
+    "pos:check:order-lifecycle": "tsx scripts/check-moni-order-lifecycle.ts",
+    "pos:import:observation:test": "tsx scripts/import-moni-observation-test.ts",
+    "pos:simulate": "tsx scripts/run-moni-pos-simulation.ts",
+    "pos:simulate:inventory:test": "tsx scripts/simulate-pos-inventory-test.ts",
+    "pos:check:stores": "tsx scripts/check-moni-stores.ts",
+    "pos:check:store-info": "tsx scripts/check-moni-store-info.ts",
+    "pos:export:milk-orders": "tsx scripts/export-moni-milk-orders-data.ts",
+    "pos:import:milk-candidates": "tsx scripts/import-moni-milk-candidates.ts",
+    "pos:approve:milk-candidates": "tsx scripts/approve-reviewed-milk-candidates.ts"
   },
   "dependencies": {
     "@sunshine/database": "workspace:*",

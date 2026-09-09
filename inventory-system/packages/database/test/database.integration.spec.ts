@@ -12,6 +12,14 @@ const prisma = testDatabaseUrl ? createPrismaClient(testDatabaseUrl) : undefined
 
 const tablesToReset = [
   'audit_logs',
+  'pos_inventory_simulation_items',
+  'pos_inventory_simulations',
+  'pos_refund_reviews',
+  'pos_order_items',
+  'pos_orders',
+  'pos_sync_cursors',
+  'pos_sync_runs',
+  'pos_product_mappings',
   'stock_receipt_items',
   'stock_receipts',
   'stock_transfer_items',
@@ -120,6 +128,73 @@ describeWithDatabase('MySQL inventory integration', () => {
     await expect(prisma?.warehouse.count()).resolves.toBe(1);
     await expect(prisma?.productBarcode.count()).resolves.toBe(1);
     await expect(prisma?.productBatch.count()).resolves.toBe(1);
+  });
+
+  it('stores a POS observation without changing inventory', async () => {
+    const fixture = await seedTestFixture();
+    const mapping = await prisma?.posProductMapping.create({
+      data: {
+        organizationId: fixture.organization.id,
+        storeId: fixture.store.id,
+        externalProductId: '108949',
+        productId: fixture.product.id,
+        barcode: '0942000000001',
+        sourceName: 'Observed POS product',
+      },
+    });
+    const syncRun = await prisma?.posSyncRun.create({
+      data: {
+        organizationId: fixture.organization.id,
+        storeId: fixture.store.id,
+      },
+    });
+    const order = await prisma?.posOrder.create({
+      data: {
+        organizationId: fixture.organization.id,
+        storeId: fixture.store.id,
+        syncRunId: syncRun!.id,
+        externalOrderNo: 'RO-OBSERVED-001',
+        sourceStatus: 'Paid',
+        orderAmount: '19.99',
+        orderedAt: new Date('2026-08-20T10:00:00.000Z'),
+        sourceFingerprint: 'a'.repeat(64),
+      },
+    });
+    await prisma?.posOrderItem.create({
+      data: {
+        orderId: order!.id,
+        lineKey: '108949:1',
+        externalProductId: '108949',
+        mappingId: mapping!.id,
+        productId: fixture.product.id,
+        barcode: '0942000000001',
+        sourceName: 'Observed POS product',
+        quantity: '1.2500',
+        unitPrice: '19.99',
+        disposition: 'REVIEW_REQUIRED',
+        exclusionReason: 'Fractional quantity cannot enter integer stock ledger',
+      },
+    });
+
+    await expect(prisma?.posOrder.count()).resolves.toBe(1);
+    await expect(prisma?.posOrderItem.count()).resolves.toBe(1);
+    await expect(prisma?.stockMovement.count()).resolves.toBe(0);
+    await expect(prisma?.inventoryBalance.count()).resolves.toBe(0);
+  });
+
+  it('rejects duplicate POS order numbers for one store', async () => {
+    const fixture = await seedTestFixture();
+    const data = {
+      organizationId: fixture.organization.id,
+      storeId: fixture.store.id,
+      externalOrderNo: 'RO-DUPLICATE-001',
+      sourceStatus: 'Paid',
+      orderedAt: new Date('2026-08-20T10:00:00.000Z'),
+      sourceFingerprint: 'b'.repeat(64),
+    };
+
+    await prisma?.posOrder.create({ data });
+    await expect(prisma?.posOrder.create({ data })).rejects.toThrow();
   });
 
   it('groups an immutable receipt movement into a daily receipt document', async () => {

@@ -10,6 +10,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { ScanReceiveDto } from './scan-receive.dto.js';
 import { ManualIssueDto } from './manual-issue.dto.js';
 import { StocktakeAdjustmentDto } from './stocktake-adjustment.dto.js';
+import { ReverseMovementDto } from './reverse-movement.dto.js';
 import { parseExpiryInput } from './expiry-date.js';
 
 @Injectable()
@@ -59,6 +60,23 @@ export class InventoryService {
       throw new ForbiddenException('没有当前仓库操作权限');
     }
     return permission;
+  }
+
+  private async requireStoreAdmin(
+    organizationId: bigint,
+    userId: bigint,
+    storeId: bigint,
+  ) {
+    const role = await this.prisma.client.userStoreRole.findFirst({
+      where: {
+        userId,
+        storeId,
+        store: { organizationId },
+        role: { code: 'ADMIN' },
+      },
+      select: { userId: true },
+    });
+    if (!role) throw new ForbiddenException('只有门店管理员可以撤销库存流水');
   }
 
   private serializeProduct(
@@ -493,18 +511,20 @@ export class InventoryService {
           include: {
             product: { select: { name: true } },
             batch: { select: { expiryDate: true, expiryPrecision: true } },
+            movement: { select: { reversedBy: { select: { id: true } } } },
           },
         },
       },
     });
     const allItems = receipts.flatMap((receipt) => receipt.items);
+    const effectiveItems = allItems.filter((item) => !item.movement.reversedBy);
     return {
       date,
       warehouseName: permission.warehouse.name,
       summary: {
         receiptCount: receipts.length,
-        productCount: new Set(allItems.map((item) => item.productId.toString())).size,
-        totalQuantity: allItems.reduce((sum, item) => sum + item.quantity, 0),
+        productCount: new Set(effectiveItems.map((item) => item.productId.toString())).size,
+        totalQuantity: effectiveItems.reduce((sum, item) => sum + item.quantity, 0),
       },
       receipts: receipts.map((receipt) => ({
         receiptId: receipt.id.toString(),
@@ -513,8 +533,8 @@ export class InventoryService {
         employeeName: receipt.openedBy.displayName,
         createdAt: receipt.createdAt.toISOString(),
         completedAt: receipt.completedAt?.toISOString() ?? null,
-        productCount: new Set(receipt.items.map((item) => item.productId.toString())).size,
-        totalQuantity: receipt.items.reduce((sum, item) => sum + item.quantity, 0),
+        productCount: new Set(receipt.items.filter((item) => !item.movement.reversedBy).map((item) => item.productId.toString())).size,
+        totalQuantity: receipt.items.reduce((sum, item) => sum + (item.movement.reversedBy ? 0 : item.quantity), 0),
         items: receipt.items.map((item) => ({
           itemId: item.id.toString(),
           barcode: item.barcode,
@@ -523,6 +543,7 @@ export class InventoryService {
             ? item.batch.expiryDate.toISOString().slice(0, 7)
             : item.batch.expiryDate.toISOString().slice(0, 10),
           quantity: item.quantity,
+          reversed: Boolean(item.movement.reversedBy),
           createdAt: item.createdAt.toISOString(),
         })),
       })),
@@ -694,6 +715,15 @@ export class InventoryService {
 
   async listMovements(organizationId: bigint, userId: bigint, rawQuery = '') {
     const permission = await this.warehousePermission(organizationId, userId, 'canView');
+    const isAdmin = Boolean(await this.prisma.client.userStoreRole.findFirst({
+      where: {
+        userId,
+        storeId: permission.warehouse.storeId,
+        store: { organizationId },
+        role: { code: 'ADMIN' },
+      },
+      select: { userId: true },
+    }));
     const query = rawQuery.trim();
     const movements = await this.prisma.client.stockMovement.findMany({
       where: {
@@ -713,6 +743,8 @@ export class InventoryService {
         product: { select: { name: true, barcodes: { where: { status: 'ACTIVE' }, orderBy: { isPrimary: 'desc' } } } },
         batch: { select: { expiryDate: true, expiryPrecision: true } },
         performedBy: { select: { displayName: true } },
+        reversalOf: { select: { movementNo: true } },
+        reversedBy: { select: { movementNo: true } },
       },
     });
     const labels: Record<string, string> = {
@@ -735,9 +767,158 @@ export class InventoryService {
         quantityDelta: movement.quantityDelta,
         reason: movement.reason,
         performedBy: movement.performedBy.displayName,
+        reversalOfMovementNo: movement.reversalOf?.movementNo ?? null,
+        reversedByMovementNo: movement.reversedBy?.movementNo ?? null,
+        reversed: Boolean(movement.reversedBy),
+        canReverse: isAdmin
+          && ['RECEIPT', 'MANUAL_ISSUE'].includes(movement.movementType)
+          && !movement.reversedBy,
         createdAt: movement.createdAt.toISOString(),
       })),
     };
+  }
+
+  async reverseMovement(
+    organizationId: bigint,
+    userId: bigint,
+    rawMovementId: string,
+    input: ReverseMovementDto,
+  ) {
+    if (!/^\d+$/.test(rawMovementId)) throw new BadRequestException('库存流水编号无效');
+    const permission = await this.warehousePermission(organizationId, userId, 'canCount');
+    await this.requireStoreAdmin(organizationId, userId, permission.warehouse.storeId);
+    const movementId = BigInt(rawMovementId);
+
+    try {
+      return await this.prisma.client.$transaction(async (transaction) => {
+        const repeated = await transaction.stockMovement.findUnique({
+          where: {
+            organizationId_idempotencyKey: {
+              organizationId,
+              idempotencyKey: input.idempotencyKey,
+            },
+          },
+          include: { reversalOf: { include: { product: true, batch: true } } },
+        });
+        if (repeated?.movementType === 'REVERSAL' && repeated.reversalOf) {
+          return {
+            movementId: repeated.id.toString(),
+            reversedMovementId: repeated.reversalOf.id.toString(),
+            reversedMovementNo: repeated.reversalOf.movementNo,
+            productName: repeated.reversalOf.product.name,
+            quantityDelta: repeated.quantityDelta,
+            currentQuantity: null,
+            repeated: true,
+          };
+        }
+
+        const original = await transaction.stockMovement.findFirst({
+          where: {
+            id: movementId,
+            organizationId,
+            warehouseId: permission.warehouseId,
+          },
+          include: {
+            product: true,
+            batch: true,
+            reversedBy: { select: { movementNo: true } },
+          },
+        });
+        if (!original) throw new NotFoundException('库存流水不存在');
+        if (!['RECEIPT', 'MANUAL_ISSUE'].includes(original.movementType)) {
+          throw new BadRequestException('当前只允许撤销入库或手工出库流水');
+        }
+        if (original.reversedBy) {
+          throw new ConflictException(`该流水已经由 ${original.reversedBy.movementNo} 撤销`);
+        }
+
+        const reversalDelta = -original.quantityDelta;
+        const updated = await transaction.inventoryBalance.updateMany({
+          where: {
+            organizationId,
+            warehouseId: original.warehouseId,
+            productId: original.productId,
+            batchId: original.batchId,
+            ...(reversalDelta < 0 ? { quantity: { gte: -reversalDelta } } : {}),
+          },
+          data: {
+            quantity: reversalDelta > 0
+              ? { increment: reversalDelta }
+              : { decrement: -reversalDelta },
+            version: { increment: 1 },
+          },
+        });
+        if (updated.count !== 1) {
+          throw new ConflictException('当前库存不足，不能撤销这笔入库；请先核对后续出库记录');
+        }
+
+        const reversal = await transaction.stockMovement.create({
+          data: {
+            movementNo: `REV-${Date.now()}-${randomUUID().slice(0, 6)}`,
+            organizationId,
+            storeId: original.storeId,
+            warehouseId: original.warehouseId,
+            productId: original.productId,
+            batchId: original.batchId,
+            movementType: 'REVERSAL',
+            quantityDelta: reversalDelta,
+            referenceType: 'REVERSAL',
+            referenceId: original.id,
+            reason: input.reason,
+            reversalOfId: original.id,
+            performedById: userId,
+            idempotencyKey: input.idempotencyKey,
+          },
+        });
+        const balance = await transaction.inventoryBalance.findUniqueOrThrow({
+          where: {
+            organizationId_warehouseId_productId_batchId: {
+              organizationId,
+              warehouseId: original.warehouseId,
+              productId: original.productId,
+              batchId: original.batchId,
+            },
+          },
+        });
+        await transaction.auditLog.create({
+          data: {
+            organizationId,
+            userId,
+            storeId: original.storeId,
+            warehouseId: original.warehouseId,
+            action: 'inventory.reverse_movement',
+            entityType: 'StockMovement',
+            entityId: original.id.toString(),
+            requestId: input.idempotencyKey,
+            beforeSummary: {
+              movementNo: original.movementNo,
+              movementType: original.movementType,
+              quantityDelta: original.quantityDelta,
+            },
+            afterSummary: {
+              reversalMovementNo: reversal.movementNo,
+              reversalDelta,
+              currentQuantity: balance.quantity,
+              reason: input.reason,
+            },
+          },
+        });
+        return {
+          movementId: reversal.id.toString(),
+          reversedMovementId: original.id.toString(),
+          reversedMovementNo: original.movementNo,
+          productName: original.product.name,
+          quantityDelta: reversalDelta,
+          currentQuantity: balance.quantity,
+          repeated: false,
+        };
+      });
+    } catch (error) {
+      if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') {
+        throw new ConflictException('该库存流水已经撤销，请刷新流水记录');
+      }
+      throw error;
+    }
   }
 
   async stocktakeAdjustment(

@@ -5,9 +5,10 @@ import { HealthService } from './health/health.service.js';
 import { DatabaseModule } from './database/database.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { InventoryModule } from './inventory/inventory.module.js';
+import { PosModule } from './pos/pos.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, InventoryModule],
+  imports: [DatabaseModule, AuthModule, InventoryModule, PosModule],
   controllers: [HealthController],
   providers: [HealthService],
 })

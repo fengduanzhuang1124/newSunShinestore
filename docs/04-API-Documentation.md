@@ -1,9 +1,9 @@
 # 04 — API Documentation
 
 项目：Sunshine Inventory Management System  
-版本：Foundation v0.1
-状态：仅健康检查已实现，业务接口仍为设计稿
-更新日期：2026-07-31
+版本：Foundation v0.2
+状态：认证、库存基础能力和 POS 管理端只读接口已实现
+更新日期：2026-08-24
 
 ## 1. 通用约定
 
@@ -73,8 +73,6 @@ Idempotency-Key: <uuid>
 }
 ```
 
-以下认证与业务接口仍未实现。
-
 ### `POST /auth/login`
 
 请求：
@@ -88,9 +86,11 @@ Idempotency-Key: <uuid>
 
 返回用户、角色、门店和仓库权限。正式文档不得保存真实密码。
 
+实施状态：已实现。
+
 ### `GET /auth/me`
 
-返回当前用户及权限范围。
+尚未实现；当前登录响应已经返回用户及门店角色。
 
 ## 4. 门店和仓库
 
@@ -487,3 +487,54 @@ NestJS API 骨架、`GET /api/v1/health`、Prisma Schema、初始 migration、Pr
 - 盘点不能直接修改或删除历史流水。
 
 扫码入库成功响应增加 `receiptId` 和 `receiptNo`；流水使用 `referenceType=STOCK_RECEIPT` 与入库单关联。入库记录返回每日入库单汇总及逐条商品明细，总库存接口按商品主档返回多条码、各到期日期数量和总数量。三个报表接口都从JWT仓库权限解析仓库，不接受客户端指定仓库范围。
+
+## 15. 管理员撤销库存流水
+
+### `POST /api/v1/inventory/movements/:movementId/reverse`
+
+权限：JWT、当前仓库 `can_count`、流水所属门店 `ADMIN` 角色。
+
+```json
+{
+  "reason": "数量录入错误",
+  "idempotencyKey": "11111111-1111-4111-8111-111111111111"
+}
+```
+
+- 只允许撤销 `RECEIPT` 和 `MANUAL_ISSUE`；
+- 原流水保留，新增关联的 `REVERSAL` 流水；
+- 重复撤销或撤销入库导致库存不足时返回409；
+- 非门店管理员返回403；
+- 原流水不存在或不属于当前仓库返回404；
+- 原流水ID无效、原因不足2字或幂等键不是UUID返回400。
+
+响应包含撤销流水ID、原流水ID/编号、商品名称、反向数量和当前库存。
+
+`GET /inventory/movements` 增加 `canReverse`、`reversed`、`reversalOfMovementNo` 和 `reversedByMovementNo`，用于展示权限和原/撤销流水关系。
+
+## 16. 连续扫码入库客户端流程
+
+连续扫码清单暂不新增批量API。客户端核对后，对每个清单项按顺序调用既有：
+
+`POST /api/v1/inventory/scan-receive`
+
+- 请求期间禁止再次点击整单确认；
+- 成功项目从客户端清单移除，并归入当天当前开放入库单；
+- 某项失败时停止后续请求，页面显示已成功项数并保留剩余清单；
+- 服务器对每项继续执行独立事务与权限校验，不信任客户端汇总数量。
+
+## 17. POS 管理端只读接口
+
+以下接口已实现，均要求 `Authorization: Bearer <token>` 和当前用户所属的 `storeId`。接口读取本地同步结果，不会向 Moni POS 写入数据。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/v1/pos/sync-status?storeId=1` | 同步状态、游标和异常数量 |
+| GET | `/api/v1/pos/orders?storeId=1&page=1&pageSize=20` | 订单分页列表 |
+| GET | `/api/v1/pos/orders/:orderId?storeId=1` | 订单和明细 |
+| GET | `/api/v1/pos/product-mappings?storeId=1` | 商品映射列表 |
+| GET | `/api/v1/pos/simulations?storeId=1` | 模拟库存结果 |
+| GET | `/api/v1/pos/simulations/:simulationId?storeId=1` | 模拟明细和预计结存 |
+| GET | `/api/v1/pos/reviews?storeId=1` | 退款、取消及异常审核列表 |
+
+分页响应统一包含 `items` 和 `pagination`。`pageSize` 最大100。当前审核接口只开放查询；正式处理动作必须同时实现状态约束和审计日志后再启用。

@@ -468,3 +468,18 @@ reference_type = SHELF_REPLENISHMENT
 - 入库单是业务归组，`stock_movements` 仍是库存事实来源；
 - 一张入库单可包含多种商品，同商品重复扫描保留多条明细，报表按需汇总；
 - migration 已在开发库和名称以 `_test` 结尾的独立测试库成功应用。
+
+## 14. 库存流水撤销约束
+
+- `stock_movements.reversal_of_id` 指向被撤销的原库存流水；
+- 该字段具有唯一约束，同一原流水最多关联一笔撤销流水；
+- 撤销不修改原流水，而是新增数量相反的 `REVERSAL` 流水并同步更新余额；
+- 第一批只撤销 `RECEIPT / MANUAL_ISSUE`，不允许撤销 `REVERSAL`；
+- 本批复用既有字段、外键和唯一约束，不新增migration。
+
+## 15. 连续扫码清单的数据边界
+
+- 未确认清单是短期页面状态，不写入数据库，也不新增草稿表；
+- 确认后的每一项继续写入 `stock_receipt_items`，并通过唯一 `movement_id` 对应一条不可变 `stock_movements`；
+- 同一员工、仓库、业务日期的确认项目归入当前 `OPEN` 入库单；
+- 本批不修改数据库结构，不需要新增 migration。

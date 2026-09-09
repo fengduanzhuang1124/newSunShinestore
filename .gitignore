@@ -54,6 +54,12 @@ Thumbs.db
 .eslintcache
 .pytest_cache/
 
+# Generated reports, business exports, and temporary render files
+inventory-system/outputs/
+output/
+outputs/
+tmp/
+
 # Local tunnel binaries and transient configuration
 cloudflared
 cloudflared.exe

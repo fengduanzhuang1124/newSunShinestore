@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
 
-type Mode = 'receive' | 'issue' | 'query' | 'reports';
+type Mode = 'receive' | 'issue' | 'query' | 'milkReview' | 'reports';
 type Theme = 'light' | 'dark';
 type Batch = { batchId: string; expiryDate: string; expiryPrecision: 'MONTH' | 'DATE'; quantity: number };
 type ProductResult = {
@@ -11,7 +11,7 @@ type ProductResult = {
   batches: Batch[];
   totalQuantity: number;
 };
-type ReceiptItem = { itemId: string; barcode: string; productName: string; expiryDate: string; quantity: number; createdAt: string };
+type ReceiptItem = { itemId: string; barcode: string; productName: string; expiryDate: string; quantity: number; reversed: boolean; createdAt: string };
 type Receipt = {
   receiptId: string;
   receiptNo: string;
@@ -31,7 +31,20 @@ type ExpiryItem = {
 type Movement = {
   movementId: string; movementNo: string; movementType: string; movementLabel: string;
   productName: string; barcodes: string[]; expiryDate: string; quantityDelta: number;
-  reason: string | null; performedBy: string; createdAt: string;
+  reason: string | null; performedBy: string; reversalOfMovementNo: string | null;
+  reversedByMovementNo: string | null; reversed: boolean; canReverse: boolean; createdAt: string;
+};
+type ReceiveDraftItem = {
+  draftId: string; barcode: string; productName: string; productId?: string;
+  expiryMonth: string; expiryDay?: number; expiryDisplay: string; quantity: number;
+};
+type MilkCandidate = {
+  id: string; sourceSku: string | null; barcode: string | null; sourceName: string;
+  suggestedEnglishName: string; suggestedChineseName: string | null; suggestedBrand: string;
+  suggestedPackQuantity: number | null;
+  suggestedInventoryPolicy: 'LOCAL_STOCK' | 'EXTERNAL_WAREHOUSE' | 'REVIEW_REQUIRED';
+  cartonPriceMatched: boolean; salePrice: string | null; recognitionReason: string;
+  reviewStatus: 'PENDING' | 'APPROVED' | 'IGNORED';
 };
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3100/api/v1';
@@ -48,6 +61,7 @@ const username = ref('');
 const password = ref('');
 const displayName = ref(storedProfile.displayName ?? '');
 const storeName = ref(storedProfile.roles?.[0]?.storeName ?? '');
+const storeId = ref(storedProfile.roles?.[0]?.storeId ?? '');
 const mustChangePassword = ref(storedProfile.mustChangePassword ?? false);
 const activeMode = ref<Mode>('receive');
 const query = ref('');
@@ -67,6 +81,7 @@ const loading = ref(false);
 const scanReady = ref(false);
 const scanInput = ref<HTMLInputElement>();
 const reportView = ref<'receipts' | 'inventory' | 'expiry' | 'movements'>('receipts');
+const movementView = ref<'stocktake' | 'history'>('stocktake');
 const reportDate = ref(new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit',
 }).format(new Date()));
@@ -87,10 +102,20 @@ const movementQuery = ref('');
 const movements = ref<Movement[]>([]);
 const stocktakeActual = ref<Record<string, number>>({});
 const stocktakeReasons = ref<Record<string, string>>({});
+const reversalReasons = ref<Record<string, string>>({});
+const receiveDraft = ref<ReceiveDraftItem[]>([]);
+const milkCandidates = ref<MilkCandidate[]>([]);
+const milkReviewFilter = ref<'PENDING' | 'APPROVED' | 'IGNORED'>('PENDING');
+const milkReviewReasons = ref<Record<string, string>>({});
 
 onMounted(async () => {
   document.documentElement.dataset.theme = theme.value;
   if (!token.value) return;
+  if (!storeId.value) {
+    logout();
+    error.value = '旧登录信息缺少门店，请重新登录库存系统';
+    return;
+  }
   await nextTick();
   if (scanInput.value) {
     scanInput.value.focus();
@@ -131,6 +156,29 @@ async function apiRequest(path: string, options: RequestInit = {}) {
   return body.data;
 }
 
+async function reverseMovement(movement: Movement) {
+  const reason = reversalReasons.value[movement.movementId]?.trim() ?? '';
+  if (reason.length < 2) {
+    error.value = '请填写至少2个字的撤销原因';
+    return;
+  }
+  loading.value = true;
+  clearStatus();
+  try {
+    const data = await apiRequest(`/inventory/movements/${movement.movementId}/reverse`, {
+      method: 'POST',
+      body: JSON.stringify({ reason, idempotencyKey: crypto.randomUUID() }),
+    });
+    message.value = `已撤销 ${data.reversedMovementNo}，库存变化 ${data.quantityDelta > 0 ? '+' : ''}${data.quantityDelta} 件。`;
+    delete reversalReasons.value[movement.movementId];
+    await loadMovements();
+  } catch (reasonValue) {
+    error.value = reasonValue instanceof Error ? reasonValue.message : '撤销失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
 function clearStatus() {
   message.value = '';
   error.value = '';
@@ -147,6 +195,7 @@ async function login() {
     token.value = data.accessToken;
     displayName.value = data.user.displayName;
     storeName.value = data.user.roles?.[0]?.storeName ?? '';
+    storeId.value = data.user.roles?.[0]?.storeId ?? '';
     mustChangePassword.value = data.user.mustChangePassword;
     localStorage.setItem(tokenKey, token.value);
     localStorage.setItem(profileKey, JSON.stringify(data.user));
@@ -164,6 +213,7 @@ function logout() {
   token.value = '';
   displayName.value = '';
   storeName.value = '';
+  storeId.value = '';
   localStorage.removeItem(tokenKey);
   localStorage.removeItem(profileKey);
 }
@@ -185,7 +235,76 @@ async function switchMode(mode: Mode) {
     if (results.value.length) message.value = '已自动显示刚刚入库商品的最新库存。';
   }
   if (mode === 'reports') await loadReport();
+  if (mode === 'milkReview') await loadMilkCandidates();
   nextTick(() => scanInput.value?.focus());
+}
+
+async function loadMilkCandidates() {
+  if (!storeId.value) {
+    error.value = '当前账号没有分配门店，无法审核奶粉商品';
+    return;
+  }
+  loading.value = true;
+  clearStatus();
+  try {
+    const data = await apiRequest(`/pos/milk-products?storeId=${encodeURIComponent(storeId.value)}&reviewStatus=${milkReviewFilter.value}&pageSize=100`);
+    milkCandidates.value = data.items;
+    if (!data.items.length) message.value = '当前筛选条件下没有奶粉候选商品。';
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '奶粉候选商品加载失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function importMilkCandidates() {
+  loading.value = true;
+  clearStatus();
+  try {
+    const data = await apiRequest(`/pos/milk-products/import?storeId=${encodeURIComponent(storeId.value)}`, { method: 'POST' });
+    await loadMilkCandidates();
+    message.value = `已从POS只读获取 ${data.sourceProducts} 个商品，识别出 ${data.milkCandidates} 个奶粉候选。`;
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '拉取奶粉候选失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function reviewMilkCandidate(candidate: MilkCandidate, reviewStatus: 'APPROVED' | 'IGNORED') {
+  const reason = milkReviewReasons.value[candidate.id]?.trim() ?? '';
+  if (reason.length < 2) {
+    error.value = '请填写至少2个字的审核原因';
+    return;
+  }
+  if (reviewStatus === 'APPROVED' && candidate.suggestedInventoryPolicy === 'REVIEW_REQUIRED') {
+    error.value = '请先确认该商品是本地单罐还是外仓成箱';
+    return;
+  }
+  loading.value = true;
+  clearStatus();
+  try {
+    await apiRequest(`/pos/milk-products/${candidate.id}/review?storeId=${encodeURIComponent(storeId.value)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        reviewStatus,
+        brand: candidate.suggestedBrand,
+        englishName: candidate.suggestedEnglishName,
+        ...(candidate.suggestedChineseName?.trim() ? { chineseName: candidate.suggestedChineseName.trim() } : {}),
+        ...(candidate.suggestedPackQuantity ? { packQuantity: candidate.suggestedPackQuantity } : {}),
+        inventoryPolicy: candidate.suggestedInventoryPolicy,
+        reason,
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    });
+    delete milkReviewReasons.value[candidate.id];
+    await loadMilkCandidates();
+    message.value = reviewStatus === 'APPROVED' ? `已批准：${candidate.sourceName}` : `已忽略：${candidate.sourceName}`;
+  } catch (reasonValue) {
+    error.value = reasonValue instanceof Error ? reasonValue.message : '审核失败';
+  } finally {
+    loading.value = false;
+  }
 }
 
 async function searchProducts(searchText = query.value) {
@@ -234,38 +353,68 @@ function chooseProduct(product: ProductResult) {
   message.value = `已选择 ${product.productName}，全部条码库存会合并统计。`;
 }
 
-async function receiveStock() {
+function addReceiveDraft() {
+  clearStatus();
+  const itemBarcode = barcode.value.trim();
+  const itemName = productName.value.trim();
+  const itemQuantity = receiveQuantity.value;
+  if (!itemBarcode || !itemName || !expiryMonth.value || !Number.isInteger(itemQuantity) || itemQuantity < 1) {
+    error.value = '请填写条码、商品名、到期年月和正确数量。';
+    return;
+  }
+  const itemDay = expiryDay.value || undefined;
+  const duplicate = receiveDraft.value.find((item) =>
+    item.barcode === itemBarcode && item.productName === itemName
+    && item.expiryMonth === expiryMonth.value && item.expiryDay === itemDay);
+  if (duplicate) duplicate.quantity += itemQuantity;
+  else receiveDraft.value.push({
+    draftId: crypto.randomUUID(), barcode: itemBarcode, productName: itemName,
+    productId: selectedProduct.value?.productId, expiryMonth: expiryMonth.value,
+    expiryDay: itemDay, expiryDisplay: `${expiryMonth.value}${itemDay ? `-${String(itemDay).padStart(2, '0')}` : ''}`,
+    quantity: itemQuantity,
+  });
+  message.value = duplicate ? `已累计 ${itemName}，清单数量 ${duplicate.quantity} 件。` : `已加入本次点货清单：${itemName}。`;
+  receiveSearch.value = '';
+  barcode.value = '';
+  productName.value = '';
+  expiryMonth.value = '';
+  expiryDay.value = null;
+  receiveQuantity.value = 1;
+  selectedProduct.value = null;
+  results.value = [];
+  nextTick(() => scanInput.value?.focus());
+}
+
+function removeReceiveDraft(draftId: string) {
+  receiveDraft.value = receiveDraft.value.filter((item) => item.draftId !== draftId);
+}
+
+async function confirmReceiveDraft() {
+  if (!receiveDraft.value.length || loading.value) return;
   loading.value = true;
   clearStatus();
+  let completed = 0;
+  let receiptNo = '';
   try {
-    const receivedBarcode = barcode.value.trim();
-    const data = await apiRequest('/inventory/scan-receive', {
-      method: 'POST',
-      body: JSON.stringify({
-        barcode: receivedBarcode,
-        productName: productName.value.trim(),
-        productId: selectedProduct.value?.productId,
-        expiryMonth: expiryMonth.value,
-        expiryDay: expiryDay.value || undefined,
-        quantity: receiveQuantity.value,
-      }),
-    });
-    lastReceivedBarcode.value = receivedBarcode;
-    message.value = `已加入入库单 ${data.receiptNo}：${data.productName}，当前 ${data.currentQuantity} 件。`;
-    receiveSearch.value = '';
-    barcode.value = '';
-    productName.value = '';
-    expiryMonth.value = '';
-    expiryDay.value = null;
-    receiveQuantity.value = 1;
-    selectedProduct.value = null;
-    results.value = [];
-    await nextTick();
-    scanInput.value?.focus();
+    for (const item of [...receiveDraft.value]) {
+      const data = await apiRequest('/inventory/scan-receive', {
+        method: 'POST', body: JSON.stringify({
+          barcode: item.barcode, productName: item.productName, productId: item.productId,
+          expiryMonth: item.expiryMonth, expiryDay: item.expiryDay, quantity: item.quantity,
+        }),
+      });
+      completed += 1;
+      receiptNo = data.receiptNo;
+      lastReceivedBarcode.value = item.barcode;
+      removeReceiveDraft(item.draftId);
+    }
+    message.value = `入库单 ${receiptNo} 已写入：${completed} 项。`;
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '入库失败';
+    const detail = reason instanceof Error ? reason.message : '入库失败';
+    error.value = `已成功 ${completed} 项，剩余 ${receiveDraft.value.length} 项未写入：${detail}`;
   } finally {
     loading.value = false;
+    nextTick(() => scanInput.value?.focus());
   }
 }
 
@@ -438,20 +587,32 @@ async function issueBatch(product: ProductResult, batch: Batch) {
 
 <template>
   <main class="app-shell">
-    <section v-if="!token" class="login-card">
+    <section v-if="!token" class="login-card login-ip-card">
       <button class="theme-toggle login-theme-toggle" type="button" :aria-label="theme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="toggleTheme">
         <span aria-hidden="true">{{ theme === 'light' ? '☾' : '☀' }}</span>{{ theme === 'light' ? 'Dark' : 'Light' }}
       </button>
-      <img class="login-logo" src="/sunshine-health-logo.png" alt="阳光特产 Sunshine Health" />
-      <p class="eyebrow">SUNSHINE INVENTORY</p>
-      <h1>员工登录</h1>
-      <p class="summary">登录后进行点货入库、上货架出库和库存日期查询。</p>
-      <form @submit.prevent="login">
-        <label>员工账号<input v-model="username" autocomplete="username" autofocus /></label>
-        <label>密码<input v-model="password" type="password" autocomplete="current-password" /></label>
-        <p v-if="error" class="alert error">{{ error }}</p>
-        <button :disabled="loading" type="submit">{{ loading ? '登录中…' : '登录' }}</button>
-      </form>
+      <div class="login-layout">
+        <div class="login-form-panel">
+          <div class="login-brand-row">
+            <span class="login-logo-stage"><img class="login-logo" src="/sunshine-health-logo.png" alt="阳光特产 Sunshine Health" /></span>
+            <p class="eyebrow">SUNSHINE HEALTH</p>
+          </div>
+          <p class="login-kicker">员工库存工作台</p>
+          <h1>阳光特产库存管理</h1>
+          <p class="summary">扫码点货、上架出库、日期查询，一站完成。</p>
+          <form @submit.prevent="login">
+            <label>员工账号<input v-model="username" autocomplete="username" autofocus placeholder="请输入员工账号" /></label>
+            <label>密码<input v-model="password" type="password" autocomplete="current-password" placeholder="请输入密码" /></label>
+            <p v-if="error" class="alert error">{{ error }}</p>
+            <button class="login-submit" :disabled="loading" type="submit">{{ loading ? '登录中…' : '进入库存系统' }}</button>
+          </form>
+        </div>
+        <div class="login-hero" aria-hidden="true">
+          <img src="/inventory-open-capsule-hero.png" alt="" />
+          <span class="animated-capsule"><i class="capsule-half capsule-blue"></i><i class="capsule-half capsule-pink"></i></span>
+          <span class="powder-stream"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+        </div>
+      </div>
     </section>
 
     <section v-else class="workspace">
@@ -468,10 +629,11 @@ async function issueBatch(product: ProductResult, batch: Batch) {
 
       <p v-if="mustChangePassword" class="alert warning">当前使用临时密码，请勿把密码交给其他人。</p>
 
-      <nav class="mode-tabs" aria-label="库存操作分类">
+      <nav class="mode-tabs primary-navigation" aria-label="库存操作分类">
         <button :class="{ active: activeMode === 'receive' }" @click="switchMode('receive')">点货入库</button>
         <button :class="{ active: activeMode === 'issue' }" @click="switchMode('issue')">出库</button>
         <button :class="{ active: activeMode === 'query' }" @click="switchMode('query')">查询</button>
+        <button :class="{ active: activeMode === 'milkReview' }" @click="switchMode('milkReview')">奶粉审核</button>
         <button :class="{ active: activeMode === 'reports' }" @click="switchMode('reports')">记录与报表</button>
       </nav>
 
@@ -484,10 +646,10 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         <section class="section-heading scanner-heading"><h2>条码 / 商品名称</h2><span class="scanner-status" :class="{ ready: scanReady }"><i></i>{{ scanReady ? '扫码输入就绪' : '点击输入框后扫码' }}</span></section>
         <div class="search-row scan-search-row">
           <input ref="scanInput" v-model="receiveSearch" aria-label="查询条码或商品名称" placeholder="扫描条码或输入商品名称关键词" @focus="scanReady = true" @blur="scanReady = false" @keydown.enter.prevent="lookupForReceive" />
-          <button :disabled="loading || !receiveSearch.trim()" @click="lookupForReceive">查询</button>
+          <button class="action-secondary" :disabled="loading || !receiveSearch.trim()" @click="lookupForReceive">查询</button>
         </div>
 
-        <form class="receive-form" @submit.prevent="receiveStock">
+        <form class="receive-form" @submit.prevent="addReceiveDraft">
           <label>条码<input v-model="barcode" required maxlength="128" placeholder="扫描条码" /></label>
           <label>商品名<input v-model="productName" required maxlength="255" /></label>
           <label class="expiry-label">到期日期
@@ -497,18 +659,59 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             </span>
           </label>
           <label>数量<input v-model.number="receiveQuantity" required type="number" min="1" step="1" /></label>
-          <button class="receive-submit" :disabled="loading || !barcode.trim() || !expiryMonth">确认入库</button>
+          <button class="receive-submit action-secondary" :disabled="loading || !barcode.trim() || !expiryMonth">加入本次清单</button>
         </form>
+        <section class="receive-draft" aria-label="本次点货清单">
+          <div class="draft-heading"><div><h3>本次点货清单</h3><p>先核对清单，确认后才写入库存。</p></div><strong>{{ receiveDraft.length }} 项 · {{ receiveDraft.reduce((sum, item) => sum + item.quantity, 0) }} 件</strong></div>
+          <div v-if="receiveDraft.length" class="table-wrap">
+            <table>
+              <thead><tr><th>条码</th><th>商品名</th><th>到期日期</th><th>数量</th><th>操作</th></tr></thead>
+              <tbody><tr v-for="item in receiveDraft" :key="item.draftId"><td>{{ item.barcode }}</td><td>{{ item.productName }}</td><td>{{ item.expiryDisplay }}</td><td><input v-model.number="item.quantity" class="table-input quantity-input" type="number" min="1" step="1" :aria-label="`${item.productName} 清单数量`" /></td><td><button class="secondary danger-action" type="button" @click="removeReceiveDraft(item.draftId)">删除</button></td></tr></tbody>
+            </table>
+            <button class="confirm-draft action-primary" type="button" :disabled="loading || receiveDraft.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)" @click="confirmReceiveDraft">{{ loading ? '正在写入…' : '确认整单入库' }}</button>
+          </div>
+          <p v-else class="empty-state compact">扫描并填写日期后，商品会先出现在这里。</p>
+        </section>
+      </template>
+
+      <template v-else-if="activeMode === 'milkReview'">
+        <section class="milk-review-heading">
+          <div><h2>奶粉商品人工核对</h2><p>你确认前只保存候选数据，不扣库存、不修改收银机。</p></div>
+          <button class="action-secondary" :disabled="loading || !storeId" @click="importMilkCandidates">{{ loading ? '正在读取POS商品，请稍候…' : '从POS只读拉取' }}</button>
+        </section>
+        <div class="report-actions milk-review-actions">
+          <label>审核状态
+            <select v-model="milkReviewFilter" @change="loadMilkCandidates">
+              <option value="PENDING">待审核</option><option value="APPROVED">已批准</option><option value="IGNORED">已忽略</option>
+            </select>
+          </label>
+          <button class="secondary" :disabled="loading" @click="loadMilkCandidates">刷新列表</button>
+        </div>
+        <div v-if="milkCandidates.length" class="milk-review-list">
+          <article v-for="candidate in milkCandidates" :key="candidate.id" class="milk-review-card">
+            <header><div><strong>{{ candidate.sourceName }}</strong><small>SKU {{ candidate.sourceSku || '无' }} · Barcode {{ candidate.barcode || '无' }} · ${{ candidate.salePrice || '0.00' }}</small></div><span class="level-badge">{{ candidate.reviewStatus === 'PENDING' ? '待审核' : candidate.reviewStatus === 'APPROVED' ? '已批准' : '已忽略' }}</span></header>
+            <p class="recognition-note">{{ candidate.recognitionReason }}</p>
+            <div class="milk-review-fields">
+              <label>品牌<input v-model="candidate.suggestedBrand" maxlength="80" /></label>
+              <label>英文名称<input v-model="candidate.suggestedEnglishName" maxlength="255" /></label>
+              <label>中文名称<input v-model="candidate.suggestedChineseName" maxlength="255" placeholder="可稍后补充" /></label>
+              <label>库存处理<select v-model="candidate.suggestedInventoryPolicy"><option value="REVIEW_REQUIRED">待确认</option><option value="LOCAL_STOCK">本地单罐（可扣库存）</option><option value="EXTERNAL_WAREHOUSE">外仓邮寄（只统计）</option></select></label>
+              <label>每箱罐数<input v-model.number="candidate.suggestedPackQuantity" type="number" min="2" max="100" :disabled="candidate.suggestedInventoryPolicy !== 'EXTERNAL_WAREHOUSE'" placeholder="如 6" /></label>
+              <label>审核原因<input v-model="milkReviewReasons[candidate.id]" maxlength="255" placeholder="如：确认6罐整箱外仓发货" /></label>
+            </div>
+            <div v-if="candidate.reviewStatus === 'PENDING'" class="milk-review-buttons">
+              <button class="action-primary" :disabled="loading" @click="reviewMilkCandidate(candidate, 'APPROVED')">确认并批准</button>
+              <button class="secondary danger-action" :disabled="loading" @click="reviewMilkCandidate(candidate, 'IGNORED')">忽略该商品</button>
+            </div>
+          </article>
+        </div>
+        <p v-else class="empty-state">{{ loading ? '正在分页读取3658个POS商品，通常需要约1分钟…' : '还没有可显示的奶粉候选。点击“从POS只读拉取”后再逐条核对。' }}</p>
       </template>
 
       <template v-else-if="activeMode === 'reports'">
         <section class="report-header">
-          <div>
-            <p class="eyebrow">RECORDS & REPORTS</p>
-            <h2>记录与报表</h2>
-            <p>{{ reportWarehouseName || '当前仓库' }} · 入库记录与实时总库存</p>
-          </div>
-          <div class="report-switch" aria-label="报表分类">
+          <h2>记录与报表</h2>
+          <div class="report-switch secondary-navigation" aria-label="报表分类">
             <button :class="{ active: reportView === 'receipts' }" @click="reportView = 'receipts'; loadReport()">当天入库表</button>
             <button :class="{ active: reportView === 'inventory' }" @click="reportView = 'inventory'; loadReport()">总库存表</button>
             <button :class="{ active: reportView === 'expiry' }" @click="reportView = 'expiry'; loadReport()">临期预警</button>
@@ -521,7 +724,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             <label>入库日期<input v-model="reportDate" type="date" @change="loadReport" /></label>
             <button class="secondary" :disabled="loading" @click="loadReport">刷新</button>
             <button class="secondary" :disabled="!receipts.length" @click="exportReceipts">导出 CSV</button>
-            <button :disabled="loading || !receipts.some((receipt) => receipt.status === 'OPEN')" @click="completeCurrentReceipt">完成我的入库单</button>
+            <button class="action-primary" :disabled="loading || !receipts.some((receipt) => receipt.status === 'OPEN')" @click="completeCurrentReceipt">完成我的入库单</button>
           </div>
           <div class="metric-grid">
             <div><small>入库单</small><strong>{{ receiptSummary.receiptCount }}</strong></div>
@@ -537,7 +740,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
               <div class="table-wrap">
                 <table>
                   <thead><tr><th>条码</th><th>商品名称</th><th>到期日期</th><th>数量</th><th>录入时间</th></tr></thead>
-                  <tbody><tr v-for="item in receipt.items" :key="item.itemId"><td>{{ item.barcode }}</td><td>{{ item.productName }}</td><td>{{ item.expiryDate }}</td><td>{{ item.quantity }} 件</td><td>{{ new Date(item.createdAt).toLocaleTimeString() }}</td></tr></tbody>
+                  <tbody><tr v-for="item in receipt.items" :key="item.itemId" :class="{ 'reversed-row': item.reversed }"><td>{{ item.barcode }}</td><td>{{ item.productName }}</td><td>{{ item.expiryDate }}</td><td>{{ item.quantity }} 件 <span v-if="item.reversed" class="reversed-label">已撤销</span></td><td>{{ new Date(item.createdAt).toLocaleTimeString() }}</td></tr></tbody>
                 </table>
               </div>
             </details>
@@ -598,13 +801,17 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         </template>
 
         <template v-else>
-          <div class="expiry-note stocktake-note">盘点只填写实际看到的数量，系统会自动生成盘盈或盘亏流水；不会修改或删除历史记录。</div>
           <div class="report-actions movement-actions">
             <label>商品、条码或流水号<input v-model="movementQuery" placeholder="输入关键词查询最近100条" @keydown.enter.prevent="loadReport" /></label>
             <button class="secondary" :disabled="loading" @click="loadReport">查询流水</button>
           </div>
-          <h3 class="report-subtitle">库存盘点</h3>
-          <div v-if="inventorySummary.products.length" class="table-wrap inventory-table">
+          <div class="report-detail-switch" aria-label="盘点与流水分类">
+            <button :class="{ active: movementView === 'stocktake' }" @click="movementView = 'stocktake'">库存盘点</button>
+            <button :class="{ active: movementView === 'history' }" @click="movementView = 'history'">库存流水</button>
+          </div>
+          <template v-if="movementView === 'stocktake'">
+          <div class="expiry-note stocktake-note">填写实际看到的数量和原因，系统自动记录盘盈或盘亏。</div>
+          <div v-if="inventorySummary.products.length" class="table-wrap inventory-table report-detail-panel stocktake-table">
             <table>
               <thead><tr><th>商品</th><th>到期日期</th><th>系统数量</th><th>实际数量</th><th>原因</th><th>操作</th></tr></thead>
               <tbody v-for="product in inventorySummary.products" :key="product.productId">
@@ -612,20 +819,22 @@ async function issueBatch(product: ProductResult, batch: Batch) {
                   <td>{{ product.productName }}</td><td>{{ batch.expiryDate }}</td><td>{{ batch.quantity }} 件</td>
                   <td><input v-model.number="stocktakeActual[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 实际数量`" class="table-input quantity-input" type="number" min="0" step="1" placeholder="实际数量" /></td>
                   <td><input v-model="stocktakeReasons[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 盘点原因`" class="table-input" maxlength="255" placeholder="如：现场盘点" /></td>
-                  <td><button class="secondary" :disabled="loading" @click="adjustStocktake(product, batch)">确认调整</button></td>
+                  <td><button class="action-primary compact-action" :disabled="loading" @click="adjustStocktake(product, batch)">确认调整</button></td>
                 </tr>
               </tbody>
             </table>
           </div>
           <p v-else class="empty-state">当前仓库没有可盘点库存。</p>
-          <h3 class="report-subtitle">最近库存流水</h3>
-          <div v-if="movements.length" class="table-wrap inventory-table">
+          </template>
+          <template v-else>
+          <div v-if="movements.length" class="table-wrap inventory-table report-detail-panel">
             <table>
-              <thead><tr><th>时间</th><th>类型</th><th>商品</th><th>条码</th><th>到期日期</th><th>数量变化</th><th>原因</th></tr></thead>
-              <tbody><tr v-for="movement in movements" :key="movement.movementId"><td>{{ new Date(movement.createdAt).toLocaleString() }}</td><td><span class="movement-badge" :class="movement.quantityDelta > 0 ? 'gain' : 'loss'">{{ movement.movementLabel }}</span></td><td>{{ movement.productName }}</td><td>{{ movement.barcodes.join('、') }}</td><td>{{ movement.expiryDate }}</td><td :class="movement.quantityDelta > 0 ? 'delta-gain' : 'delta-loss'">{{ movement.quantityDelta > 0 ? '+' : '' }}{{ movement.quantityDelta }}</td><td>{{ movement.reason || '—' }}</td></tr></tbody>
+              <thead><tr><th>时间</th><th>类型</th><th>商品</th><th>条码</th><th>到期日期</th><th>数量变化</th><th>原因/关联</th><th>管理员操作</th></tr></thead>
+              <tbody><tr v-for="movement in movements" :key="movement.movementId" :class="{ 'reversed-row': movement.reversed }"><td>{{ new Date(movement.createdAt).toLocaleString() }}</td><td><span class="movement-badge" :class="movement.quantityDelta > 0 ? 'gain' : 'loss'">{{ movement.movementLabel }}</span><span v-if="movement.reversed" class="reversed-label">已撤销</span></td><td>{{ movement.productName }}</td><td>{{ movement.barcodes.join('、') }}</td><td>{{ movement.expiryDate }}</td><td :class="movement.quantityDelta > 0 ? 'delta-gain' : 'delta-loss'">{{ movement.quantityDelta > 0 ? '+' : '' }}{{ movement.quantityDelta }}</td><td><span>{{ movement.reason || '—' }}</span><small v-if="movement.reversalOfMovementNo" class="movement-link">撤销：{{ movement.reversalOfMovementNo }}</small><small v-if="movement.reversedByMovementNo" class="movement-link">冲销：{{ movement.reversedByMovementNo }}</small></td><td><div v-if="movement.canReverse" class="reversal-action"><input v-model="reversalReasons[movement.movementId]" :aria-label="`${movement.movementNo} 撤销原因`" maxlength="255" placeholder="撤销原因" /><button class="secondary danger-action" :disabled="loading || (reversalReasons[movement.movementId]?.trim().length ?? 0) < 2" @click="reverseMovement(movement)">撤销</button></div><span v-else>—</span></td></tr></tbody>
             </table>
           </div>
           <p v-else class="empty-state">没有找到库存流水。</p>
+          </template>
         </template>
       </template>
 
@@ -635,7 +844,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         </section>
         <div class="search-row">
           <input ref="scanInput" v-model="query" aria-label="商品关键词或条码" placeholder="输入商品名称或扫描条码" @focus="scanReady = true" @blur="scanReady = false" @keydown.enter.prevent="searchProducts()" />
-          <button :disabled="loading || !query.trim()" @click="searchProducts()">查询</button>
+          <button class="action-secondary" :disabled="loading || !query.trim()" @click="searchProducts()">查询</button>
         </div>
       </template>
 
@@ -653,7 +862,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             <div class="batch-value quantity-value"><small>库存数量</small><strong>{{ batch.quantity }} 件</strong></div>
             <div v-if="activeMode === 'issue'" class="issue-action">
               <input v-model.number="issueQuantities[batch.batchId]" :aria-label="`${batch.expiryDate} 出库数量`" type="number" min="1" :max="batch.quantity" placeholder="数量" />
-              <button :disabled="loading || batch.quantity < 1" @click="issueBatch(product, batch)">确认出库</button>
+              <button class="action-primary" :disabled="loading || batch.quantity < 1" @click="issueBatch(product, batch)">确认出库</button>
             </div>
           </div>
           <p v-if="!product.batches.length" class="empty">暂无日期库存</p>
