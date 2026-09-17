@@ -4,8 +4,10 @@ import App from './App.vue';
 
 describe('App', () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
     localStorage.clear();
     localStorage.setItem('sunshine_inventory_profile', JSON.stringify({
+      id: '1',
       displayName: '测试员工',
       roles: [{ code: 'ADMIN', storeId: '3', storeName: '测试门店' }],
     }));
@@ -92,6 +94,46 @@ describe('App', () => {
     expect(wrapper.text()).toContain('删除');
   });
 
+  it('adds a received item when randomUUID is unavailable on a phone HTTP connection', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    vi.stubGlobal('crypto', {
+      getRandomValues(values: Uint8Array) {
+        values.fill(7);
+        return values;
+      },
+    });
+    const wrapper = mount(App);
+
+    await wrapper.get('input[placeholder="扫描条码"]').setValue('9421907983356');
+    await wrapper.get('input[required][maxlength="255"]').setValue('手机测试商品');
+    await wrapper.get('input[type="month"]').setValue('2027-11');
+    await wrapper.get('input[type="number"][min="1"][step="1"]').setValue(112);
+    await wrapper.get('form.receive-form').trigger('submit');
+
+    expect(wrapper.text()).toContain('1 项 · 112 件');
+    expect(wrapper.text()).toContain('手机测试商品');
+    expect(wrapper.text()).not.toContain('扫描并填写日期后，商品会先出现在这里');
+  });
+
+  it('restores an unsubmitted receiving draft after the phone page reloads', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const firstPage = mount(App);
+    await firstPage.get('input[placeholder="扫描条码"]').setValue('9400000000018');
+    await firstPage.get('input[required][maxlength="255"]').setValue('锁屏恢复测试商品');
+    await firstPage.get('input[type="month"]').setValue('2028-06');
+    await firstPage.get('input[type="number"][min="1"][step="1"]').setValue(4);
+    await firstPage.get('form.receive-form').trigger('submit');
+    expect(firstPage.text()).toContain('1 项 · 4 件');
+    firstPage.unmount();
+
+    const restoredPage = mount(App);
+    expect(restoredPage.text()).toContain('已恢复上次未提交的入库草稿');
+    expect(restoredPage.text()).toContain('锁屏恢复测试商品');
+    expect(restoredPage.text()).toContain('1 项 · 4 件');
+    expect(restoredPage.get('input[aria-label="锁屏恢复测试商品 清单数量"]').element)
+      .toHaveProperty('value', '4');
+  });
+
   it('finds an existing product by a partial name during receiving', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
@@ -119,6 +161,37 @@ describe('App', () => {
     expect(wrapper.text()).toContain('到期日期');
   });
 
+  it('shows bilingual product details and moves focus to expiry after a barcode scan', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      data: {
+        products: [{
+          productId: '12',
+          productName: '纽乐植物酵素60粒',
+          sku: '07520',
+          englishName: 'Good Health Enzyme 60 Capsules',
+          chineseName: '纽乐植物酵素60粒',
+          barcodes: ['9400581003822'],
+          batches: [],
+          totalQuantity: 0,
+        }],
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const wrapper = mount(App, { attachTo: document.body });
+    await wrapper.get('input[aria-label="查询条码或商品名称"]').setValue('9400581003822');
+    await wrapper.get('input[aria-label="查询条码或商品名称"]').trigger('keydown.enter');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('已识别商品');
+    expect(wrapper.text()).toContain('纽乐植物酵素60粒');
+    expect(wrapper.text()).toContain('Good Health Enzyme 60 Capsules');
+    expect(wrapper.text()).toContain('07520');
+    expect(wrapper.find('input[placeholder="扫描条码"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(wrapper.get('input[aria-label="到期年月"]').element);
+    wrapper.unmount();
+  });
+
   it('shows daily receipts in the records and reports tab', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
@@ -135,8 +208,8 @@ describe('App', () => {
 
     const wrapper = mount(App);
     const tabs = wrapper.get('nav').findAll('button');
-    expect(tabs).toHaveLength(5);
-    await tabs[4].trigger('click');
+    expect(tabs).toHaveLength(4);
+    await tabs[3].trigger('click');
     await flushPromises();
 
     expect(wrapper.text()).toContain('记录与报表');
@@ -161,7 +234,7 @@ describe('App', () => {
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
     const wrapper = mount(App);
-    await wrapper.get('nav').findAll('button')[4].trigger('click');
+    await wrapper.get('nav').findAll('button')[3].trigger('click');
     await flushPromises();
     const reportButtons = wrapper.findAll('.report-switch button');
     expect(reportButtons).toHaveLength(4);
@@ -189,7 +262,7 @@ describe('App', () => {
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
     const wrapper = mount(App);
-    await wrapper.get('nav').findAll('button')[4].trigger('click');
+    await wrapper.get('nav').findAll('button')[3].trigger('click');
     await flushPromises();
     const reportButtons = wrapper.findAll('.report-switch button');
     expect(reportButtons).toHaveLength(4);

@@ -43,6 +43,8 @@
 }
 
 * { box-sizing: border-box; }
+html, body, #app { width: 100%; max-width: 100%; overflow-x: hidden; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0;
   min-width: 320px;
@@ -261,6 +263,14 @@ header { justify-content: space-between; gap: 20px; }
 .scan-label { flex: 1; }
 .scan-input { font-size: 22px; letter-spacing: .04em; }
 .receive-form { grid-template-columns: minmax(140px, 1.1fr) minmax(150px, 1.2fr) minmax(230px, 1.6fr) minmax(80px, .6fr); align-items: end; }
+.receive-product-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 14px 0; padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(135deg, rgb(237 251 244 / 92%), var(--glass-strong)); box-shadow: inset 0 1px 0 var(--line-bright), 0 10px 24px var(--shadow); }
+.receive-product-card h3, .receive-product-card p { margin: 4px 0 0; }
+.receive-product-card p { color: var(--muted); }
+.product-confirmed { display: inline-flex; padding: 3px 9px; border-radius: 999px; color: #146142; background: #d8f4e5; font-size: 12px; font-weight: 800; }
+.receive-product-card dl { display: grid; grid-template-columns: repeat(2, minmax(100px, 1fr)); gap: 8px; margin: 0; }
+.receive-product-card dl div { padding: 8px 12px; border-radius: 12px; background: var(--glass-soft); }
+.receive-product-card dt { color: var(--muted); font-size: 12px; }
+.receive-product-card dd { margin: 3px 0 0; font-weight: 800; word-break: break-all; }
 .expiry-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(95px, 1fr); gap: 8px; }
 .receive-submit { grid-column: 1 / -1; }
 .alert { padding: 13px 15px; border-radius: 12px; }
@@ -269,7 +279,7 @@ header { justify-content: space-between; gap: 20px; }
 .error { color: #8b2f2f; background: #fdeaea; }
 .batch-list { margin-top: 30px; padding-top: 20px; border-top: 1px solid #dce8e0; }
 .batch-row { justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #edf2ee; }
-.mode-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 20px 0; padding: 5px; border: 1px solid #d8e8dc; border-radius: 14px; background: rgb(235 245 238 / 85%); }
+.mode-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 20px 0; padding: 5px; border: 1px solid #d8e8dc; border-radius: 14px; background: rgb(235 245 238 / 85%); }
 .mode-tabs button { position: relative; overflow: hidden; color: #49665d; background: transparent; }
 .mode-tabs button.active { color: #fff; background: linear-gradient(135deg, #197451, #42a16f); box-shadow: 0 8px 20px rgb(38 112 88 / 24%); }
 .mode-tabs button.active::after { content: ""; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 20%, rgb(255 255 255 / 18%) 48%, transparent 72%); transform: translateX(-120%); animation: tab-shine 3.2s ease-in-out infinite; }
@@ -381,6 +391,7 @@ td { color: #29483e; }
 .milk-review-fields label { min-width: 0; }
 .milk-review-fields input, .milk-review-fields select { width: 100%; min-width: 0; }
 .milk-review-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.pagination-actions { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px 0; }
 
 /* Liquid glass theme layer */
 .login-card::before, .workspace::before {
@@ -633,25 +644,80 @@ th, td, .batch-list, .batch-row { border-color: var(--line); }
 }
 
 @media (max-width: 720px) {
-  .app-shell { padding: 14px; }
+  .app-shell { padding: 4px; overflow-x: hidden; }
   .workspace, .login-card { margin: 0 auto; border-radius: 20px; }
   header, .scan-panel { align-items: stretch; flex-direction: column; }
   .account { justify-content: space-between; }
   .theme-toggle { min-width: 76px; }
   .brand-logo { width: 58px; height: 58px; }
-  .receive-form { grid-template-columns: 1fr; }
+  .app-shell { align-items: flex-start; }
+  .workspace { width: 100%; max-width: 100%; padding: 9px; border-radius: 15px; }
+  .workspace > header { gap: 7px; }
+  .brand-block .eyebrow { display: none; }
+  .brand-block { gap: 9px; }
+  .brand-block h1 { margin: 0; font-size: 20px; }
+  .brand-logo { width: 38px; height: 38px; border-width: 2px; }
+  .account { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 7px; }
+  .account > span:not(.store-badge) { display: none; }
+  .account .store-badge { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .theme-toggle, .account .secondary { min-width: 0; padding: 8px 10px; }
+  .store-badge { padding: 7px 9px; }
+  .mode-panel { min-width: 0; }
+  .section-heading { margin-top: 11px; }
+  .section-heading h2 { font-size: 18px; }
+  .scanner-heading { gap: 8px; }
+  .scanner-status { flex: 0 0 auto; font-size: 11px; }
+  .scan-search-row { gap: 6px; padding: 6px; }
+  .receive-form { grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
+  .receive-form input, .scan-search-row input { min-height: 46px; padding: 10px 12px; font-size: 16px; }
+  .receive-form button, .scan-search-row button { min-height: 44px; }
+  .receive-product-card { display: grid; gap: 9px; margin: 9px 0; padding: 11px; }
+  .receive-product-card h3 { font-size: 18px; }
+  .receive-product-card p { font-size: 13px; }
+  .receive-product-card dl { grid-template-columns: 1fr 1.4fr; width: 100%; }
+  .receive-product-card dl div { padding: 8px; }
+  .expiry-fields { grid-template-columns: minmax(0, 1fr) 104px; }
+  .receive-submit { width: 100%; }
+  .receive-draft { margin-top: 10px; padding: 10px; }
+  .draft-heading { align-items: flex-start; gap: 8px; }
+  .draft-heading strong { white-space: nowrap; }
+  .receive-draft-table-wrap { overflow: visible; }
+  .receive-draft-table, .receive-draft-table tbody { display: block; width: 100%; }
+  .receive-draft-table thead { display: none; }
+  .receive-draft-table tr { display: grid; gap: 8px; margin-bottom: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass-soft); }
+  .receive-draft-table td { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 8px; padding: 0; border: 0; word-break: break-word; }
+  .receive-draft-table td::before { content: attr(data-label); color: var(--muted); font-size: 12px; font-weight: 800; }
+  .receive-draft-table .quantity-input { width: 100%; min-height: 44px; font-size: 16px; }
+  .receive-draft-table .danger-action { width: 100%; min-height: 42px; }
+  .confirm-draft { position: sticky; bottom: max(8px, env(safe-area-inset-bottom)); z-index: 4; width: 100%; min-height: 52px; margin-top: 10px; }
   .receive-submit { grid-column: auto; }
   .expiry-fields { grid-template-columns: minmax(0, 2fr) minmax(110px, 1fr); }
-  .mode-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mode-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin: 10px 0; padding: 4px; overflow: hidden; }
+  .mode-tabs button { min-width: 0; min-height: 42px; padding: 9px 5px; font-size: 14px; }
   .search-row { grid-template-columns: 1fr; }
   .selected-card, .product-summary { align-items: flex-start; flex-direction: column; }
   .product-card .batch-row { grid-template-columns: 1fr auto; }
   .issue-action { grid-column: 1 / -1; }
   .report-header { align-items: stretch; flex-direction: column; }
   .draft-heading { align-items: flex-start; flex-direction: column; }
-  .report-actions, .inventory-actions, .expiry-actions, .movement-actions { grid-template-columns: 1fr; }
+  .report-header { padding-bottom: 8px; }
+  .report-header h2 { font-size: 21px; }
+  .report-actions, .inventory-actions, .expiry-actions, .movement-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; padding: 9px; }
+  .report-actions label { grid-column: 1 / -1; }
+  .report-actions .action-primary { grid-column: 1 / -1; }
   .report-switch { grid-template-columns: repeat(2, 1fr); }
-  .metric-grid, .metric-grid.two, .expiry-metrics { grid-template-columns: 1fr; }
+  .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 10px 0; }
+  .metric-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .expiry-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-grid div { min-width: 0; padding: 10px; }
+  .metric-grid small { font-size: 11px; }
+  .metric-grid strong { font-size: 22px; }
+  .receipt-card summary { gap: 8px; padding: 11px; }
+  .receipt-card summary strong { overflow-wrap: anywhere; }
+  .receipt-card .table-wrap { overflow-x: hidden; }
+  .receipt-card table { table-layout: fixed; font-size: 11px; }
+  .receipt-card th, .receipt-card td { padding: 8px 5px; white-space: normal; overflow-wrap: anywhere; }
+  .receipt-card th:nth-child(5), .receipt-card td:nth-child(5) { display: none; }
   .milk-review-heading { align-items: stretch; flex-direction: column; }
   .milk-review-fields { grid-template-columns: 1fr; }
   .login-ip-card { padding: 20px; }

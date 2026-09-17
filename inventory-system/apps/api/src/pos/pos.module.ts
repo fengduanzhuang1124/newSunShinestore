@@ -8,11 +8,13 @@ import { MoniAuthService } from './adapters/moni/moni-auth.service.js';
 import { MoniBrandGateway } from './adapters/moni/moni-brand.gateway.js';
 import { MoniCategoryGateway } from './adapters/moni/moni-category.gateway.js';
 import { MoniProductGateway } from './adapters/moni/moni-product.gateway.js';
+import { MoniPriceLevelGateway } from './adapters/moni/moni-price-level.gateway.js';
 import { MoniOrderGateway } from './adapters/moni/moni-order.gateway.js';
 import { PosObservationService } from './application/pos-observation.service.js';
 import { PosInventorySimulationService } from './application/pos-inventory-simulation.service.js';
 import { PosQueryService } from './application/pos-query.service.js';
 import { PosMilkCatalogService } from './application/pos-milk-catalog.service.js';
+import { PosProductCatalogService } from './application/pos-product-catalog.service.js';
 import { PosController } from './pos.controller.js';
 
 /**
@@ -33,11 +35,13 @@ import { PosController } from './pos.controller.js';
     MoniBrandGateway,
     MoniCategoryGateway,
     MoniProductGateway,
+    MoniPriceLevelGateway,
     MoniOrderGateway,
     PosObservationService,
     PosInventorySimulationService,
     PosQueryService,
     PosMilkCatalogService,
+    PosProductCatalogService,
     MoniStoreGateway,
   ],
   exports: [
@@ -52,6 +56,7 @@ import { PosController } from './pos.controller.js';
     PosInventorySimulationService,
     PosQueryService,
     PosMilkCatalogService,
+    PosProductCatalogService,
     MoniStoreGateway,
   ],
 })

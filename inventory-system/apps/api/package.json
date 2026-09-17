@@ -16,6 +16,9 @@
     "pos:check:brands": "tsx scripts/check-moni-brands.ts",
     "pos:check:categories": "tsx scripts/check-moni-categories.ts",
     "pos:check:products": "tsx scripts/check-moni-products.ts",
+    "pos:check:product-price-fields": "tsx scripts/check-moni-product-price-fields.ts",
+    "pos:check:price-levels": "tsx scripts/check-moni-price-levels.ts",
+    "pos:sync:level4-prices": "tsx scripts/sync-moni-level4-prices.ts",
     "pos:check:order-product-link": "tsx scripts/check-moni-order-product-link.ts",
     "pos:check:daily-orders": "tsx scripts/check-moni-daily-orders.ts",
     "pos:check:order-lifecycle": "tsx scripts/check-moni-order-lifecycle.ts",
@@ -26,6 +29,9 @@
     "pos:check:store-info": "tsx scripts/check-moni-store-info.ts",
     "pos:export:milk-orders": "tsx scripts/export-moni-milk-orders-data.ts",
     "pos:import:milk-candidates": "tsx scripts/import-moni-milk-candidates.ts",
+    "pos:import:product-candidates": "tsx scripts/import-moni-product-candidates.ts",
+    "pos:import:product-translations": "tsx scripts/import-pos-product-translations.ts",
+    "pos:approve:product-translations": "tsx scripts/approve-pos-product-translations.ts",
     "pos:approve:milk-candidates": "tsx scripts/approve-reviewed-milk-candidates.ts"
   },
   "dependencies": {

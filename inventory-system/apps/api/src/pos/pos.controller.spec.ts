@@ -9,7 +9,7 @@ describe('PosController', () => {
         pagination: { page: 1, pageSize: 20, total: 0, pageTotal: 0 },
       } as never),
     };
-    const controller = new PosController(pos as never, {} as never);
+    const controller = new PosController(pos as never, {} as never, {} as never);
     const request = {
       inventoryUser: { id: 1n, organizationId: 2n, username: 'admin' },
     };
@@ -30,7 +30,7 @@ describe('PosController', () => {
     const milkCatalog = {
       importCandidates: jest.fn().mockResolvedValue({ milkCandidates: 12 } as never),
     };
-    const controller = new PosController({} as never, milkCatalog as never);
+    const controller = new PosController({} as never, milkCatalog as never, {} as never);
     const request = {
       inventoryUser: { id: 1n, organizationId: 2n, username: 'admin' },
     };
@@ -56,7 +56,7 @@ describe('PosController', () => {
     const milkCatalog = {
       reviewCandidate: jest.fn().mockResolvedValue({ id: '9', reviewStatus: 'APPROVED' } as never),
     };
-    const controller = new PosController({} as never, milkCatalog as never);
+    const controller = new PosController({} as never, milkCatalog as never, {} as never);
     const request = { inventoryUser: { id: 1n, organizationId: 2n, username: 'admin' } };
 
     await expect(

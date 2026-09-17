@@ -83,6 +83,9 @@ export class InventoryService {
     product: {
       id: bigint;
       name: string;
+      sku: string | null;
+      englishName: string | null;
+      chineseName: string | null;
       barcodes: Array<{ barcode: string }>;
       batches: Array<{
         id: bigint;
@@ -103,6 +106,9 @@ export class InventoryService {
     return {
       productId: product.id.toString(),
       productName: product.name,
+      sku: product.sku,
+      englishName: product.englishName,
+      chineseName: product.chineseName,
       barcodes: product.barcodes.map(({ barcode }) => barcode),
       batches,
       totalQuantity: batches.reduce((sum, batch) => sum + batch.quantity, 0),
@@ -125,6 +131,9 @@ export class InventoryService {
         status: 'ACTIVE',
         OR: [
           { name: { contains: query } },
+          { sku: { contains: query } },
+          { englishName: { contains: query } },
+          { chineseName: { contains: query } },
           { barcodes: { some: { barcode: { contains: query }, status: 'ACTIVE' } } },
         ],
       },

@@ -64,6 +64,11 @@ function toOptionalNumber(value: unknown, field: string): number | null {
   return parsed;
 }
 
+function toOptionalCurrency(value: unknown, field: string): number | null {
+  const cents = toOptionalNumber(value, field);
+  return cents === null ? null : cents / 100;
+}
+
 function toOptionalString(value: unknown): string | null {
   if (typeof value === 'string') return value.trim() || null;
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
@@ -114,8 +119,8 @@ export class MoniProductGateway {
         name,
         barcode: toOptionalString(record.barcode),
         itemType: toOptionalString(record.item_type),
-        salePrice: toOptionalNumber(record.item_price, 'product sale price'),
-        costPrice: toOptionalNumber(record.cost_price, 'product cost price'),
+        salePrice: toOptionalCurrency(record.item_price, 'product sale price'),
+        costPrice: toOptionalCurrency(record.cost_price, 'product cost price'),
         stock,
         status: toOptionalString(record.status),
         soldTime: toOptionalString(record.sold_time),

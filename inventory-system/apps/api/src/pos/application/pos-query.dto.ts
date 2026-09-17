@@ -58,6 +58,20 @@ export class PosMilkCatalogQueryDto extends PosPageQueryDto {
   reviewStatus?: 'PENDING' | 'APPROVED' | 'IGNORED';
 }
 
+export class PosProductCatalogQueryDto extends PosPageQueryDto {
+  @IsOptional()
+  @IsString()
+  q?: string;
+
+  @IsOptional()
+  @IsIn(['PENDING', 'APPROVED', 'IGNORED'])
+  reviewStatus?: 'PENDING' | 'APPROVED' | 'IGNORED';
+
+  @IsOptional()
+  @IsIn(['UNTRANSLATED', 'DRAFT', 'APPROVED'])
+  translationStatus?: 'UNTRANSLATED' | 'DRAFT' | 'APPROVED';
+}
+
 export class PosSimulationQueryDto extends PosPageQueryDto {
   @IsOptional()
   @IsIn(['READY', 'INSUFFICIENT', 'REVIEW_REQUIRED'])

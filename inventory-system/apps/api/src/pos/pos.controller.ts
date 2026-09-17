@@ -5,6 +5,7 @@ import {
   PosMappingQueryDto,
   PosMilkCatalogQueryDto,
   PosOrderQueryDto,
+  PosProductCatalogQueryDto,
   PosReviewQueryDto,
   PosSimulationQueryDto,
   PosStoreQueryDto,
@@ -12,6 +13,8 @@ import {
 import { PosQueryService } from './application/pos-query.service.js';
 import { PosMilkCatalogService } from './application/pos-milk-catalog.service.js';
 import { ReviewMilkProductDto } from './application/review-milk-product.dto.js';
+import { PosProductCatalogService } from './application/pos-product-catalog.service.js';
+import { ReviewPosProductDto } from './application/review-pos-product.dto.js';
 
 @Controller('pos')
 @UseGuards(JwtAuthGuard)
@@ -19,7 +22,55 @@ export class PosController {
   constructor(
     private readonly pos: PosQueryService,
     private readonly milkCatalog: PosMilkCatalogService,
+    private readonly productCatalog: PosProductCatalogService,
   ) {}
+
+  @Post('product-candidates/import')
+  async importProductCandidates(
+    @Req() request: AuthenticatedRequest,
+    @Query() query: PosStoreQueryDto,
+  ) {
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: 'POS条码商品候选导入成功',
+      data: await this.productCatalog.importCandidates(user.organizationId, user.id, query.storeId),
+    };
+  }
+
+  @Get('product-candidates')
+  async productCandidates(
+    @Req() request: AuthenticatedRequest,
+    @Query() query: PosProductCatalogQueryDto,
+  ) {
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: 'POS条码商品候选查询成功',
+      data: await this.productCatalog.candidates(user.organizationId, user.id, query),
+    };
+  }
+
+  @Patch('product-candidates/:candidateId/review')
+  async reviewProductCandidate(
+    @Req() request: AuthenticatedRequest,
+    @Param('candidateId') candidateId: string,
+    @Query() query: PosStoreQueryDto,
+    @Body() input: ReviewPosProductDto,
+  ) {
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: input.reviewStatus === 'APPROVED' ? 'POS商品审核通过' : 'POS商品已忽略',
+      data: await this.productCatalog.reviewCandidate(
+        user.organizationId,
+        user.id,
+        query.storeId,
+        candidateId,
+        input,
+      ),
+    };
+  }
 
   @Post('milk-products/import')
   async importMilkProducts(

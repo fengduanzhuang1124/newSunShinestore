@@ -22,6 +22,7 @@ describe('inventory database contract', () => {
     'model InventoryBalance',
     'model AuditLog',
     'model PosProductMapping',
+    'model PosProductCandidate',
     'model PosMilkProductCandidate',
     'model PosOrder',
     'model PosOrderItem',
@@ -95,6 +96,31 @@ describe('inventory database contract', () => {
     expect(candidate).toMatch(/reviewedAt\s+DateTime\?/);
     expect(candidate).not.toContain('stockMovements');
     expect(candidate).not.toContain('inventoryBalances');
+  });
+
+  it('keeps barcode product translations in a review pool before approval', () => {
+    const candidate = schema.slice(
+      schema.indexOf('model PosProductCandidate'),
+      schema.indexOf('model ProductBarcode'),
+    );
+    expect(candidate).toMatch(/barcode\s+String\s+@db\.VarChar\(128\)/);
+    expect(candidate).toMatch(/englishName\s+String/);
+    expect(candidate).toMatch(/chineseName\s+String\?/);
+    expect(candidate).toMatch(/reviewStatus\s+PosMilkReviewStatus/);
+    expect(candidate).toMatch(/translationStatus\s+TranslationStatus/);
+    expect(candidate).not.toContain('stockMovements');
+    expect(candidate).not.toContain('inventoryBalances');
+  });
+
+  it('stores the POS Level 4 price separately from the standard selling price', () => {
+    const storeProduct = schema.slice(
+      schema.indexOf('model StoreProduct'),
+      schema.indexOf('model Warehouse'),
+    );
+    expect(storeProduct).toMatch(/sellingPriceCents\s+Int\?/);
+    expect(storeProduct).toMatch(/level4PriceCents\s+Int\?/);
+    expect(storeProduct).toMatch(/level4PriceId\s+String\?/);
+    expect(storeProduct).toMatch(/level4PriceSyncedAt\s+DateTime\?/);
   });
 
   it('groups receiving movements into auditable receipt documents', () => {

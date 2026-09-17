@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue';
+import { nextTick, onMounted, ref, watch } from 'vue';
 
-type Mode = 'receive' | 'issue' | 'query' | 'milkReview' | 'reports';
+type Mode = 'receive' | 'issue' | 'query' | 'productReview' | 'milkReview' | 'reports';
 type Theme = 'light' | 'dark';
 type Batch = { batchId: string; expiryDate: string; expiryPrecision: 'MONTH' | 'DATE'; quantity: number };
 type ProductResult = {
   productId: string;
   productName: string;
+  sku: string | null;
+  englishName: string | null;
+  chineseName: string | null;
   barcodes: string[];
   batches: Batch[];
   totalQuantity: number;
@@ -46,8 +49,17 @@ type MilkCandidate = {
   cartonPriceMatched: boolean; salePrice: string | null; recognitionReason: string;
   reviewStatus: 'PENDING' | 'APPROVED' | 'IGNORED';
 };
+type PosProductCandidate = {
+  id: string; externalProductId: string; sourceSku: string | null; barcode: string;
+  sourceName: string; englishName: string; chineseName: string | null;
+  brandName: string | null; categoryName: string | null; itemType: string | null;
+  salePrice: string | null; sourceStock: string | null;
+  reviewStatus: 'PENDING' | 'APPROVED' | 'IGNORED';
+  translationStatus: 'UNTRANSLATED' | 'DRAFT' | 'APPROVED';
+};
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3100/api/v1';
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL
+  ?? `${window.location.protocol}//${window.location.hostname}:3100/api/v1`;
 const tokenKey = 'sunshine_inventory_access_token';
 const profileKey = 'sunshine_inventory_profile';
 const themeKey = 'sunshine_inventory_theme';
@@ -57,6 +69,7 @@ const theme = ref<Theme>(savedTheme === 'dark' || savedTheme === 'light'
   : (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
 const storedProfile = JSON.parse(localStorage.getItem(profileKey) ?? '{}');
 const token = ref(localStorage.getItem(tokenKey) ?? '');
+const userId = ref(storedProfile.id ?? '');
 const username = ref('');
 const password = ref('');
 const displayName = ref(storedProfile.displayName ?? '');
@@ -80,6 +93,7 @@ const error = ref('');
 const loading = ref(false);
 const scanReady = ref(false);
 const scanInput = ref<HTMLInputElement>();
+const expiryMonthInput = ref<HTMLInputElement>();
 const reportView = ref<'receipts' | 'inventory' | 'expiry' | 'movements'>('receipts');
 const movementView = ref<'stocktake' | 'history'>('stocktake');
 const reportDate = ref(new Intl.DateTimeFormat('en-CA', {
@@ -107,6 +121,112 @@ const receiveDraft = ref<ReceiveDraftItem[]>([]);
 const milkCandidates = ref<MilkCandidate[]>([]);
 const milkReviewFilter = ref<'PENDING' | 'APPROVED' | 'IGNORED'>('PENDING');
 const milkReviewReasons = ref<Record<string, string>>({});
+const productCandidates = ref<PosProductCandidate[]>([]);
+const productReviewFilter = ref<'PENDING' | 'APPROVED' | 'IGNORED'>('PENDING');
+const productReviewQuery = ref('');
+const productReviewPage = ref(1);
+const productReviewPageTotal = ref(0);
+const productReviewTotal = ref(0);
+const productReviewReasons = ref<Record<string, string>>({});
+
+function createClientUuid(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+type ReceiveDraftSnapshot = {
+  version: 1;
+  receiveSearch: string;
+  barcode: string;
+  productName: string;
+  expiryMonth: string;
+  expiryDay: number | null;
+  receiveQuantity: number;
+  selectedProduct: ProductResult | null;
+  receiveDraft: ReceiveDraftItem[];
+};
+
+function receiveDraftStorageKey(): string | null {
+  if (!userId.value || !storeId.value) return null;
+  return `sunshine_inventory_receive_draft:${userId.value}:${storeId.value}`;
+}
+
+function persistReceiveDraft(): void {
+  const key = receiveDraftStorageKey();
+  if (!key) return;
+  const hasWork = receiveDraft.value.length > 0
+    || Boolean(receiveSearch.value.trim() || barcode.value.trim() || productName.value.trim()
+      || expiryMonth.value || selectedProduct.value);
+  if (!hasWork) {
+    localStorage.removeItem(key);
+    return;
+  }
+  const snapshot: ReceiveDraftSnapshot = {
+    version: 1,
+    receiveSearch: receiveSearch.value,
+    barcode: barcode.value,
+    productName: productName.value,
+    expiryMonth: expiryMonth.value,
+    expiryDay: expiryDay.value,
+    receiveQuantity: receiveQuantity.value,
+    selectedProduct: selectedProduct.value,
+    receiveDraft: receiveDraft.value,
+  };
+  localStorage.setItem(key, JSON.stringify(snapshot));
+}
+
+function restoreReceiveDraft(): void {
+  const key = receiveDraftStorageKey();
+  if (!key) return;
+  const saved = localStorage.getItem(key);
+  if (!saved) return;
+  try {
+    const snapshot = JSON.parse(saved) as Partial<ReceiveDraftSnapshot>;
+    if (snapshot.version !== 1 || !Array.isArray(snapshot.receiveDraft)) return;
+    receiveSearch.value = typeof snapshot.receiveSearch === 'string' ? snapshot.receiveSearch : '';
+    barcode.value = typeof snapshot.barcode === 'string' ? snapshot.barcode : '';
+    productName.value = typeof snapshot.productName === 'string' ? snapshot.productName : '';
+    expiryMonth.value = typeof snapshot.expiryMonth === 'string' ? snapshot.expiryMonth : '';
+    expiryDay.value = Number.isInteger(snapshot.expiryDay) ? snapshot.expiryDay ?? null : null;
+    receiveQuantity.value = Number.isInteger(snapshot.receiveQuantity) && Number(snapshot.receiveQuantity) > 0
+      ? Number(snapshot.receiveQuantity)
+      : 1;
+    selectedProduct.value = snapshot.selectedProduct?.productId ? snapshot.selectedProduct : null;
+    receiveDraft.value = snapshot.receiveDraft.filter((item) =>
+      typeof item?.draftId === 'string'
+      && typeof item?.barcode === 'string'
+      && typeof item?.productName === 'string'
+      && typeof item?.expiryMonth === 'string'
+      && Number.isInteger(item?.quantity)
+      && item.quantity > 0);
+    if (receiveDraft.value.length || selectedProduct.value) {
+      message.value = '已恢复上次未提交的入库草稿。';
+    }
+  } catch {
+    localStorage.removeItem(key);
+  }
+}
+
+restoreReceiveDraft();
+watch(
+  [receiveSearch, barcode, productName, expiryMonth, expiryDay, receiveQuantity, selectedProduct, receiveDraft],
+  persistReceiveDraft,
+  { deep: true, flush: 'sync' },
+);
 
 onMounted(async () => {
   document.documentElement.dataset.theme = theme.value;
@@ -167,7 +287,7 @@ async function reverseMovement(movement: Movement) {
   try {
     const data = await apiRequest(`/inventory/movements/${movement.movementId}/reverse`, {
       method: 'POST',
-      body: JSON.stringify({ reason, idempotencyKey: crypto.randomUUID() }),
+      body: JSON.stringify({ reason, idempotencyKey: createClientUuid() }),
     });
     message.value = `已撤销 ${data.reversedMovementNo}，库存变化 ${data.quantityDelta > 0 ? '+' : ''}${data.quantityDelta} 件。`;
     delete reversalReasons.value[movement.movementId];
@@ -193,12 +313,14 @@ async function login() {
       body: JSON.stringify({ username: username.value, password: password.value }),
     });
     token.value = data.accessToken;
+    userId.value = data.user.id;
     displayName.value = data.user.displayName;
     storeName.value = data.user.roles?.[0]?.storeName ?? '';
     storeId.value = data.user.roles?.[0]?.storeId ?? '';
     mustChangePassword.value = data.user.mustChangePassword;
     localStorage.setItem(tokenKey, token.value);
     localStorage.setItem(profileKey, JSON.stringify(data.user));
+    restoreReceiveDraft();
     password.value = '';
     await nextTick();
     scanInput.value?.focus();
@@ -211,9 +333,18 @@ async function login() {
 
 function logout() {
   token.value = '';
+  userId.value = '';
   displayName.value = '';
   storeName.value = '';
   storeId.value = '';
+  receiveSearch.value = '';
+  barcode.value = '';
+  productName.value = '';
+  expiryMonth.value = '';
+  expiryDay.value = null;
+  receiveQuantity.value = 1;
+  selectedProduct.value = null;
+  receiveDraft.value = [];
   localStorage.removeItem(tokenKey);
   localStorage.removeItem(profileKey);
 }
@@ -236,7 +367,86 @@ async function switchMode(mode: Mode) {
   }
   if (mode === 'reports') await loadReport();
   if (mode === 'milkReview') await loadMilkCandidates();
+  if (mode === 'productReview') await loadProductCandidates();
   nextTick(() => scanInput.value?.focus());
+}
+
+async function loadProductCandidates(page = productReviewPage.value) {
+  if (!storeId.value) {
+    error.value = '当前账号没有分配门店，无法审核POS商品';
+    return;
+  }
+  loading.value = true;
+  clearStatus();
+  try {
+    const params = new URLSearchParams({
+      storeId: storeId.value,
+      reviewStatus: productReviewFilter.value,
+      page: String(page),
+      pageSize: '50',
+    });
+    if (productReviewQuery.value.trim()) params.set('q', productReviewQuery.value.trim());
+    const data = await apiRequest(`/pos/product-candidates?${params.toString()}`);
+    productCandidates.value = data.items;
+    productReviewPage.value = data.pagination.page;
+    productReviewPageTotal.value = data.pagination.pageTotal;
+    productReviewTotal.value = data.pagination.total;
+    if (!data.items.length) message.value = '当前筛选条件下没有条码商品。';
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'POS商品候选加载失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function importProductCandidates() {
+  loading.value = true;
+  clearStatus();
+  try {
+    const data = await apiRequest(`/pos/product-candidates/import?storeId=${encodeURIComponent(storeId.value)}`, { method: 'POST' });
+    productReviewPage.value = 1;
+    await loadProductCandidates(1);
+    message.value = `POS共 ${data.sourceProducts} 个商品；有条码 ${data.withBarcode} 个；排除已处理奶粉 ${data.excludedMilkProducts} 个；待核对 ${data.reviewCandidates} 个。`;
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '拉取POS条码商品失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function reviewProductCandidate(candidate: PosProductCandidate, reviewStatus: 'APPROVED' | 'IGNORED') {
+  const reason = productReviewReasons.value[candidate.id]?.trim() ?? '';
+  if (reason.length < 2) {
+    error.value = '请填写至少2个字的审核原因';
+    return;
+  }
+  if (reviewStatus === 'APPROVED' && !candidate.chineseName?.trim()) {
+    error.value = '批准前必须填写中文名称';
+    return;
+  }
+  loading.value = true;
+  clearStatus();
+  try {
+    await apiRequest(`/pos/product-candidates/${candidate.id}/review?storeId=${encodeURIComponent(storeId.value)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        reviewStatus,
+        englishName: candidate.englishName.trim(),
+        ...(candidate.chineseName?.trim() ? { chineseName: candidate.chineseName.trim() } : {}),
+        ...(candidate.brandName?.trim() ? { brandName: candidate.brandName.trim() } : {}),
+        ...(candidate.categoryName?.trim() ? { categoryName: candidate.categoryName.trim() } : {}),
+        reason,
+        idempotencyKey: createClientUuid(),
+      }),
+    });
+    delete productReviewReasons.value[candidate.id];
+    await loadProductCandidates();
+    message.value = reviewStatus === 'APPROVED' ? `已批准：${candidate.sourceName}` : `已忽略：${candidate.sourceName}`;
+  } catch (reasonValue) {
+    error.value = reasonValue instanceof Error ? reasonValue.message : '商品审核失败';
+  } finally {
+    loading.value = false;
+  }
 }
 
 async function loadMilkCandidates() {
@@ -294,7 +504,7 @@ async function reviewMilkCandidate(candidate: MilkCandidate, reviewStatus: 'APPR
         ...(candidate.suggestedPackQuantity ? { packQuantity: candidate.suggestedPackQuantity } : {}),
         inventoryPolicy: candidate.suggestedInventoryPolicy,
         reason,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: createClientUuid(),
       }),
     });
     delete milkReviewReasons.value[candidate.id];
@@ -330,6 +540,7 @@ async function lookupForReceive() {
   await searchProducts(value);
   const exactBarcodeProduct = results.value.find((product) => product.barcodes.includes(value));
   if (exactBarcodeProduct) {
+    barcode.value = value;
     chooseProduct(exactBarcodeProduct);
     message.value = `已按条码找到 ${exactBarcodeProduct.productName}，可以登记本次入库。`;
   } else if (results.value.length) {
@@ -351,6 +562,7 @@ function chooseProduct(product: ProductResult) {
   if (!barcode.value) barcode.value = product.barcodes[0] ?? '';
   results.value = [];
   message.value = `已选择 ${product.productName}，全部条码库存会合并统计。`;
+  nextTick(() => expiryMonthInput.value?.focus());
 }
 
 function addReceiveDraft() {
@@ -368,7 +580,7 @@ function addReceiveDraft() {
     && item.expiryMonth === expiryMonth.value && item.expiryDay === itemDay);
   if (duplicate) duplicate.quantity += itemQuantity;
   else receiveDraft.value.push({
-    draftId: crypto.randomUUID(), barcode: itemBarcode, productName: itemName,
+    draftId: createClientUuid(), barcode: itemBarcode, productName: itemName,
     productId: selectedProduct.value?.productId, expiryMonth: expiryMonth.value,
     expiryDay: itemDay, expiryDisplay: `${expiryMonth.value}${itemDay ? `-${String(itemDay).padStart(2, '0')}` : ''}`,
     quantity: itemQuantity,
@@ -633,7 +845,6 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         <button :class="{ active: activeMode === 'receive' }" @click="switchMode('receive')">点货入库</button>
         <button :class="{ active: activeMode === 'issue' }" @click="switchMode('issue')">出库</button>
         <button :class="{ active: activeMode === 'query' }" @click="switchMode('query')">查询</button>
-        <button :class="{ active: activeMode === 'milkReview' }" @click="switchMode('milkReview')">奶粉审核</button>
         <button :class="{ active: activeMode === 'reports' }" @click="switchMode('reports')">记录与报表</button>
       </nav>
 
@@ -649,12 +860,24 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <button class="action-secondary" :disabled="loading || !receiveSearch.trim()" @click="lookupForReceive">查询</button>
         </div>
 
+        <article v-if="selectedProduct" class="receive-product-card" aria-live="polite">
+          <div>
+            <span class="product-confirmed">已识别商品</span>
+            <h3>{{ selectedProduct.chineseName || selectedProduct.productName }}</h3>
+            <p v-if="selectedProduct.englishName && selectedProduct.englishName !== selectedProduct.chineseName">{{ selectedProduct.englishName }}</p>
+          </div>
+          <dl>
+            <div><dt>SKU</dt><dd>{{ selectedProduct.sku || '—' }}</dd></div>
+            <div><dt>条码</dt><dd>{{ barcode }}</dd></div>
+          </dl>
+        </article>
+
         <form class="receive-form" @submit.prevent="addReceiveDraft">
-          <label>条码<input v-model="barcode" required maxlength="128" placeholder="扫描条码" /></label>
-          <label>商品名<input v-model="productName" required maxlength="255" /></label>
+          <label v-if="!selectedProduct">条码<input v-model="barcode" required maxlength="128" placeholder="扫描条码" /></label>
+          <label v-if="!selectedProduct">商品名<input v-model="productName" required maxlength="255" /></label>
           <label class="expiry-label">到期日期
             <span class="expiry-fields">
-              <input v-model="expiryMonth" required type="month" aria-label="到期年月" />
+              <input ref="expiryMonthInput" v-model="expiryMonth" required type="month" aria-label="到期年月" />
               <input v-model.number="expiryDay" type="number" min="1" max="31" aria-label="到期日（可不选）" placeholder="日（可不选）" />
             </span>
           </label>
@@ -662,16 +885,58 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <button class="receive-submit action-secondary" :disabled="loading || !barcode.trim() || !expiryMonth">加入本次清单</button>
         </form>
         <section class="receive-draft" aria-label="本次点货清单">
-          <div class="draft-heading"><div><h3>本次点货清单</h3><p>先核对清单，确认后才写入库存。</p></div><strong>{{ receiveDraft.length }} 项 · {{ receiveDraft.reduce((sum, item) => sum + item.quantity, 0) }} 件</strong></div>
-          <div v-if="receiveDraft.length" class="table-wrap">
-            <table>
+          <div class="draft-heading"><div><h3>本次点货清单</h3><p>先核对清单，确认后才写入库存；未提交内容会自动保存在本机。</p></div><strong>{{ receiveDraft.length }} 项 · {{ receiveDraft.reduce((sum, item) => sum + item.quantity, 0) }} 件</strong></div>
+          <div v-if="receiveDraft.length" class="table-wrap receive-draft-table-wrap">
+            <table class="receive-draft-table">
               <thead><tr><th>条码</th><th>商品名</th><th>到期日期</th><th>数量</th><th>操作</th></tr></thead>
-              <tbody><tr v-for="item in receiveDraft" :key="item.draftId"><td>{{ item.barcode }}</td><td>{{ item.productName }}</td><td>{{ item.expiryDisplay }}</td><td><input v-model.number="item.quantity" class="table-input quantity-input" type="number" min="1" step="1" :aria-label="`${item.productName} 清单数量`" /></td><td><button class="secondary danger-action" type="button" @click="removeReceiveDraft(item.draftId)">删除</button></td></tr></tbody>
+              <tbody><tr v-for="item in receiveDraft" :key="item.draftId"><td data-label="条码">{{ item.barcode }}</td><td data-label="商品名">{{ item.productName }}</td><td data-label="到期日期">{{ item.expiryDisplay }}</td><td data-label="数量"><input v-model.number="item.quantity" class="table-input quantity-input" type="number" min="1" step="1" :aria-label="`${item.productName} 清单数量`" /></td><td data-label="操作"><button class="secondary danger-action" type="button" @click="removeReceiveDraft(item.draftId)">删除</button></td></tr></tbody>
             </table>
             <button class="confirm-draft action-primary" type="button" :disabled="loading || receiveDraft.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)" @click="confirmReceiveDraft">{{ loading ? '正在写入…' : '确认整单入库' }}</button>
           </div>
           <p v-else class="empty-state compact">扫描并填写日期后，商品会先出现在这里。</p>
         </section>
+      </template>
+
+      <template v-else-if="activeMode === 'productReview'">
+        <section class="milk-review-heading">
+          <div><h2>POS条码商品中英文核对</h2><p>这里只保存本地候选；填写中文名称并批准后，才更新本地商品主档和映射。</p></div>
+          <button class="action-secondary" :disabled="loading || !storeId" @click="importProductCandidates">{{ loading ? '正在分页读取POS商品…' : '从POS只读拉取有条码商品' }}</button>
+        </section>
+        <div class="report-actions milk-review-actions">
+          <label>审核状态
+            <select v-model="productReviewFilter" @change="productReviewPage = 1; loadProductCandidates(1)">
+              <option value="PENDING">待审核</option><option value="APPROVED">已批准</option><option value="IGNORED">已忽略</option>
+            </select>
+          </label>
+          <label>搜索<input v-model="productReviewQuery" placeholder="英文名、中文名、SKU或条码" @keydown.enter.prevent="productReviewPage = 1; loadProductCandidates(1)" /></label>
+          <button class="secondary" :disabled="loading" @click="productReviewPage = 1; loadProductCandidates(1)">查询</button>
+          <span>共 {{ productReviewTotal }} 个</span>
+        </div>
+        <div v-if="productCandidates.length" class="milk-review-list">
+          <article v-for="candidate in productCandidates" :key="candidate.id" class="milk-review-card">
+            <header>
+              <div><strong>{{ candidate.sourceName }}</strong><small>SKU {{ candidate.sourceSku || '无' }} · Barcode {{ candidate.barcode }} · ${{ candidate.salePrice || '0.00' }} · POS库存 {{ candidate.sourceStock || '—' }}</small></div>
+              <span class="level-badge">{{ candidate.reviewStatus === 'PENDING' ? '待审核' : candidate.reviewStatus === 'APPROVED' ? '已批准' : '已忽略' }}</span>
+            </header>
+            <div class="milk-review-fields product-review-fields">
+              <label>英文名称<input v-model="candidate.englishName" maxlength="255" /></label>
+              <label>中文名称<input v-model="candidate.chineseName" maxlength="255" placeholder="批准前必须填写" /></label>
+              <label>品牌<input v-model="candidate.brandName" maxlength="80" placeholder="可选" /></label>
+              <label>本地类目<input v-model="candidate.categoryName" maxlength="120" placeholder="如：保健品 / 蜂蜜" /></label>
+              <label>审核备注<input v-model="productReviewReasons[candidate.id]" maxlength="255" placeholder="如：已核对中英文名称" /></label>
+            </div>
+            <div v-if="candidate.reviewStatus === 'PENDING'" class="milk-review-buttons">
+              <button class="action-primary" :disabled="loading" @click="reviewProductCandidate(candidate, 'APPROVED')">确认并批准</button>
+              <button class="secondary danger-action" :disabled="loading" @click="reviewProductCandidate(candidate, 'IGNORED')">忽略该商品</button>
+            </div>
+          </article>
+          <div class="pagination-actions">
+            <button class="secondary" :disabled="loading || productReviewPage <= 1" @click="loadProductCandidates(productReviewPage - 1)">上一页</button>
+            <span>第 {{ productReviewPage }} / {{ productReviewPageTotal || 1 }} 页</span>
+            <button class="secondary" :disabled="loading || productReviewPage >= productReviewPageTotal" @click="loadProductCandidates(productReviewPage + 1)">下一页</button>
+          </div>
+        </div>
+        <p v-else class="empty-state">{{ loading ? '正在读取POS商品，请稍候…' : '还没有条码商品候选。点击“从POS只读拉取有条码商品”。' }}</p>
       </template>
 
       <template v-else-if="activeMode === 'milkReview'">
@@ -851,7 +1116,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
       <section v-if="results.length" class="result-list">
         <article v-for="product in results" :key="product.productId" class="product-card">
           <div class="product-summary">
-            <div><h3>{{ product.productName }}</h3><p>条码：{{ product.barcodes.join('、') || '无' }}</p></div>
+            <div><h3>{{ product.chineseName || product.productName }}</h3><p v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</p><p>SKU：{{ product.sku || '—' }} · 条码：{{ product.barcodes.join('、') || '无' }}</p></div>
             <strong>总库存 {{ product.totalQuantity }} 件</strong>
           </div>
           <div v-if="activeMode === 'receive'" class="bind-action">

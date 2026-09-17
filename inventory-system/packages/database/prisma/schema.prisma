@@ -103,58 +103,60 @@ enum PosInventoryPolicy {
 }
 
 model Organization {
-  id                  BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
-  code                String                    @unique @db.VarChar(32)
-  name                String                    @db.VarChar(120)
-  timezone            String                    @default("Pacific/Auckland") @db.VarChar(64)
-  currency            String                    @default("NZD") @db.Char(3)
-  status              RecordStatus              @default(ACTIVE)
-  createdAt           DateTime                  @default(now()) @map("created_at")
-  updatedAt           DateTime                  @updatedAt @map("updated_at")
-  stores              Store[]
-  products            Product[]
-  productBarcodes     ProductBarcode[]
-  productBatches      ProductBatch[]
-  users               User[]
-  roles               Role[]
-  stockMovements      StockMovement[]
-  stockReceipts       StockReceipt[]
-  inventoryBalances   InventoryBalance[]
-  stockTransfers      StockTransfer[]
-  expiryAlertSettings ExpiryAlertSetting?
-  auditLogs           AuditLog[]
-  posProductMappings  PosProductMapping[]
-  posMilkCandidates   PosMilkProductCandidate[]
-  posOrders           PosOrder[]
-  posSyncCursors      PosSyncCursor[]
-  posSyncRuns         PosSyncRun[]
-  posSimulations      PosInventorySimulation[]
+  id                   BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
+  code                 String                    @unique @db.VarChar(32)
+  name                 String                    @db.VarChar(120)
+  timezone             String                    @default("Pacific/Auckland") @db.VarChar(64)
+  currency             String                    @default("NZD") @db.Char(3)
+  status               RecordStatus              @default(ACTIVE)
+  createdAt            DateTime                  @default(now()) @map("created_at")
+  updatedAt            DateTime                  @updatedAt @map("updated_at")
+  stores               Store[]
+  products             Product[]
+  productBarcodes      ProductBarcode[]
+  productBatches       ProductBatch[]
+  users                User[]
+  roles                Role[]
+  stockMovements       StockMovement[]
+  stockReceipts        StockReceipt[]
+  inventoryBalances    InventoryBalance[]
+  stockTransfers       StockTransfer[]
+  expiryAlertSettings  ExpiryAlertSetting?
+  auditLogs            AuditLog[]
+  posProductMappings   PosProductMapping[]
+  posProductCandidates PosProductCandidate[]
+  posMilkCandidates    PosMilkProductCandidate[]
+  posOrders            PosOrder[]
+  posSyncCursors       PosSyncCursor[]
+  posSyncRuns          PosSyncRun[]
+  posSimulations       PosInventorySimulation[]
 
   @@map("organizations")
 }
 
 model Store {
-  id                 BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
-  organizationId     BigInt                    @map("organization_id") @db.UnsignedBigInt
-  code               String                    @db.VarChar(32)
-  name               String                    @db.VarChar(120)
-  address            String?                   @db.VarChar(255)
-  status             RecordStatus              @default(ACTIVE)
-  createdAt          DateTime                  @default(now()) @map("created_at")
-  updatedAt          DateTime                  @updatedAt @map("updated_at")
-  organization       Organization              @relation(fields: [organizationId], references: [id])
-  warehouses         Warehouse[]
-  storeProducts      StoreProduct[]
-  userStoreRoles     UserStoreRole[]
-  stockMovements     StockMovement[]
-  stockReceipts      StockReceipt[]
-  auditLogs          AuditLog[]
-  posProductMappings PosProductMapping[]
-  posMilkCandidates  PosMilkProductCandidate[]
-  posOrders          PosOrder[]
-  posSyncCursors     PosSyncCursor[]
-  posSyncRuns        PosSyncRun[]
-  posSimulations     PosInventorySimulation[]
+  id                   BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId       BigInt                    @map("organization_id") @db.UnsignedBigInt
+  code                 String                    @db.VarChar(32)
+  name                 String                    @db.VarChar(120)
+  address              String?                   @db.VarChar(255)
+  status               RecordStatus              @default(ACTIVE)
+  createdAt            DateTime                  @default(now()) @map("created_at")
+  updatedAt            DateTime                  @updatedAt @map("updated_at")
+  organization         Organization              @relation(fields: [organizationId], references: [id])
+  warehouses           Warehouse[]
+  storeProducts        StoreProduct[]
+  userStoreRoles       UserStoreRole[]
+  stockMovements       StockMovement[]
+  stockReceipts        StockReceipt[]
+  auditLogs            AuditLog[]
+  posProductMappings   PosProductMapping[]
+  posProductCandidates PosProductCandidate[]
+  posMilkCandidates    PosMilkProductCandidate[]
+  posOrders            PosOrder[]
+  posSyncCursors       PosSyncCursor[]
+  posSyncRuns          PosSyncRun[]
+  posSimulations       PosInventorySimulation[]
 
   @@unique([organizationId, code])
   @@index([organizationId, status])
@@ -162,15 +164,18 @@ model Store {
 }
 
 model StoreProduct {
-  storeId           BigInt   @map("store_id") @db.UnsignedBigInt
-  productId         BigInt   @map("product_id") @db.UnsignedBigInt
-  enabled           Boolean  @default(true)
-  sellingPriceCents Int?     @map("selling_price_cents")
-  minimumStock      Int?     @map("minimum_stock")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-  store             Store    @relation(fields: [storeId], references: [id])
-  product           Product  @relation(fields: [productId], references: [id])
+  storeId             BigInt    @map("store_id") @db.UnsignedBigInt
+  productId           BigInt    @map("product_id") @db.UnsignedBigInt
+  enabled             Boolean   @default(true)
+  sellingPriceCents   Int?      @map("selling_price_cents")
+  level4PriceCents    Int?      @map("level4_price_cents")
+  level4PriceId       String?   @map("level4_price_id") @db.VarChar(64)
+  level4PriceSyncedAt DateTime? @map("level4_price_synced_at")
+  minimumStock        Int?      @map("minimum_stock")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  store               Store     @relation(fields: [storeId], references: [id])
+  product             Product   @relation(fields: [productId], references: [id])
 
   @@id([storeId, productId])
   @@index([productId])
@@ -204,6 +209,10 @@ model Product {
   organizationId     BigInt                       @map("organization_id") @db.UnsignedBigInt
   sku                String                       @db.VarChar(64)
   name               String                       @db.VarChar(255)
+  englishName        String?                      @map("english_name") @db.VarChar(255)
+  chineseName        String?                      @map("chinese_name") @db.VarChar(255)
+  brandName          String?                      @map("brand_name") @db.VarChar(80)
+  categoryName       String?                      @map("category_name") @db.VarChar(120)
   description        String?                      @db.Text
   unit               String                       @default("piece") @db.VarChar(20)
   status             RecordStatus                 @default(ACTIVE)
@@ -226,6 +235,42 @@ model Product {
   @@unique([organizationId, sku])
   @@index([organizationId, name])
   @@map("products")
+}
+
+model PosProductCandidate {
+  id                  BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId      BigInt              @map("organization_id") @db.UnsignedBigInt
+  storeId             BigInt              @map("store_id") @db.UnsignedBigInt
+  externalProductId   String              @map("external_product_id") @db.VarChar(64)
+  sourceSku           String?             @map("source_sku") @db.VarChar(64)
+  barcode             String              @db.VarChar(128)
+  sourceName          String              @map("source_name") @db.VarChar(255)
+  englishName         String              @map("english_name") @db.VarChar(255)
+  chineseName         String?             @map("chinese_name") @db.VarChar(255)
+  brandName           String?             @map("brand_name") @db.VarChar(80)
+  categoryName        String?             @map("category_name") @db.VarChar(120)
+  itemType            String?             @map("item_type") @db.VarChar(32)
+  salePrice           Decimal?            @map("sale_price") @db.Decimal(14, 2)
+  costPrice           Decimal?            @map("cost_price") @db.Decimal(14, 2)
+  sourceStock         Decimal?            @map("source_stock") @db.Decimal(14, 4)
+  sourceStatus        String?             @map("source_status") @db.VarChar(32)
+  reviewStatus        PosMilkReviewStatus @default(PENDING) @map("review_status")
+  translationStatus   TranslationStatus   @default(UNTRANSLATED) @map("translation_status")
+  lastReviewRequestId String?             @unique @map("last_review_request_id") @db.VarChar(64)
+  reviewedAt          DateTime?           @map("reviewed_at")
+  status              RecordStatus        @default(ACTIVE)
+  firstSeenAt         DateTime            @default(now()) @map("first_seen_at")
+  lastSeenAt          DateTime            @default(now()) @map("last_seen_at")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+  organization        Organization        @relation(fields: [organizationId], references: [id])
+  store               Store               @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, externalProductId])
+  @@index([storeId, status, reviewStatus])
+  @@index([organizationId, barcode])
+  @@index([storeId, translationStatus])
+  @@map("pos_product_candidates")
 }
 
 model ProductBarcode {

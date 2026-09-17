@@ -77,6 +77,23 @@ describe('MoniHttpClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('allows the documented read-only price-level queries', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ code: 0, data: { list: [] } }), {
+        status: 200,
+      }),
+    );
+    const client = new MoniHttpClient(config, signature);
+
+    await client.postReadOnly(
+      'Webretailpricelevel/retailPriceBookList',
+      { store_id: 'synthetic-store' },
+      new Date('2023-11-14T22:13:20.000Z'),
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the login cookie in memory for the following store request', async () => {
     const fetchMock = jest
       .spyOn(globalThis, 'fetch')

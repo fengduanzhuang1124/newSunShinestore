@@ -19,6 +19,8 @@ const tablesToReset = [
   'pos_orders',
   'pos_sync_cursors',
   'pos_sync_runs',
+  'pos_product_candidates',
+  'pos_milk_product_candidates',
   'pos_product_mappings',
   'stock_receipt_items',
   'stock_receipts',
