@@ -10,6 +10,7 @@ describe('App', () => {
       id: '1',
       displayName: '测试员工',
       roles: [{ code: 'ADMIN', storeId: '3', storeName: '测试门店' }],
+      warehouses: [{ warehouseId: '7', warehouseName: '测试仓库', storeId: '3', canReceive: true }],
     }));
     delete document.documentElement.dataset.theme;
     vi.restoreAllMocks();
@@ -92,6 +93,26 @@ describe('App', () => {
     expect(wrapper.get('input[aria-label="测试镁片 清单数量"]').element).toHaveProperty('value', '5');
     expect(wrapper.text()).toContain('确认整单入库');
     expect(wrapper.text()).toContain('删除');
+  });
+
+  it('submits the selected warehouse and reuses the draft id as the idempotency key', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      data: { productName: '测试商品', currentQuantity: 1, receiptNo: 'RK-TEST-002' },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const wrapper = mount(App);
+
+    await wrapper.get('input[placeholder="扫描条码"]').setValue('9421907983356');
+    await wrapper.get('input[required][maxlength="255"]').setValue('测试商品');
+    await wrapper.get('input[type="month"]').setValue('2027-11');
+    await wrapper.get('form.receive-form').trigger('submit');
+    await wrapper.get('button.confirm-draft').trigger('click');
+    await flushPromises();
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body));
+    expect(body.warehouseId).toBe('7');
+    expect(body.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/i);
   });
 
   it('adds a received item when randomUUID is unavailable on a phone HTTP connection', async () => {

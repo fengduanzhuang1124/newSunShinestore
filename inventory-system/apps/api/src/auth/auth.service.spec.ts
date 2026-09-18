@@ -40,6 +40,7 @@ describe('AuthService', () => {
         roles: [
           { code: 'ADMIN', storeId: '3', storeName: '第一门店' },
         ],
+        warehouses: [],
       },
     });
   });

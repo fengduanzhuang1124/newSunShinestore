@@ -10,7 +10,11 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import type { AuthenticatedRequest } from '../auth/jwt-auth.guard.js';
-import { InventoryService } from './inventory.service.js';
+import { InventoryQueryService } from './inventory-query.service.js';
+import { ReceivingService } from './receiving.service.js';
+import { IssuingService } from './issuing.service.js';
+import { MovementService } from './movement.service.js';
+import { StocktakeService } from './stocktake.service.js';
 import { ScanReceiveDto } from './scan-receive.dto.js';
 import { ManualIssueDto } from './manual-issue.dto.js';
 import { StocktakeAdjustmentDto } from './stocktake-adjustment.dto.js';
@@ -19,7 +23,13 @@ import { ReverseMovementDto } from './reverse-movement.dto.js';
 @Controller('inventory')
 @UseGuards(JwtAuthGuard)
 export class InventoryController {
-  constructor(private readonly inventory: InventoryService) {}
+  constructor(
+    private readonly queries: InventoryQueryService,
+    private readonly receiving: ReceivingService,
+    private readonly issuing: IssuingService,
+    private readonly movementCommands: MovementService,
+    private readonly stocktakes: StocktakeService,
+  ) {}
 
   @Get('search')
   async search(
@@ -30,7 +40,7 @@ export class InventoryController {
     return {
       code: 200,
       message: '查询成功',
-      data: await this.inventory.search(
+      data: await this.queries.search(
         user.organizationId,
         user.id,
         query ?? '',
@@ -47,7 +57,7 @@ export class InventoryController {
     return {
       code: 200,
       message: '查询成功',
-      data: await this.inventory.findByBarcode(
+      data: await this.queries.findByBarcode(
         user.organizationId,
         user.id,
         barcode,
@@ -64,7 +74,7 @@ export class InventoryController {
     return {
       code: 200,
       message: '入库成功',
-      data: await this.inventory.receive(user.organizationId, user.id, input),
+      data: await this.receiving.receive(user.organizationId, user.id, input),
     };
   }
   @Post('manual-issue')
@@ -76,7 +86,7 @@ export class InventoryController {
     return {
       code: 200,
       message: '出库成功',
-      data: await this.inventory.issueToShelf(
+      data: await this.issuing.issueToShelf(
         user.organizationId,
         user.id,
         input,
@@ -93,7 +103,7 @@ export class InventoryController {
     return {
       code: 200,
       message: '入库记录查询成功',
-      data: await this.inventory.listReceipts(user.organizationId, user.id, date),
+      data: await this.receiving.listReceipts(user.organizationId, user.id, date),
     };
   }
 
@@ -103,7 +113,7 @@ export class InventoryController {
     return {
       code: 200,
       message: '入库单已完成',
-      data: await this.inventory.completeCurrentReceipt(user.organizationId, user.id),
+      data: await this.receiving.completeCurrentReceipt(user.organizationId, user.id),
     };
   }
 
@@ -113,7 +123,7 @@ export class InventoryController {
     return {
       code: 200,
       message: '总库存查询成功',
-      data: await this.inventory.inventoryReport(user.organizationId, user.id),
+      data: await this.queries.inventoryReport(user.organizationId, user.id),
     };
   }
 
@@ -127,7 +137,7 @@ export class InventoryController {
     return {
       code: 200,
       message: '临期库存查询成功',
-      data: await this.inventory.expiryAlerts(
+      data: await this.queries.expiryAlerts(
         user.organizationId,
         user.id,
         query,
@@ -145,7 +155,7 @@ export class InventoryController {
     return {
       code: 200,
       message: '库存流水查询成功',
-      data: await this.inventory.listMovements(user.organizationId, user.id, query),
+      data: await this.queries.listMovements(user.organizationId, user.id, query),
     };
   }
 
@@ -158,7 +168,7 @@ export class InventoryController {
     return {
       code: 200,
       message: '盘点调整成功',
-      data: await this.inventory.stocktakeAdjustment(user.organizationId, user.id, input),
+      data: await this.stocktakes.stocktakeAdjustment(user.organizationId, user.id, input),
     };
   }
 
@@ -172,7 +182,7 @@ export class InventoryController {
     return {
       code: 200,
       message: '库存流水已撤销',
-      data: await this.inventory.reverseMovement(
+      data: await this.movementCommands.reverseMovement(
         user.organizationId,
         user.id,
         movementId,

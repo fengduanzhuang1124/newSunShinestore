@@ -1,8 +1,9 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { jest } from '@jest/globals';
-import { InventoryService } from './inventory.service.js';
+import { MovementService } from './movement.service.js';
+import { StocktakeService } from './stocktake.service.js';
 
-describe('InventoryService stocktake', () => {
+describe('StocktakeService', () => {
   const permission = { warehouseId: 1n, warehouse: { id: 1n, storeId: 1n, name: '主仓库' } };
 
   function createService(currentQuantity = 10) {
@@ -24,7 +25,7 @@ describe('InventoryService stocktake', () => {
       userWarehousePermission: { findFirst: jest.fn().mockResolvedValue(permission as never) },
       $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)),
     };
-    return { service: new InventoryService({ client } as never), transaction };
+    return { service: new StocktakeService({ client } as never), transaction };
   }
 
   it('creates a gain movement when the counted quantity is higher', async () => {
@@ -47,7 +48,7 @@ describe('InventoryService stocktake', () => {
   });
 });
 
-describe('InventoryService movement reversal', () => {
+describe('MovementService', () => {
   const permission = { warehouseId: 1n, warehouse: { id: 1n, storeId: 1n, name: '主仓库' } };
 
   function createReversalService(options: { admin?: boolean; balanceUpdated?: boolean } = {}) {
@@ -74,7 +75,7 @@ describe('InventoryService movement reversal', () => {
       userStoreRole: { findFirst: jest.fn().mockResolvedValue((options.admin === false ? null : { userId: 1n }) as never) },
       $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)),
     };
-    return { service: new InventoryService({ client } as never), transaction };
+    return { service: new MovementService({ client } as never), transaction };
   }
 
   it('reverses a receipt with an immutable negative movement', async () => {

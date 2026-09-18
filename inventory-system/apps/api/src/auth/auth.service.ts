@@ -42,6 +42,15 @@ export class AuthService {
           storeId: store.id.toString(),
           storeName: store.name,
         })),
+        warehouses: user.warehousePermissions.map(({ warehouse, canView, canReceive, canIssue, canCount }) => ({
+          warehouseId: warehouse.id.toString(),
+          warehouseName: warehouse.name,
+          storeId: warehouse.storeId.toString(),
+          canView,
+          canReceive,
+          canIssue,
+          canCount,
+        })),
       },
     };
   }

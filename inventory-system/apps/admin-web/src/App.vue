@@ -75,6 +75,9 @@ const password = ref('');
 const displayName = ref(storedProfile.displayName ?? '');
 const storeName = ref(storedProfile.roles?.[0]?.storeName ?? '');
 const storeId = ref(storedProfile.roles?.[0]?.storeId ?? '');
+const warehouseId = ref(storedProfile.warehouses?.find((item: { canReceive?: boolean }) => item.canReceive)?.warehouseId
+  ?? storedProfile.warehouses?.[0]?.warehouseId
+  ?? '');
 const mustChangePassword = ref(storedProfile.mustChangePassword ?? false);
 const activeMode = ref<Mode>('receive');
 const query = ref('');
@@ -236,6 +239,11 @@ onMounted(async () => {
     error.value = '旧登录信息缺少门店，请重新登录库存系统';
     return;
   }
+  if (!warehouseId.value) {
+    logout();
+    error.value = '旧登录信息缺少仓库，请重新登录库存系统';
+    return;
+  }
   await nextTick();
   if (scanInput.value) {
     scanInput.value.focus();
@@ -317,6 +325,9 @@ async function login() {
     displayName.value = data.user.displayName;
     storeName.value = data.user.roles?.[0]?.storeName ?? '';
     storeId.value = data.user.roles?.[0]?.storeId ?? '';
+    warehouseId.value = data.user.warehouses?.find((item: { canReceive?: boolean }) => item.canReceive)?.warehouseId
+      ?? data.user.warehouses?.[0]?.warehouseId
+      ?? '';
     mustChangePassword.value = data.user.mustChangePassword;
     localStorage.setItem(tokenKey, token.value);
     localStorage.setItem(profileKey, JSON.stringify(data.user));
@@ -337,6 +348,7 @@ function logout() {
   displayName.value = '';
   storeName.value = '';
   storeId.value = '';
+  warehouseId.value = '';
   receiveSearch.value = '';
   barcode.value = '';
   productName.value = '';
@@ -613,6 +625,7 @@ async function confirmReceiveDraft() {
         method: 'POST', body: JSON.stringify({
           barcode: item.barcode, productName: item.productName, productId: item.productId,
           expiryMonth: item.expiryMonth, expiryDay: item.expiryDay, quantity: item.quantity,
+          warehouseId: warehouseId.value, idempotencyKey: item.draftId,
         }),
       });
       completed += 1;

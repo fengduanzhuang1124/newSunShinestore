@@ -1,6 +1,13 @@
-import { IsInt, IsOptional, IsString, Length, Matches, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsUUID, Length, Matches, Max, Min } from 'class-validator';
 
 export class ScanReceiveDto {
+  @IsString()
+  @Matches(/^\d+$/)
+  warehouseId!: string;
+
+  @IsUUID('4')
+  idempotencyKey!: string;
+
   @IsString()
   @Length(1, 128)
   barcode!: string;
