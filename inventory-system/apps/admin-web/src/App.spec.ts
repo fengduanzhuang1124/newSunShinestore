@@ -12,6 +12,7 @@ describe('App', () => {
       roles: [{ code: 'ADMIN', storeId: '3', storeName: '测试门店' }],
       warehouses: [{ warehouseId: '7', warehouseName: '测试仓库', storeId: '3', canReceive: true }],
     }));
+    localStorage.setItem('sunshine_inventory_mode', 'receive');
     delete document.documentElement.dataset.theme;
     vi.restoreAllMocks();
   });
@@ -32,6 +33,37 @@ describe('App', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
     expect(localStorage.getItem('sunshine_inventory_theme')).toBe('dark');
     expect(wrapper.get('button[aria-label="切换到浅色模式"]').text()).toContain('Light');
+  });
+
+  it('shows the mobile workbench with live inventory shortcuts', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    localStorage.removeItem('sunshine_inventory_mode');
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {
+        warehouseName: '测试仓库', summary: { receiptCount: 2, productCount: 3, totalQuantity: 18 }, receipts: [],
+      } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {
+        warehouseName: '测试仓库', productCount: 12, totalQuantity: 96, products: [],
+      } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {
+        warehouseName: '测试仓库', thresholds: { urgentMonths: 2, warningMonths: 3, earlyWarningMonths: 6 },
+        summary: { EXPIRED: 1, URGENT: 2, WARNING: 3, EARLY: 4 }, items: [],
+      } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('仓管通');
+    expect(wrapper.text()).toContain('当前库存96');
+    expect(wrapper.text()).toContain('今日入库18');
+    expect(wrapper.text()).toContain('到期关注10');
+    expect(wrapper.findAll('.mobile-bottom-nav button')).toHaveLength(3);
+    expect(wrapper.findAll('.mobile-bottom-nav button').map((button) => button.text()))
+      .toEqual(['⌂工作台', '⌕库存', '▤记录']);
+    await wrapper.get('.workbench-profile').trigger('click');
+    expect(wrapper.text()).toContain('账户与设置');
+    expect(wrapper.text()).toContain('退出当前账号');
+    expect(wrapper.text()).not.toContain('奶粉商品人工核对');
   });
 
   it('automatically shows the recently received product after switching to inventory query', async () => {
@@ -66,7 +98,7 @@ describe('App', () => {
     await wrapper.get('button.confirm-draft').trigger('click');
     await flushPromises();
     expect(wrapper.text()).toContain('入库单 RK-TEST-001 已写入：1 项');
-    await wrapper.get('nav').findAll('button')[2].trigger('click');
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
     await flushPromises();
 
     expect(wrapper.get('input[aria-label="商品关键词或条码"]').element).toHaveProperty('value', '9400000000001');
@@ -91,7 +123,7 @@ describe('App', () => {
 
     expect(wrapper.text()).toContain('1 项 · 5 件');
     expect(wrapper.get('input[aria-label="测试镁片 清单数量"]').element).toHaveProperty('value', '5');
-    expect(wrapper.text()).toContain('确认整单入库');
+    expect(wrapper.find('button.confirm-draft').exists()).toBe(true);
     expect(wrapper.text()).toContain('删除');
   });
 
@@ -136,6 +168,20 @@ describe('App', () => {
     expect(wrapper.text()).not.toContain('扫描并填写日期后，商品会先出现在这里');
   });
 
+  it('offers a reusable phone camera scanner and explains unavailable camera access', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const wrapper = mount(App);
+
+    await wrapper.get('button[aria-label="打开手机相机扫码入库"]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.get('[aria-label="手机相机扫码"]')).toBeTruthy();
+    expect(wrapper.text()).toContain('扫码入库');
+    expect(wrapper.text()).toContain('当前浏览器无法调用摄像头');
+    await wrapper.get('button[aria-label="关闭相机扫码"]').trigger('click');
+    expect(wrapper.find('[aria-label="手机相机扫码"]').exists()).toBe(false);
+  });
+
   it('restores an unsubmitted receiving draft after the phone page reloads', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     const firstPage = mount(App);
@@ -153,6 +199,24 @@ describe('App', () => {
     expect(restoredPage.text()).toContain('1 项 · 4 件');
     expect(restoredPage.get('input[aria-label="锁屏恢复测试商品 清单数量"]').element)
       .toHaveProperty('value', '4');
+  });
+
+  it('keeps today\'s unsubmitted receiving list after leaving and returning', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const wrapper = mount(App);
+    await wrapper.get('input[placeholder="扫描条码"]').setValue('9400000000094');
+    await wrapper.get('input[required][maxlength="255"]').setValue('当天草稿测试商品');
+    await wrapper.get('input[type="month"]').setValue('2028-09');
+    await wrapper.get('form.receive-form').trigger('submit');
+
+    await wrapper.get('nav').findAll('button')[0].trigger('click');
+    expect(wrapper.text()).toContain('当天未提交');
+    expect(wrapper.text()).toContain('1 种商品，共 1 件');
+    await wrapper.get('.draft-reminder button').trigger('click');
+
+    expect(wrapper.text()).toContain('当天草稿测试商品');
+    expect(wrapper.text()).toContain('1 项 · 1 件');
+    expect(wrapper.find('button.confirm-draft').exists()).toBe(true);
   });
 
   it('finds an existing product by a partial name during receiving', async () => {
@@ -229,8 +293,8 @@ describe('App', () => {
 
     const wrapper = mount(App);
     const tabs = wrapper.get('nav').findAll('button');
-    expect(tabs).toHaveLength(4);
-    await tabs[3].trigger('click');
+    expect(tabs).toHaveLength(3);
+    await tabs[2].trigger('click');
     await flushPromises();
 
     expect(wrapper.text()).toContain('记录与报表');
@@ -255,7 +319,7 @@ describe('App', () => {
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
     const wrapper = mount(App);
-    await wrapper.get('nav').findAll('button')[3].trigger('click');
+    await wrapper.get('nav').findAll('button')[2].trigger('click');
     await flushPromises();
     const reportButtons = wrapper.findAll('.report-switch button');
     expect(reportButtons).toHaveLength(4);
@@ -269,7 +333,30 @@ describe('App', () => {
     expect(wrapper.text()).toContain('导出 CSV');
   });
 
-  it('shows stocktake controls and immutable inventory movements', async () => {
+  it('keeps stocktake with the inventory ledger', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      data: { warehouseName: '主仓库', productCount: 1, totalQuantity: 10, products: [{ productId: '1', productName: '测试商品', barcodes: ['9400000000001'], batches: [{ batchId: '1', expiryDate: '2027-08', expiryPrecision: 'MONTH', quantity: 10 }], totalQuantity: 10 }] },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
+    await flushPromises();
+    const inventoryButtons = wrapper.findAll('.inventory-section-tabs button');
+    expect(inventoryButtons).toHaveLength(2);
+    expect(inventoryButtons.map((button) => button.text())).toEqual(['库存台账', '库存盘点']);
+    await inventoryButtons[1].trigger('click');
+
+    expect(wrapper.text()).toContain('库存盘点');
+    expect(wrapper.get('input[aria-label="筛选盘点商品"]')).toBeTruthy();
+    expect(wrapper.text()).toContain('确认调整');
+    expect(wrapper.text()).toContain('确认盘点');
+    expect(wrapper.text()).toContain('测试商品');
+    await wrapper.get('input[aria-label="筛选盘点商品"]').setValue('不存在商品');
+    expect(wrapper.text()).toContain('没有找到匹配的盘点商品');
+  });
+
+  it('shows immutable inventory movements in records', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -283,19 +370,12 @@ describe('App', () => {
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
     const wrapper = mount(App);
-    await wrapper.get('nav').findAll('button')[3].trigger('click');
+    await wrapper.get('nav').findAll('button')[2].trigger('click');
     await flushPromises();
     const reportButtons = wrapper.findAll('.report-switch button');
-    expect(reportButtons).toHaveLength(4);
+    expect(reportButtons.map((button) => button.text()))
+      .toEqual(['当天入库表', '总库存表', '临期预警', '库存流水']);
     await reportButtons[3].trigger('click');
-    await flushPromises();
-
-    expect(wrapper.text()).toContain('库存盘点');
-    expect(wrapper.text()).toContain('确认调整');
-    expect(wrapper.text()).not.toContain('+10');
-    const detailButtons = wrapper.findAll('.report-detail-switch button');
-    expect(detailButtons).toHaveLength(2);
-    await detailButtons[1].trigger('click');
     await flushPromises();
 
     expect(wrapper.text()).toContain('库存流水');

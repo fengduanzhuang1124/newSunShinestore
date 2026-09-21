@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 *.pem
+*.cer
+**/.cert/
 *.key
 *.p12
 *.pfx

@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service.js';
 import { MoniOrderGateway } from '../adapters/moni/moni-order.gateway.js';
 import { MoniProductGateway } from '../adapters/moni/moni-product.gateway.js';
-import { dateTimeInZone } from './pos-date.js';
+import { dateTimeInZone, nextCalendarDateStart } from './pos-date.js';
 
 export interface PosMappingImportResult {
   observed: number;
@@ -168,8 +168,22 @@ export class PosObservationService {
     date: string,
     options: PosOrderObservationOptions = {},
   ): Promise<PosOrderObservationResult> {
+    const cursor = await this.prisma.client.posSyncCursor.upsert({
+      where: {
+        storeId_provider_stream: { storeId, provider: 'MONI', stream: 'ORDERS' },
+      },
+      create: { organizationId, storeId },
+      update: {},
+    });
     const syncRun = await this.prisma.client.posSyncRun.create({
-      data: { organizationId, storeId },
+      data: {
+        organizationId,
+        storeId,
+        cursorId: cursor.id,
+        requestedFrom: date,
+        requestedTo: date,
+        cursorBefore: cursor.lastSourceTimestamp,
+      },
     });
 
     try {
@@ -373,16 +387,12 @@ export class PosObservationService {
         });
       }
 
-      await this.prisma.client.posSyncCursor.upsert({
-        where: {
-          storeId_provider_stream: { storeId, provider: 'MONI', stream: 'ORDERS' },
-        },
-        create: {
-          organizationId,
-          storeId,
-          lastSourceTimestamp: new Date(`${date}T23:59:59`),
-        },
-        update: { lastSourceTimestamp: new Date(`${date}T23:59:59`) },
+      const cursorAfter = new Date(
+        nextCalendarDateStart(date, 'Pacific/Auckland').getTime() - 1,
+      );
+      await this.prisma.client.posSyncCursor.update({
+        where: { id: cursor.id },
+        data: { lastSourceTimestamp: cursorAfter },
       });
       await this.prisma.client.posSyncRun.update({
         where: { id: syncRun.id },
@@ -392,8 +402,10 @@ export class PosObservationService {
           ordersObserved: orderList.length,
           ordersInserted,
           ordersUpdated,
+          ordersSkipped,
           itemsObserved: itemCount,
           exceptionsCount: reviewItems + unmappedItems,
+          cursorAfter,
         },
       });
 

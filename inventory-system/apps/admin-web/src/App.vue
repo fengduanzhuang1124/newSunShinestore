@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue';
+import type { IScannerControls } from '@zxing/browser';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-type Mode = 'receive' | 'issue' | 'query' | 'productReview' | 'milkReview' | 'reports';
+type Mode = 'home' | 'receive' | 'issue' | 'query' | 'productReview' | 'milkReview' | 'reports';
 type Theme = 'light' | 'dark';
 type Batch = { batchId: string; expiryDate: string; expiryPrecision: 'MONTH' | 'DATE'; quantity: number };
 type ProductResult = {
@@ -58,11 +59,11 @@ type PosProductCandidate = {
   translationStatus: 'UNTRANSLATED' | 'DRAFT' | 'APPROVED';
 };
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL
-  ?? `${window.location.protocol}//${window.location.hostname}:3100/api/v1`;
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 const tokenKey = 'sunshine_inventory_access_token';
 const profileKey = 'sunshine_inventory_profile';
 const themeKey = 'sunshine_inventory_theme';
+const modeKey = 'sunshine_inventory_mode';
 const savedTheme = localStorage.getItem(themeKey);
 const theme = ref<Theme>(savedTheme === 'dark' || savedTheme === 'light'
   ? savedTheme
@@ -79,7 +80,10 @@ const warehouseId = ref(storedProfile.warehouses?.find((item: { canReceive?: boo
   ?? storedProfile.warehouses?.[0]?.warehouseId
   ?? '');
 const mustChangePassword = ref(storedProfile.mustChangePassword ?? false);
-const activeMode = ref<Mode>('receive');
+const savedMode = localStorage.getItem(modeKey);
+const activeMode = ref<Mode>(savedMode === 'receive' || savedMode === 'issue' || savedMode === 'query' || savedMode === 'reports'
+  ? savedMode
+  : 'home');
 const query = ref('');
 const results = ref<ProductResult[]>([]);
 const selectedProduct = ref<ProductResult | null>(null);
@@ -97,8 +101,17 @@ const loading = ref(false);
 const scanReady = ref(false);
 const scanInput = ref<HTMLInputElement>();
 const expiryMonthInput = ref<HTMLInputElement>();
+const cameraVideo = ref<HTMLVideoElement>();
+const cameraOpen = ref(false);
+const cameraStatus = ref('正在准备后置摄像头…');
+const cameraError = ref('');
+const cameraTarget = ref<'receive' | 'issue'>('receive');
+let cameraControls: IScannerControls | null = null;
+let lastCameraCode = '';
+let lastCameraCodeAt = 0;
 const reportView = ref<'receipts' | 'inventory' | 'expiry' | 'movements'>('receipts');
-const movementView = ref<'stocktake' | 'history'>('stocktake');
+const inventoryView = ref<'ledger' | 'stocktake'>('ledger');
+const showAccountPanel = ref(false);
 const reportDate = ref(new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit',
 }).format(new Date()));
@@ -119,8 +132,20 @@ const movementQuery = ref('');
 const movements = ref<Movement[]>([]);
 const stocktakeActual = ref<Record<string, number>>({});
 const stocktakeReasons = ref<Record<string, string>>({});
+const stocktakeQuery = ref('');
 const reversalReasons = ref<Record<string, string>>({});
 const receiveDraft = ref<ReceiveDraftItem[]>([]);
+const filteredStocktakeProducts = computed(() => {
+  const keyword = stocktakeQuery.value.trim().toLocaleLowerCase();
+  if (!keyword) return inventorySummary.value.products;
+  return inventorySummary.value.products.filter((product) => [
+    product.productName,
+    product.chineseName,
+    product.englishName,
+    product.sku,
+    ...product.barcodes,
+  ].some((value) => value?.toLocaleLowerCase().includes(keyword)));
+});
 const milkCandidates = ref<MilkCandidate[]>([]);
 const milkReviewFilter = ref<'PENDING' | 'APPROVED' | 'IGNORED'>('PENDING');
 const milkReviewReasons = ref<Record<string, string>>({});
@@ -244,6 +269,10 @@ onMounted(async () => {
     error.value = '旧登录信息缺少仓库，请重新登录库存系统';
     return;
   }
+  if (activeMode.value === 'home') {
+    await loadWorkbench();
+    return;
+  }
   await nextTick();
   if (scanInput.value) {
     scanInput.value.focus();
@@ -333,8 +362,8 @@ async function login() {
     localStorage.setItem(profileKey, JSON.stringify(data.user));
     restoreReceiveDraft();
     password.value = '';
-    await nextTick();
-    scanInput.value?.focus();
+    activeMode.value = 'home';
+    await loadWorkbench();
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '登录失败';
   } finally {
@@ -343,6 +372,7 @@ async function login() {
 }
 
 function logout() {
+  stopCameraScanner();
   token.value = '';
   userId.value = '';
   displayName.value = '';
@@ -362,7 +392,11 @@ function logout() {
 }
 
 async function switchMode(mode: Mode) {
+  stopCameraScanner();
   activeMode.value = mode;
+  if (mode === 'home' || mode === 'receive' || mode === 'issue' || mode === 'query' || mode === 'reports') {
+    localStorage.setItem(modeKey, mode);
+  }
   query.value = '';
   results.value = [];
   selectedProduct.value = null;
@@ -372,16 +406,106 @@ async function switchMode(mode: Mode) {
   expiryMonth.value = '';
   expiryDay.value = null;
   clearStatus();
-  if (mode === 'query' && lastReceivedBarcode.value) {
-    query.value = lastReceivedBarcode.value;
-    await searchProducts(lastReceivedBarcode.value);
-    if (results.value.length) message.value = '已自动显示刚刚入库商品的最新库存。';
+  if (mode === 'home') await loadWorkbench();
+  if (mode === 'query') {
+    if (lastReceivedBarcode.value) {
+      query.value = lastReceivedBarcode.value;
+      await searchProducts(lastReceivedBarcode.value);
+      if (results.value.length) message.value = '已自动显示刚刚入库商品的最新库存。';
+    }
+    try {
+      await loadInventoryReport();
+    } catch (reason) {
+      error.value = reason instanceof Error ? reason.message : '库存加载失败';
+    }
   }
   if (mode === 'reports') await loadReport();
   if (mode === 'milkReview') await loadMilkCandidates();
   if (mode === 'productReview') await loadProductCandidates();
   nextTick(() => scanInput.value?.focus());
 }
+
+function stopCameraScanner() {
+  cameraControls?.stop();
+  cameraControls = null;
+  const stream = cameraVideo.value?.srcObject;
+  if (typeof MediaStream !== 'undefined' && stream instanceof MediaStream) stream.getTracks().forEach((track) => track.stop());
+  if (cameraVideo.value) cameraVideo.value.srcObject = null;
+  cameraOpen.value = false;
+  cameraStatus.value = '';
+}
+
+async function acceptCameraBarcode(rawValue: string) {
+  const value = rawValue.trim();
+  const now = Date.now();
+  if (!value || (value === lastCameraCode && now - lastCameraCodeAt < 1800)) return;
+  lastCameraCode = value;
+  lastCameraCodeAt = now;
+  const target = cameraTarget.value;
+  stopCameraScanner();
+  if (target === 'receive') {
+    receiveSearch.value = value;
+    await lookupForReceive();
+  } else {
+    query.value = value;
+    await searchProducts(value);
+  }
+}
+
+async function startCameraScanner(target: 'receive' | 'issue') {
+  cameraTarget.value = target;
+  cameraOpen.value = true;
+  cameraError.value = '';
+  cameraStatus.value = '正在准备后置摄像头…';
+  await nextTick();
+
+  const localHost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+  if (!window.isSecureContext && !localHost) {
+    cameraError.value = '当前地址不是 HTTPS，手机浏览器禁止调用摄像头。配置 HTTPS 后即可使用；蓝牙扫码枪和手动输入仍可正常使用。';
+    cameraStatus.value = '';
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || !cameraVideo.value) {
+    cameraError.value = '当前浏览器无法调用摄像头，请使用最新版 Safari 或 Chrome。';
+    cameraStatus.value = '';
+    return;
+  }
+
+  try {
+    const { BrowserMultiFormatOneDReader } = await import('@zxing/browser');
+    const reader = new BrowserMultiFormatOneDReader();
+    cameraControls = await reader.decodeFromConstraints({
+      audio: false,
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+    }, cameraVideo.value, (result) => {
+      if (result) void acceptCameraBarcode(result.getText());
+    });
+    const stream = cameraVideo.value.srcObject;
+    if (typeof MediaStream !== 'undefined' && stream instanceof MediaStream) {
+      const track = stream.getVideoTracks()[0];
+      const capabilities = track?.getCapabilities?.() as MediaTrackCapabilities & {
+        focusMode?: string[];
+      };
+      if (track && capabilities?.focusMode?.includes('continuous')) {
+        await track.applyConstraints({ advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet] });
+      }
+    }
+    cameraStatus.value = '距离条码约 10–20 厘米，保持条码清晰并完整放入扫描框';
+  } catch (reason) {
+    stopCameraScanner();
+    cameraOpen.value = true;
+    const name = reason instanceof DOMException ? reason.name : '';
+    cameraError.value = name === 'NotAllowedError'
+      ? '摄像头权限被拒绝，请在浏览器网站设置中允许摄像头后重试。'
+      : '无法打开后置摄像头，请确认摄像头没有被其他应用占用。';
+  }
+}
+
+onBeforeUnmount(stopCameraScanner);
 
 async function loadProductCandidates(page = productReviewPage.value) {
   if (!storeId.value) {
@@ -693,6 +817,28 @@ async function loadReport() {
   }
 }
 
+async function loadWorkbench() {
+  loading.value = true;
+  clearStatus();
+  try {
+    await Promise.all([loadReceipts(), loadInventoryReport(), loadExpiryReport()]);
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '工作台数据加载失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function openReport(view: 'receipts' | 'inventory' | 'expiry' | 'movements') {
+  reportView.value = view;
+  await switchMode('reports');
+}
+
+async function openInventory(view: 'ledger' | 'stocktake' = 'ledger') {
+  inventoryView.value = view;
+  await switchMode('query');
+}
+
 async function adjustStocktake(product: ProductResult, batch: Batch) {
   const actualQuantity = stocktakeActual.value[batch.batchId];
   const reason = stocktakeReasons.value[batch.batchId]?.trim();
@@ -855,9 +1001,8 @@ async function issueBatch(product: ProductResult, batch: Batch) {
       <p v-if="mustChangePassword" class="alert warning">当前使用临时密码，请勿把密码交给其他人。</p>
 
       <nav class="mode-tabs primary-navigation" aria-label="库存操作分类">
-        <button :class="{ active: activeMode === 'receive' }" @click="switchMode('receive')">点货入库</button>
-        <button :class="{ active: activeMode === 'issue' }" @click="switchMode('issue')">出库</button>
-        <button :class="{ active: activeMode === 'query' }" @click="switchMode('query')">查询</button>
+        <button :class="{ active: activeMode === 'home' }" @click="switchMode('home')">工作台</button>
+        <button :class="{ active: activeMode === 'query' }" @click="switchMode('query')">库存</button>
         <button :class="{ active: activeMode === 'reports' }" @click="switchMode('reports')">记录与报表</button>
       </nav>
 
@@ -865,12 +1010,57 @@ async function issueBatch(product: ProductResult, batch: Batch) {
       <p v-if="error" class="alert error">{{ error }}</p>
 
       <Transition name="panel" mode="out-in">
-        <div :key="activeMode" class="mode-panel">
-      <template v-if="activeMode === 'receive'">
+        <div :key="activeMode" class="mode-panel" :class="{ 'home-panel': activeMode === 'home' }">
+      <nav v-if="activeMode === 'receive' || activeMode === 'issue'" class="operation-tabs" aria-label="入库与出库">
+        <button :class="{ active: activeMode === 'receive' }" @click="switchMode('receive')">扫码入库</button>
+        <button :class="{ active: activeMode === 'issue' }" @click="switchMode('issue')">扫码出库</button>
+      </nav>
+      <template v-if="activeMode === 'home'">
+        <section class="workbench-page-header report-header">
+          <h2>仓管通</h2>
+        </section>
+        <section class="workbench-hero">
+          <div class="workbench-brand">
+            <img src="/sunshine-health-wordmark.png" alt="阳光特产 Sunshine Health" />
+            <small>当前仓库：{{ reportWarehouseName || storeName }}</small>
+          </div>
+          <div class="workbench-tools">
+            <button class="workbench-eye" type="button" :aria-label="theme === 'light' ? '开启护眼模式' : '关闭护眼模式'" @click="toggleTheme"><span aria-hidden="true">{{ theme === 'light' ? '☾' : '☀' }}</span></button>
+            <button class="workbench-profile" type="button" aria-label="打开个人设置" @click="showAccountPanel = true">{{ (displayName || '员工').slice(0, 1) }}</button>
+          </div>
+        </section>
+
+        <section class="workbench-metrics" aria-label="今日库存概览">
+          <button type="button" @click="openReport('inventory')"><span class="metric-icon inventory-icon">▣</span><small>当前库存</small><strong>{{ inventorySummary.totalQuantity }}</strong><em>{{ inventorySummary.productCount }} 种商品</em></button>
+          <button type="button" @click="openReport('receipts')"><span class="metric-icon receive-icon">↓</span><small>今日入库</small><strong>{{ receiptSummary.totalQuantity }}</strong><em>{{ receiptSummary.receiptCount }} 张入库单</em></button>
+          <button type="button" @click="switchMode('receive')"><span class="metric-icon draft-icon">▤</span><small>待提交点货</small><strong>{{ receiveDraft.reduce((sum, item) => sum + item.quantity, 0) }}</strong><em>{{ receiveDraft.length }} 种商品</em></button>
+          <button type="button" @click="openReport('expiry')"><span class="metric-icon warning-icon">!</span><small>到期关注</small><strong>{{ Object.values(expirySummary).reduce((sum, count) => sum + count, 0) }}</strong><em>6个月内批次</em></button>
+        </section>
+
+        <section class="quick-actions" aria-labelledby="quick-action-title">
+          <div class="section-heading"><h2 id="quick-action-title">快捷操作</h2></div>
+          <div class="quick-action-grid">
+            <button type="button" @click="switchMode('receive')"><span>⌗</span><strong>扫码入库</strong><small>蓝牙扫码枪或手动条码</small></button>
+            <button type="button" @click="switchMode('issue')"><span>↗</span><strong>扫码出库</strong><small>按日期批次扣减库存</small></button>
+            <button type="button" @click="switchMode('query')"><span>⌕</span><strong>库存查询</strong><small>查看商品与到期批次</small></button>
+            <button type="button" @click="openInventory('stocktake')"><span>✓</span><strong>库存盘点</strong><small>记录盘盈、盘亏及原因</small></button>
+            <button type="button" @click="openReport('expiry')"><span>!</span><strong>临期预警</strong><small>查看2、3、6个月预警</small></button>
+            <button type="button" @click="openReport('receipts')"><span>≡</span><strong>入库记录</strong><small>查看和完成当天入库单</small></button>
+          </div>
+        </section>
+
+        <aside v-if="receiveDraft.length" class="draft-reminder">
+          <div><strong>当天未提交</strong><p>{{ receiveDraft.length }} 种商品，共 {{ receiveDraft.reduce((sum, item) => sum + item.quantity, 0) }} 件；点击后可继续扫码或提交。</p></div>
+          <button class="action-primary" type="button" @click="switchMode('receive')">继续点货</button>
+        </aside>
+      </template>
+
+      <template v-else-if="activeMode === 'receive'">
         <section class="section-heading scanner-heading"><h2>条码 / 商品名称</h2><span class="scanner-status" :class="{ ready: scanReady }"><i></i>{{ scanReady ? '扫码输入就绪' : '点击输入框后扫码' }}</span></section>
         <div class="search-row scan-search-row">
           <input ref="scanInput" v-model="receiveSearch" aria-label="查询条码或商品名称" placeholder="扫描条码或输入商品名称关键词" @focus="scanReady = true" @blur="scanReady = false" @keydown.enter.prevent="lookupForReceive" />
           <button class="action-secondary" :disabled="loading || !receiveSearch.trim()" @click="lookupForReceive">查询</button>
+          <button class="camera-scan-button" type="button" aria-label="打开手机相机扫码入库" @click="startCameraScanner('receive')"><span aria-hidden="true">▣</span> 相机扫码</button>
         </div>
 
         <article v-if="selectedProduct" class="receive-product-card" aria-live="polite">
@@ -993,13 +1183,18 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             <button :class="{ active: reportView === 'receipts' }" @click="reportView = 'receipts'; loadReport()">当天入库表</button>
             <button :class="{ active: reportView === 'inventory' }" @click="reportView = 'inventory'; loadReport()">总库存表</button>
             <button :class="{ active: reportView === 'expiry' }" @click="reportView = 'expiry'; loadReport()">临期预警</button>
-            <button :class="{ active: reportView === 'movements' }" @click="reportView = 'movements'; loadReport()">盘点与流水</button>
+            <button :class="{ active: reportView === 'movements' }" @click="reportView = 'movements'; loadReport()">库存流水</button>
           </div>
         </section>
 
         <template v-if="reportView === 'receipts'">
           <div class="report-actions">
-            <label>入库日期<input v-model="reportDate" type="date" @change="loadReport" /></label>
+            <label class="report-date-field">入库日期
+              <span class="report-date-control">
+                <strong>{{ reportDate.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$1年$2月$3日') }}</strong>
+                <input v-model="reportDate" aria-label="选择入库日期" type="date" @change="loadReport" />
+              </span>
+            </label>
             <button class="secondary" :disabled="loading" @click="loadReport">刷新</button>
             <button class="secondary" :disabled="!receipts.length" @click="exportReceipts">导出 CSV</button>
             <button class="action-primary" :disabled="loading || !receipts.some((receipt) => receipt.status === 'OPEN')" @click="completeCurrentReceipt">完成我的入库单</button>
@@ -1083,47 +1278,69 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             <label>商品、条码或流水号<input v-model="movementQuery" placeholder="输入关键词查询最近100条" @keydown.enter.prevent="loadReport" /></label>
             <button class="secondary" :disabled="loading" @click="loadReport">查询流水</button>
           </div>
-          <div class="report-detail-switch" aria-label="盘点与流水分类">
-            <button :class="{ active: movementView === 'stocktake' }" @click="movementView = 'stocktake'">库存盘点</button>
-            <button :class="{ active: movementView === 'history' }" @click="movementView = 'history'">库存流水</button>
-          </div>
-          <template v-if="movementView === 'stocktake'">
-          <div class="expiry-note stocktake-note">填写实际看到的数量和原因，系统自动记录盘盈或盘亏。</div>
-          <div v-if="inventorySummary.products.length" class="table-wrap inventory-table report-detail-panel stocktake-table">
-            <table>
-              <thead><tr><th>商品</th><th>到期日期</th><th>系统数量</th><th>实际数量</th><th>原因</th><th>操作</th></tr></thead>
-              <tbody v-for="product in inventorySummary.products" :key="product.productId">
-                <tr v-for="batch in product.batches" :key="batch.batchId">
-                  <td>{{ product.productName }}</td><td>{{ batch.expiryDate }}</td><td>{{ batch.quantity }} 件</td>
-                  <td><input v-model.number="stocktakeActual[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 实际数量`" class="table-input quantity-input" type="number" min="0" step="1" placeholder="实际数量" /></td>
-                  <td><input v-model="stocktakeReasons[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 盘点原因`" class="table-input" maxlength="255" placeholder="如：现场盘点" /></td>
-                  <td><button class="action-primary compact-action" :disabled="loading" @click="adjustStocktake(product, batch)">确认调整</button></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p v-else class="empty-state">当前仓库没有可盘点库存。</p>
-          </template>
-          <template v-else>
-          <div v-if="movements.length" class="table-wrap inventory-table report-detail-panel">
+          <div v-if="movements.length" class="movement-history">
+          <div class="table-wrap inventory-table report-detail-panel movement-desktop-table">
             <table>
               <thead><tr><th>时间</th><th>类型</th><th>商品</th><th>条码</th><th>到期日期</th><th>数量变化</th><th>原因/关联</th><th>管理员操作</th></tr></thead>
               <tbody><tr v-for="movement in movements" :key="movement.movementId" :class="{ 'reversed-row': movement.reversed }"><td>{{ new Date(movement.createdAt).toLocaleString() }}</td><td><span class="movement-badge" :class="movement.quantityDelta > 0 ? 'gain' : 'loss'">{{ movement.movementLabel }}</span><span v-if="movement.reversed" class="reversed-label">已撤销</span></td><td>{{ movement.productName }}</td><td>{{ movement.barcodes.join('、') }}</td><td>{{ movement.expiryDate }}</td><td :class="movement.quantityDelta > 0 ? 'delta-gain' : 'delta-loss'">{{ movement.quantityDelta > 0 ? '+' : '' }}{{ movement.quantityDelta }}</td><td><span>{{ movement.reason || '—' }}</span><small v-if="movement.reversalOfMovementNo" class="movement-link">撤销：{{ movement.reversalOfMovementNo }}</small><small v-if="movement.reversedByMovementNo" class="movement-link">冲销：{{ movement.reversedByMovementNo }}</small></td><td><div v-if="movement.canReverse" class="reversal-action"><input v-model="reversalReasons[movement.movementId]" :aria-label="`${movement.movementNo} 撤销原因`" maxlength="255" placeholder="撤销原因" /><button class="secondary danger-action" :disabled="loading || (reversalReasons[movement.movementId]?.trim().length ?? 0) < 2" @click="reverseMovement(movement)">撤销</button></div><span v-else>—</span></td></tr></tbody>
             </table>
           </div>
+          <div class="movement-mobile-list">
+            <article v-for="movement in movements" :key="movement.movementId" class="movement-mobile-card">
+              <div class="movement-mobile-heading"><span class="movement-badge" :class="movement.quantityDelta > 0 ? 'gain' : 'loss'">{{ movement.movementLabel }}</span><strong :class="movement.quantityDelta > 0 ? 'delta-gain' : 'delta-loss'">{{ movement.quantityDelta > 0 ? '+' : '' }}{{ movement.quantityDelta }} 件</strong></div>
+              <h3>{{ movement.productName }}</h3><p>{{ movement.barcodes.join('、') || '无条码' }} · 到期 {{ movement.expiryDate }}</p>
+              <dl><div><dt>时间</dt><dd>{{ new Date(movement.createdAt).toLocaleString() }}</dd></div><div><dt>操作人</dt><dd>{{ movement.performedBy }}</dd></div><div><dt>原因</dt><dd>{{ movement.reason || '—' }}</dd></div></dl>
+              <div v-if="movement.canReverse" class="reversal-action"><input v-model="reversalReasons[movement.movementId]" :aria-label="`${movement.movementNo} 撤销原因`" maxlength="255" placeholder="填写撤销原因" /><button class="secondary danger-action" :disabled="loading || (reversalReasons[movement.movementId]?.trim().length ?? 0) < 2" @click="reverseMovement(movement)">撤销</button></div>
+            </article>
+          </div>
+          </div>
           <p v-else class="empty-state">没有找到库存流水。</p>
-          </template>
         </template>
       </template>
 
       <template v-else>
-        <section class="section-heading">
-          <h2>{{ activeMode === 'issue' ? '查找要出库的商品' : '查询商品库存与日期' }}</h2>
+        <section v-if="activeMode === 'query'" class="inventory-page-header report-header">
+          <h2>库存管理</h2>
+          <nav class="inventory-section-tabs secondary-navigation" aria-label="库存分类">
+            <button :class="{ active: inventoryView === 'ledger' }" @click="inventoryView = 'ledger'; results = []; clearStatus()">库存台账</button>
+            <button :class="{ active: inventoryView === 'stocktake' }" @click="inventoryView = 'stocktake'; results = []; clearStatus()">库存盘点</button>
+          </nav>
         </section>
-        <div class="search-row">
+        <section v-if="activeMode === 'issue' || inventoryView === 'ledger'" class="section-heading inventory-page-heading" :class="{ 'inventory-summary-heading': activeMode === 'query' }">
+          <div><h2 v-if="activeMode === 'issue'">查找要出库的商品</h2><p v-if="activeMode === 'query'">共 {{ inventorySummary.productCount }} 种商品 · {{ inventorySummary.totalQuantity }} 件库存</p></div>
+          <button v-if="activeMode === 'query'" class="inventory-refresh secondary" :disabled="loading" @click="loadInventoryReport">刷新</button>
+        </section>
+        <div v-if="activeMode === 'issue' || inventoryView === 'ledger'" class="search-row inventory-search-row" :class="{ 'has-camera-button': activeMode === 'issue' }">
           <input ref="scanInput" v-model="query" aria-label="商品关键词或条码" placeholder="输入商品名称或扫描条码" @focus="scanReady = true" @blur="scanReady = false" @keydown.enter.prevent="searchProducts()" />
           <button class="action-secondary" :disabled="loading || !query.trim()" @click="searchProducts()">查询</button>
+          <button v-if="activeMode === 'issue'" class="camera-scan-button" type="button" aria-label="打开手机相机扫码出库" @click="startCameraScanner('issue')"><span aria-hidden="true">▣</span> 相机扫码</button>
         </div>
+        <section v-if="activeMode === 'query' && inventoryView === 'ledger' && !results.length" class="inventory-browser" aria-label="现有库存">
+          <div class="inventory-browser-title"><h3>现有库存</h3><span>{{ inventorySummary.productCount }} 种</span></div>
+          <div v-if="inventorySummary.products.length" class="inventory-card-list">
+            <article v-for="product in inventorySummary.products" :key="product.productId" class="inventory-stock-card">
+              <div class="inventory-stock-main"><div><h3>{{ product.chineseName || product.productName }}</h3><p v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</p><small>{{ product.barcodes.join('、') || product.sku || '无条码' }}</small></div><strong>{{ product.totalQuantity }}<small>件</small></strong></div>
+              <div class="inventory-batches"><span v-for="batch in product.batches" :key="batch.batchId"><em>{{ batch.expiryDate }}</em>{{ batch.quantity }} 件</span></div>
+            </article>
+          </div>
+          <p v-else class="empty-state compact">当前仓库还没有库存。</p>
+        </section>
+        <section v-if="activeMode === 'query' && inventoryView === 'stocktake'" class="stocktake-workspace">
+          <div class="expiry-note stocktake-note">填写现场实际数量和盘点原因，系统只记录盘盈或盘亏，不会修改 POS。</div>
+          <div class="search-row inventory-search-row stocktake-search-row">
+            <input v-model="stocktakeQuery" aria-label="筛选盘点商品" placeholder="输入商品名称或扫描条码筛选" />
+            <button class="action-secondary" type="button" :disabled="!stocktakeQuery" @click="stocktakeQuery = ''">清除</button>
+          </div>
+          <div v-if="filteredStocktakeProducts.length" class="stocktake-desktop-table table-wrap inventory-table">
+            <table><thead><tr><th>商品</th><th>到期日期</th><th>系统数量</th><th>实际数量</th><th>原因</th><th>操作</th></tr></thead>
+              <tbody v-for="product in filteredStocktakeProducts" :key="product.productId"><tr v-for="batch in product.batches" :key="batch.batchId"><td>{{ product.productName }}</td><td>{{ batch.expiryDate }}</td><td>{{ batch.quantity }} 件</td><td><input v-model.number="stocktakeActual[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 实际数量`" class="table-input quantity-input" type="number" min="0" step="1" placeholder="实际数量" /></td><td><input v-model="stocktakeReasons[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 盘点原因`" class="table-input" maxlength="255" placeholder="如：现场盘点" /></td><td><button class="action-primary compact-action" :disabled="loading" @click="adjustStocktake(product, batch)">确认调整</button></td></tr></tbody>
+            </table>
+          </div>
+          <div v-if="filteredStocktakeProducts.length" class="stocktake-mobile-list">
+            <template v-for="product in filteredStocktakeProducts" :key="product.productId"><article v-for="batch in product.batches" :key="batch.batchId" class="stocktake-mobile-card"><div class="stocktake-card-heading"><div><h3>{{ product.chineseName || product.productName }}</h3><p>{{ product.barcodes.join('、') || product.sku || '无条码' }}</p></div><strong>{{ batch.quantity }}<small>系统件数</small></strong></div><div class="stocktake-card-meta"><span>到期日期</span><b>{{ batch.expiryDate }}</b></div><label>现场实际数量<input v-model.number="stocktakeActual[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 实际数量`" type="number" min="0" step="1" placeholder="请输入实际数量" /></label><label>盘点原因<input v-model="stocktakeReasons[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 盘点原因`" maxlength="255" placeholder="如：现场盘点、破损、同步差异" /></label><button class="action-primary" :disabled="loading" @click="adjustStocktake(product, batch)">确认盘点</button></article></template>
+          </div>
+          <p v-if="!filteredStocktakeProducts.length" class="empty-state">{{ stocktakeQuery ? '没有找到匹配的盘点商品。' : '当前仓库没有可盘点库存。' }}</p>
+        </section>
       </template>
 
       <section v-if="results.length" class="result-list">
@@ -1148,6 +1365,35 @@ async function issueBatch(product: ProductResult, batch: Batch) {
       </section>
         </div>
       </Transition>
+
+      <nav class="mobile-bottom-nav" aria-label="手机库存操作">
+        <button :class="{ active: activeMode === 'home' }" @click="switchMode('home')"><span>⌂</span>工作台</button>
+        <button :class="{ active: activeMode === 'query' }" @click="switchMode('query')"><span>⌕</span>库存</button>
+        <button :class="{ active: activeMode === 'reports' }" @click="switchMode('reports')"><span>▤</span>记录</button>
+      </nav>
+
+      <div v-if="cameraOpen" class="camera-scanner-overlay" role="dialog" aria-modal="true" aria-label="手机相机扫码">
+        <section class="camera-scanner-sheet">
+          <header><button type="button" aria-label="关闭相机扫码" @click="stopCameraScanner">×</button><div><strong>{{ cameraTarget === 'receive' ? '扫码入库' : '扫码出库' }}</strong><small>扫描商品条形码</small></div><span></span></header>
+          <div v-if="!cameraError" class="camera-viewport">
+            <video ref="cameraVideo" autoplay muted playsinline></video>
+            <div class="camera-guide"><i></i><i></i><i></i><i></i><span></span></div>
+          </div>
+          <p v-if="cameraStatus" class="camera-status">{{ cameraStatus }}</p>
+          <div v-if="cameraError" class="camera-error"><strong>暂时无法打开相机</strong><p>{{ cameraError }}</p></div>
+          <button v-if="cameraError" class="camera-close-action" type="button" @click="stopCameraScanner">返回手动输入</button>
+        </section>
+      </div>
+
+      <div v-if="showAccountPanel" class="account-overlay" role="presentation" @click.self="showAccountPanel = false">
+        <section class="account-sheet" role="dialog" aria-modal="true" aria-label="个人设置">
+          <button class="account-close" type="button" aria-label="关闭个人设置" @click="showAccountPanel = false">×</button>
+          <p class="account-eyebrow">账户与设置</p>
+          <div class="account-avatar">{{ (displayName || '员工').slice(0, 1) }}</div><div class="account-heading"><h2>{{ displayName || '员工' }}</h2><p>库存作业账号</p></div>
+          <dl class="account-details"><div><dt>所属门店</dt><dd>{{ storeName || '未分配门店' }}</dd></div><div><dt>作业仓库</dt><dd>{{ reportWarehouseName || '当前授权仓库' }}</dd></div><div><dt>当前日期</dt><dd>{{ reportDate }}</dd></div></dl>
+          <div class="account-actions"><button class="secondary" type="button" @click="toggleTheme">{{ theme === 'light' ? '开启护眼模式' : '关闭护眼模式' }}</button><button class="account-logout" type="button" @click="logout">退出当前账号</button></div>
+        </section>
+      </div>
     </section>
   </main>
 </template>

@@ -721,6 +721,7 @@ model PosSyncCursor {
   updatedAt           DateTime     @updatedAt @map("updated_at")
   organization        Organization @relation(fields: [organizationId], references: [id])
   store               Store        @relation(fields: [storeId], references: [id])
+  runs                PosSyncRun[]
 
   @@unique([storeId, provider, stream])
   @@index([organizationId, updatedAt])
@@ -731,14 +732,20 @@ model PosSyncRun {
   id              BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
   organizationId  BigInt           @map("organization_id") @db.UnsignedBigInt
   storeId         BigInt           @map("store_id") @db.UnsignedBigInt
+  cursorId        BigInt?          @map("cursor_id") @db.UnsignedBigInt
   provider        String           @default("MONI") @db.VarChar(30)
   stream          String           @default("ORDERS") @db.VarChar(30)
   status          PosSyncRunStatus @default(RUNNING)
+  requestedFrom   String?          @map("requested_from") @db.Char(10)
+  requestedTo     String?          @map("requested_to") @db.Char(10)
+  cursorBefore    DateTime?        @map("cursor_before")
+  cursorAfter     DateTime?        @map("cursor_after")
   startedAt       DateTime         @default(now()) @map("started_at")
   finishedAt      DateTime?        @map("finished_at")
   ordersObserved  Int              @default(0) @map("orders_observed")
   ordersInserted  Int              @default(0) @map("orders_inserted")
   ordersUpdated   Int              @default(0) @map("orders_updated")
+  ordersSkipped   Int              @default(0) @map("orders_skipped")
   itemsObserved   Int              @default(0) @map("items_observed")
   exceptionsCount Int              @default(0) @map("exceptions_count")
   errorCode       String?          @map("error_code") @db.VarChar(50)
@@ -746,10 +753,12 @@ model PosSyncRun {
   createdAt       DateTime         @default(now()) @map("created_at")
   organization    Organization     @relation(fields: [organizationId], references: [id])
   store           Store            @relation(fields: [storeId], references: [id])
+  cursor          PosSyncCursor?   @relation(fields: [cursorId], references: [id])
   orders          PosOrder[]
 
   @@index([organizationId, startedAt])
   @@index([storeId, status, startedAt])
+  @@index([cursorId, startedAt])
   @@map("pos_sync_runs")
 }
 

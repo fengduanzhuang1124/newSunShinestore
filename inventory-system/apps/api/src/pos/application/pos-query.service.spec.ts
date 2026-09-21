@@ -24,11 +24,16 @@ describe('PosQueryService', () => {
         findFirst: jest.fn().mockResolvedValue({
           id: 4n,
           status: 'SUCCEEDED',
+          requestedFrom: '2026-08-24',
+          requestedTo: '2026-08-24',
+          cursorBefore: new Date('2026-08-22T11:59:59.999Z'),
+          cursorAfter: new Date('2026-08-24T11:59:59.999Z'),
           startedAt: new Date('2026-08-24T00:00:00.000Z'),
           finishedAt: new Date('2026-08-24T00:00:02.000Z'),
           ordersObserved: 10,
           ordersInserted: 1,
           ordersUpdated: 2,
+          ordersSkipped: 7,
           itemsObserved: 20,
           exceptionsCount: 1,
           errorCode: null,
@@ -51,7 +56,13 @@ describe('PosQueryService', () => {
     expect(result).toMatchObject({
       store: { id: '3', name: 'Sunshine Health' },
       provider: 'MONI',
-      latestRun: { id: '4', status: 'SUCCEEDED' },
+      latestRun: {
+        id: '4',
+        status: 'SUCCEEDED',
+        requestedFrom: '2026-08-24',
+        requestedTo: '2026-08-24',
+        ordersSkipped: 7,
+      },
       exceptions: { pendingReviews: 1, unmappedItems: 2, inactiveItems: 3 },
     });
     expect(result).not.toHaveProperty('credentials');

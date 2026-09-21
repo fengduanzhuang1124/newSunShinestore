@@ -57,6 +57,19 @@ describe('inventory database contract', () => {
     expect(schema).toMatch(/inventoryStatus\s+PosInventoryStatus\s+@default\(OBSERVED\)/);
   });
 
+  it('tracks every POS synchronization as an auditable batch', () => {
+    const syncRun = schema.slice(
+      schema.indexOf('model PosSyncRun'),
+      schema.indexOf('model PosRefundReview'),
+    );
+    expect(syncRun).toMatch(/cursorId\s+BigInt\?/);
+    expect(syncRun).toMatch(/requestedFrom\s+String\?/);
+    expect(syncRun).toMatch(/requestedTo\s+String\?/);
+    expect(syncRun).toMatch(/cursorBefore\s+DateTime\?/);
+    expect(syncRun).toMatch(/cursorAfter\s+DateTime\?/);
+    expect(syncRun).toMatch(/ordersSkipped\s+Int\s+@default\(0\)/);
+  });
+
   it('keeps source quantities separate from integer stock movements', () => {
     expect(schema).toContain('quantity          Decimal');
     expect(schema).toContain('@db.Decimal(14, 4)');
