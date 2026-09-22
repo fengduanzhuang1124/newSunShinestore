@@ -56,6 +56,47 @@ describe('ReceivingService', () => {
     expect(transaction.inventoryBalance.upsert).toHaveBeenCalled();
     expect(transaction.stockMovement.create).toHaveBeenCalled();
   });
+
+  it('merges repeated effective receipt entries while keeping reversals visible', async () => {
+    const items = [
+      {
+        id: 1n, productId: 2n, batchId: 3n, barcode: '9400000000001', quantity: 5,
+        createdAt: new Date('2026-09-22T01:00:00.000Z'), product: { name: '测试商品' },
+        batch: { expiryDate: new Date('2027-08-31T00:00:00.000Z'), expiryPrecision: 'MONTH' },
+        movement: { reversedBy: null },
+      },
+      {
+        id: 2n, productId: 2n, batchId: 3n, barcode: '9400000000001', quantity: 7,
+        createdAt: new Date('2026-09-22T02:00:00.000Z'), product: { name: '测试商品' },
+        batch: { expiryDate: new Date('2027-08-31T00:00:00.000Z'), expiryPrecision: 'MONTH' },
+        movement: { reversedBy: null },
+      },
+      {
+        id: 4n, productId: 2n, batchId: 3n, barcode: '9400000000001', quantity: 4,
+        createdAt: new Date('2026-09-22T03:00:00.000Z'), product: { name: '测试商品' },
+        batch: { expiryDate: new Date('2027-08-31T00:00:00.000Z'), expiryPrecision: 'MONTH' },
+        movement: { reversedBy: { id: 5n } },
+      },
+    ];
+    const client = {
+      organization: { findUniqueOrThrow: jest.fn().mockResolvedValue({ timezone: 'Pacific/Auckland' } as never) },
+      stockReceipt: { findMany: jest.fn().mockResolvedValue([{
+        id: 6n, receiptNo: 'RK-TEST', status: 'COMPLETED', createdAt: new Date('2026-09-22T01:00:00.000Z'),
+        completedAt: new Date('2026-09-22T04:00:00.000Z'), openedBy: { displayName: '员工1' }, items,
+      }] as never) },
+    };
+    const permissions = { warehousePermission: jest.fn().mockResolvedValue({ warehouseId: 1n, warehouse: { name: '主仓库' } } as never) };
+    const service = new ReceivingService({ client } as never, permissions as never);
+
+    const result = await service.listReceipts(1n, 9n, '2026-09-22');
+
+    expect(result.summary.totalQuantity).toBe(12);
+    expect(result.receipts[0]).toMatchObject({ totalQuantity: 12, productCount: 1 });
+    expect(result.receipts[0]?.items).toEqual([
+      expect.objectContaining({ quantity: 12, entryCount: 2, reversed: false }),
+      expect.objectContaining({ quantity: 4, entryCount: 1, reversed: true }),
+    ]);
+  });
 });
 
 describe('StocktakeService', () => {

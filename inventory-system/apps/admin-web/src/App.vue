@@ -15,7 +15,7 @@ type ProductResult = {
   batches: Batch[];
   totalQuantity: number;
 };
-type ReceiptItem = { itemId: string; barcode: string; productName: string; expiryDate: string; quantity: number; reversed: boolean; createdAt: string };
+type ReceiptItem = { itemId: string; barcode: string; productName: string; expiryDate: string; quantity: number; reversed: boolean; createdAt: string; entryCount?: number };
 type Receipt = {
   receiptId: string;
   receiptNo: string;
@@ -1213,7 +1213,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
               <div class="table-wrap">
                 <table>
                   <thead><tr><th>条码</th><th>商品名称</th><th>到期日期</th><th>数量</th><th>录入时间</th></tr></thead>
-                  <tbody><tr v-for="item in receipt.items" :key="item.itemId" :class="{ 'reversed-row': item.reversed }"><td>{{ item.barcode }}</td><td>{{ item.productName }}</td><td>{{ item.expiryDate }}</td><td>{{ item.quantity }} 件 <span v-if="item.reversed" class="reversed-label">已撤销</span></td><td>{{ new Date(item.createdAt).toLocaleTimeString() }}</td></tr></tbody>
+                  <tbody><tr v-for="item in receipt.items" :key="item.itemId" :class="{ 'reversed-row': item.reversed }"><td>{{ item.barcode }}</td><td>{{ item.productName }} <small v-if="!item.reversed && item.entryCount && item.entryCount > 1">（合并 {{ item.entryCount }} 次录入）</small></td><td>{{ item.expiryDate }}</td><td>{{ item.quantity }} 件 <span v-if="item.reversed" class="reversed-label">已撤销</span></td><td>{{ new Date(item.createdAt).toLocaleTimeString() }}</td></tr></tbody>
                 </table>
               </div>
             </details>

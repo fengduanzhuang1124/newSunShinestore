@@ -29,6 +29,58 @@ export class ReceivingService {
     return value;
   }
 
+  private groupReceiptItems(items: Array<{
+    id: bigint;
+    productId: bigint;
+    batchId: bigint;
+    barcode: string;
+    quantity: number;
+    createdAt: Date;
+    product: { name: string };
+    batch: { expiryDate: Date; expiryPrecision: 'MONTH' | 'DATE' };
+    movement: { reversedBy: { id: bigint } | null };
+  }>) {
+    const grouped = new Map<string, {
+      itemId: string;
+      barcodes: string[];
+      productName: string;
+      expiryDate: string;
+      quantity: number;
+      reversed: boolean;
+      createdAt: string;
+      entryCount: number;
+    }>();
+    for (const item of items) {
+      const reversed = Boolean(item.movement.reversedBy);
+      const key = reversed
+        ? `reversed:${item.id.toString()}`
+        : `effective:${item.productId.toString()}:${item.batchId.toString()}`;
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.quantity += item.quantity;
+        existing.entryCount += 1;
+        if (!existing.barcodes.includes(item.barcode)) existing.barcodes.push(item.barcode);
+        continue;
+      }
+      grouped.set(key, {
+        itemId: item.id.toString(),
+        barcodes: [item.barcode],
+        productName: item.product.name,
+        expiryDate: item.batch.expiryPrecision === 'MONTH'
+          ? item.batch.expiryDate.toISOString().slice(0, 7)
+          : item.batch.expiryDate.toISOString().slice(0, 10),
+        quantity: item.quantity,
+        reversed,
+        createdAt: item.createdAt.toISOString(),
+        entryCount: 1,
+      });
+    }
+    return [...grouped.values()].map(({ barcodes, ...item }) => ({
+      ...item,
+      barcode: barcodes.join('、'),
+    }));
+  }
+
   async receive(
     organizationId: bigint,
     userId: bigint,
@@ -354,17 +406,7 @@ export class ReceivingService {
         completedAt: receipt.completedAt?.toISOString() ?? null,
         productCount: new Set(receipt.items.filter((item) => !item.movement.reversedBy).map((item) => item.productId.toString())).size,
         totalQuantity: receipt.items.reduce((sum, item) => sum + (item.movement.reversedBy ? 0 : item.quantity), 0),
-        items: receipt.items.map((item) => ({
-          itemId: item.id.toString(),
-          barcode: item.barcode,
-          productName: item.product.name,
-          expiryDate: item.batch.expiryPrecision === 'MONTH'
-            ? item.batch.expiryDate.toISOString().slice(0, 7)
-            : item.batch.expiryDate.toISOString().slice(0, 10),
-          quantity: item.quantity,
-          reversed: Boolean(item.movement.reversedBy),
-          createdAt: item.createdAt.toISOString(),
-        })),
+        items: this.groupReceiptItems(receipt.items),
       })),
     };
   }
