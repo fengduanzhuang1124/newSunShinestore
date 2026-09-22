@@ -8,9 +8,10 @@ export class ScanReceiveDto {
   @IsUUID('4')
   idempotencyKey!: string;
 
+  @IsOptional()
   @IsString()
   @Length(1, 128)
-  barcode!: string;
+  barcode?: string;
 
   @IsString()
   @Length(1, 255)

@@ -1,7 +1,62 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { jest } from '@jest/globals';
 import { MovementService } from './movement.service.js';
+import { ReceivingService } from './receiving.service.js';
 import { StocktakeService } from './stocktake.service.js';
+
+describe('ReceivingService', () => {
+  it('creates an internal product code and inventory movement for a barcode-free item', async () => {
+    const permission = { warehouseId: 1n, warehouse: { id: 1n, storeId: 2n, name: '主仓库' } };
+    const product = { id: 22n, organizationId: 1n, sku: 'LOCAL-TEST', name: '整箱奶粉' };
+    const transaction = {
+      stockMovement: {
+        findUnique: jest.fn().mockResolvedValue(null as never),
+        create: jest.fn().mockResolvedValue({ id: 40n, createdAt: new Date('2026-09-22T01:00:00.000Z') } as never),
+      },
+      organization: { findUniqueOrThrow: jest.fn().mockResolvedValue({ timezone: 'Pacific/Auckland' } as never) },
+      stockReceipt: {
+        findFirst: jest.fn().mockResolvedValue(null as never),
+        create: jest.fn().mockResolvedValue({ id: 30n, receiptNo: 'RK-TEST-003' } as never),
+      },
+      product: {
+        findFirst: jest.fn().mockResolvedValue(null as never),
+        create: jest.fn().mockResolvedValue(product as never),
+      },
+      productBarcode: {
+        findUnique: jest.fn().mockResolvedValue(null as never),
+        findFirst: jest.fn().mockResolvedValue(null as never),
+        create: jest.fn().mockResolvedValue({
+          id: 23n, productId: 22n, barcode: 'LOCAL-22', product,
+        } as never),
+      },
+      storeProduct: { upsert: jest.fn().mockResolvedValue({} as never) },
+      productBatch: { upsert: jest.fn().mockResolvedValue({ id: 24n } as never) },
+      inventoryBalance: { upsert: jest.fn().mockResolvedValue({ quantity: 6 } as never) },
+      stockReceiptItem: { create: jest.fn().mockResolvedValue({ id: 41n } as never) },
+      auditLog: { create: jest.fn().mockResolvedValue({ id: 42n } as never) },
+    };
+    const client = {
+      $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)),
+    };
+    const permissions = { warehousePermission: jest.fn().mockResolvedValue(permission as never) };
+    const service = new ReceivingService({ client } as never, permissions as never);
+
+    const result = await service.receive(1n, 9n, {
+      warehouseId: '1', idempotencyKey: '11111111-1111-4111-8111-111111111111',
+      productName: '整箱奶粉', expiryMonth: '2027-12', quantity: 6,
+    });
+
+    expect(result).toMatchObject({
+      barcode: 'LOCAL-22', productName: '整箱奶粉', quantityAdded: 6,
+      currentQuantity: 6, generatedInternalBarcode: true, createdProduct: true,
+    });
+    expect(transaction.productBarcode.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ barcode: 'LOCAL-22', barcodeType: 'INTERNAL', isPrimary: true }),
+    }));
+    expect(transaction.inventoryBalance.upsert).toHaveBeenCalled();
+    expect(transaction.stockMovement.create).toHaveBeenCalled();
+  });
+});
 
 describe('StocktakeService', () => {
   const permission = { warehouseId: 1n, warehouse: { id: 1n, storeId: 1n, name: '主仓库' } };

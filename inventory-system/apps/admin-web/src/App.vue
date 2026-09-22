@@ -688,7 +688,7 @@ async function lookupForReceive() {
   } else {
     productName.value = value;
     barcode.value = '';
-    message.value = '没有找到同名商品。如需创建新品，请继续输入或扫描商品条码。';
+    message.value = '没有找到同名商品。可直接填写名称和日期；无条码商品会在提交时生成内部编号。';
   }
 }
 
@@ -706,8 +706,8 @@ function addReceiveDraft() {
   const itemBarcode = barcode.value.trim();
   const itemName = productName.value.trim();
   const itemQuantity = receiveQuantity.value;
-  if (!itemBarcode || !itemName || !expiryMonth.value || !Number.isInteger(itemQuantity) || itemQuantity < 1) {
-    error.value = '请填写条码、商品名、到期年月和正确数量。';
+  if (!itemName || !expiryMonth.value || !Number.isInteger(itemQuantity) || itemQuantity < 1) {
+    error.value = '请填写商品名、到期年月和正确数量。条码可以不填。';
     return;
   }
   const itemDay = expiryDay.value || undefined;
@@ -747,14 +747,14 @@ async function confirmReceiveDraft() {
     for (const item of [...receiveDraft.value]) {
       const data = await apiRequest('/inventory/scan-receive', {
         method: 'POST', body: JSON.stringify({
-          barcode: item.barcode, productName: item.productName, productId: item.productId,
+          barcode: item.barcode || undefined, productName: item.productName, productId: item.productId,
           expiryMonth: item.expiryMonth, expiryDay: item.expiryDay, quantity: item.quantity,
           warehouseId: warehouseId.value, idempotencyKey: item.draftId,
         }),
       });
       completed += 1;
       receiptNo = data.receiptNo;
-      lastReceivedBarcode.value = item.barcode;
+      lastReceivedBarcode.value = data.barcode || item.barcode;
       removeReceiveDraft(item.draftId);
     }
     message.value = `入库单 ${receiptNo} 已写入：${completed} 项。`;
@@ -1076,7 +1076,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         </article>
 
         <form class="receive-form" @submit.prevent="addReceiveDraft">
-          <label v-if="!selectedProduct">条码<input v-model="barcode" required maxlength="128" placeholder="扫描条码" /></label>
+          <label v-if="!selectedProduct">条码（可不填）<input v-model="barcode" maxlength="128" placeholder="扫描条码" /></label>
           <label v-if="!selectedProduct">商品名<input v-model="productName" required maxlength="255" /></label>
           <label class="expiry-label">到期日期
             <span class="expiry-fields">
@@ -1085,14 +1085,14 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             </span>
           </label>
           <label>数量<input v-model.number="receiveQuantity" required type="number" min="1" step="1" /></label>
-          <button class="receive-submit action-secondary" :disabled="loading || !barcode.trim() || !expiryMonth">加入本次清单</button>
+          <button class="receive-submit action-secondary" :disabled="loading || !productName.trim() || !expiryMonth">加入本次清单</button>
         </form>
         <section class="receive-draft" aria-label="本次点货清单">
           <div class="draft-heading"><div><h3>本次点货清单</h3><p>先核对清单，确认后才写入库存；未提交内容会自动保存在本机。</p></div><strong>{{ receiveDraft.length }} 项 · {{ receiveDraft.reduce((sum, item) => sum + item.quantity, 0) }} 件</strong></div>
           <div v-if="receiveDraft.length" class="table-wrap receive-draft-table-wrap">
             <table class="receive-draft-table">
               <thead><tr><th>条码</th><th>商品名</th><th>到期日期</th><th>数量</th><th>操作</th></tr></thead>
-              <tbody><tr v-for="item in receiveDraft" :key="item.draftId"><td data-label="条码">{{ item.barcode }}</td><td data-label="商品名">{{ item.productName }}</td><td data-label="到期日期">{{ item.expiryDisplay }}</td><td data-label="数量"><input v-model.number="item.quantity" class="table-input quantity-input" type="number" min="1" step="1" :aria-label="`${item.productName} 清单数量`" /></td><td data-label="操作"><button class="secondary danger-action" type="button" @click="removeReceiveDraft(item.draftId)">删除</button></td></tr></tbody>
+              <tbody><tr v-for="item in receiveDraft" :key="item.draftId"><td data-label="条码">{{ item.barcode || '无条码（自动编号）' }}</td><td data-label="商品名">{{ item.productName }}</td><td data-label="到期日期">{{ item.expiryDisplay }}</td><td data-label="数量"><input v-model.number="item.quantity" class="table-input quantity-input" type="number" min="1" step="1" :aria-label="`${item.productName} 清单数量`" /></td><td data-label="操作"><button class="secondary danger-action" type="button" @click="removeReceiveDraft(item.draftId)">删除</button></td></tr></tbody>
             </table>
             <button class="confirm-draft action-primary" type="button" :disabled="loading || receiveDraft.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)" @click="confirmReceiveDraft">{{ loading ? '正在写入…' : '确认整单入库' }}</button>
           </div>

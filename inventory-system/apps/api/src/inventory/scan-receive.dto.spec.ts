@@ -22,4 +22,9 @@ describe('ScanReceiveDto', () => {
     const errors = await validate(plainToInstance(ScanReceiveDto, missingIdentifiers));
     expect(errors.map(({ property }) => property)).toEqual(expect.arrayContaining(['warehouseId', 'idempotencyKey']));
   });
+
+  it('accepts a manual receiving item without a supplier barcode', async () => {
+    const { barcode: _barcode, ...withoutBarcode } = validInput;
+    await expect(validate(plainToInstance(ScanReceiveDto, withoutBarcode))).resolves.toHaveLength(0);
+  });
 });

@@ -147,6 +147,31 @@ describe('App', () => {
     expect(body.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/i);
   });
 
+  it('submits a barcode-free product and keeps the generated internal code', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      data: {
+        barcode: 'LOCAL-22', productName: '整箱奶粉', currentQuantity: 6,
+        receiptNo: 'RK-TEST-003', generatedInternalBarcode: true, createdProduct: true,
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const wrapper = mount(App);
+
+    await wrapper.get('input[required][maxlength="255"]').setValue('整箱奶粉');
+    await wrapper.get('input[type="month"]').setValue('2027-12');
+    await wrapper.get('input[type="number"][min="1"][step="1"]').setValue(6);
+    await wrapper.get('form.receive-form').trigger('submit');
+    expect(wrapper.text()).toContain('无条码（自动编号）');
+    await wrapper.get('button.confirm-draft').trigger('click');
+    await flushPromises();
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body));
+    expect(body).not.toHaveProperty('barcode');
+    expect(body.productName).toBe('整箱奶粉');
+    expect(wrapper.text()).toContain('入库单 RK-TEST-003 已写入：1 项');
+  });
+
   it('adds a received item when randomUUID is unavailable on a phone HTTP connection', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.stubGlobal('crypto', {

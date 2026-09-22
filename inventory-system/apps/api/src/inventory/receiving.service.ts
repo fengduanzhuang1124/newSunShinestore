@@ -60,11 +60,13 @@ export class ReceivingService {
         },
       });
       if (previousMovement) {
+        const previousReceiptItem = previousMovement.receiptItem;
         if (
           previousMovement.movementType !== 'RECEIPT'
           || previousMovement.warehouseId !== permission.warehouseId
           || previousMovement.quantityDelta !== input.quantity
-          || previousMovement.receiptItem?.barcode !== input.barcode
+          || !previousReceiptItem
+          || (input.barcode && previousReceiptItem.barcode !== input.barcode)
           || previousMovement.batch.expiryDate.getTime() !== expiryDate.getTime()
           || previousMovement.batch.expiryPrecision !== expiryPrecision
         ) {
@@ -82,7 +84,7 @@ export class ReceivingService {
           select: { quantity: true },
         });
         return {
-          barcode: previousMovement.receiptItem.barcode,
+          barcode: previousReceiptItem.barcode,
           productId: previousMovement.productId.toString(),
           productName: previousMovement.product.name,
           expiryDate: previousMovement.batch.expiryPrecision === 'MONTH'
@@ -92,8 +94,8 @@ export class ReceivingService {
           quantityAdded: previousMovement.quantityDelta,
           currentQuantity: currentBalance.quantity,
           receivedAt: previousMovement.createdAt.toISOString(),
-          receiptId: previousMovement.receiptItem.receipt.id.toString(),
-          receiptNo: previousMovement.receiptItem.receipt.receiptNo,
+          receiptId: previousReceiptItem.receipt.id.toString(),
+          receiptNo: previousReceiptItem.receipt.receiptNo,
           warehouseName: permission.warehouse.name,
           repeatedRequest: true,
         };
@@ -126,18 +128,72 @@ export class ReceivingService {
           },
         });
       }
-      const productBarcode = await transaction.productBarcode.findUnique({
-        where: {
-          organizationId_barcode: {
-            organizationId,
-            barcode: input.barcode,
+      const requestedBarcode = input.barcode?.trim() || null;
+      let productBarcode = requestedBarcode
+        ? await transaction.productBarcode.findUnique({
+          where: {
+            organizationId_barcode: {
+              organizationId,
+              barcode: requestedBarcode,
+            },
           },
-        },
-        include: { product: true },
-      });
+          include: { product: true },
+        })
+        : null;
+      let createdProduct = false;
 
       if (!productBarcode) {
-        throw new NotFoundException('该条码尚未建立商品映射，请交由管理员审核后再入库');
+        const requestedProductId = input.productId ? BigInt(input.productId) : null;
+        let product = requestedProductId
+          ? await transaction.product.findFirst({
+            where: { id: requestedProductId, organizationId, status: 'ACTIVE' },
+          })
+          : await transaction.product.findFirst({
+            where: { organizationId, status: 'ACTIVE', name: input.productName.trim() },
+            orderBy: { id: 'asc' },
+          });
+
+        if (requestedProductId && !product) {
+          throw new NotFoundException('所选商品不存在或已停用');
+        }
+        if (!product) {
+          const internalSku = `LOCAL-${randomUUID().slice(0, 12).toUpperCase()}`;
+          product = await transaction.product.create({
+            data: {
+              organizationId,
+              sku: internalSku,
+              name: input.productName.trim(),
+              createdById: userId,
+            },
+          });
+          createdProduct = true;
+        }
+
+        productBarcode = requestedBarcode
+          ? null
+          : await transaction.productBarcode.findFirst({
+            where: { organizationId, productId: product.id, barcodeType: 'INTERNAL', status: 'ACTIVE' },
+            orderBy: { id: 'asc' },
+            include: { product: true },
+          });
+        if (!productBarcode) {
+          const effectiveBarcode = requestedBarcode ?? `LOCAL-${product.id.toString()}`;
+          productBarcode = await transaction.productBarcode.create({
+            data: {
+              organizationId,
+              productId: product.id,
+              barcode: effectiveBarcode,
+              barcodeType: requestedBarcode ? 'SUPPLIER' : 'INTERNAL',
+              isPrimary: true,
+            },
+            include: { product: true },
+          });
+        }
+        await transaction.storeProduct.upsert({
+          where: { storeId_productId: { storeId: permission.warehouse.storeId, productId: product.id } },
+          create: { storeId: permission.warehouse.storeId, productId: product.id },
+          update: { enabled: true },
+        });
       }
 
       const batch = await transaction.productBatch.upsert({
@@ -204,7 +260,7 @@ export class ReceivingService {
           productId: productBarcode.productId,
           batchId: batch.id,
           movementId: movement.id,
-          barcode: input.barcode,
+          barcode: productBarcode.barcode,
           quantity: input.quantity,
         },
       });
@@ -219,7 +275,9 @@ export class ReceivingService {
           entityId: batch.id.toString(),
           requestId,
           afterSummary: {
-            barcode: input.barcode,
+            barcode: productBarcode.barcode,
+            entryMode: requestedBarcode ? 'BARCODE' : 'NO_BARCODE',
+            createdProduct,
             expiryDate: expiryDisplay,
             expiryPrecision,
             quantityAdded: input.quantity,
@@ -229,7 +287,9 @@ export class ReceivingService {
       });
 
       return {
-        barcode: input.barcode,
+        barcode: productBarcode.barcode,
+        generatedInternalBarcode: !requestedBarcode,
+        createdProduct,
         productId: productBarcode.productId.toString(),
         productName: productBarcode.product.name,
         expiryDate: expiryDisplay,
@@ -336,4 +396,3 @@ export class ReceivingService {
     };
   }
 }
-
