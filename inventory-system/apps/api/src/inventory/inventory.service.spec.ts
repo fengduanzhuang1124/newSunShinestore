@@ -39,6 +39,32 @@ describe('InventoryQueryService', () => {
       take: 200,
     }));
   });
+
+  it('labels employee stock increases and decreases in the operation records', async () => {
+    const baseMovement = {
+      id: 1n, movementNo: 'INC-1', movementType: 'STOCKTAKE_GAIN', quantityDelta: 5,
+      reason: '后续发现库存', createdAt: new Date('2026-09-23T01:00:00.000Z'),
+      product: { name: '测试商品', barcodes: [] },
+      batch: { expiryDate: new Date('2027-08-31T00:00:00.000Z'), expiryPrecision: 'MONTH' },
+      performedBy: { displayName: '员工1' }, reversalOf: null, reversedBy: null,
+    };
+    const client = {
+      userStoreRole: { findFirst: jest.fn().mockResolvedValue(null as never) },
+      stockMovement: { findMany: jest.fn().mockResolvedValue([
+        { ...baseMovement, referenceType: 'MANUAL_INCREASE' },
+        { ...baseMovement, id: 2n, movementNo: 'DEC-2', movementType: 'STOCKTAKE_LOSS', referenceType: 'MANUAL_DECREASE', quantityDelta: -2, reason: '破损' },
+      ] as never) },
+    };
+    const permissions = { warehousePermission: jest.fn().mockResolvedValue({ warehouseId: 7n, warehouse: { storeId: 3n, name: '主仓库' } } as never) };
+    const service = new InventoryQueryService({ client } as never, permissions as never);
+
+    const result = await service.listMovements(1n, 9n);
+
+    expect(result.movements).toEqual([
+      expect.objectContaining({ movementLabel: '库存增加', quantityDelta: 5, reason: '后续发现库存', performedBy: '员工1' }),
+      expect.objectContaining({ movementLabel: '库存减少', quantityDelta: -2, reason: '破损', performedBy: '员工1' }),
+    ]);
+  });
 });
 
 describe('ReceivingService', () => {
@@ -216,6 +242,64 @@ describe('StocktakeService', () => {
         reason: '后续发现库存', performedById: 7n,
       }),
     }));
+  });
+
+  it('allows an employee to decrease an existing batch without allowing negative inventory', async () => {
+    const transaction = {
+      stockMovement: {
+        findUnique: jest.fn().mockResolvedValue(null as never),
+        create: jest.fn().mockResolvedValue({ id: 10n } as never),
+      },
+      inventoryBalance: {
+        findUnique: jest.fn().mockResolvedValue({
+          quantity: 10, version: 2, product: { name: '测试商品' },
+          batch: { expiryDate: new Date('2027-08-31T00:00:00.000Z'), expiryPrecision: 'MONTH' },
+        } as never),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 } as never),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({ id: 11n } as never) },
+    };
+    const client = { $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)) };
+    const permissions = { warehousePermission: jest.fn().mockResolvedValue(permission as never) };
+    const service = new StocktakeService({ client } as never, permissions as never);
+
+    const result = await service.decreaseStock(1n, 7n, {
+      productId: '2', batchId: '3', quantity: 4, reason: '发现破损',
+      idempotencyKey: '44444444-4444-4444-8444-444444444444',
+    });
+
+    expect(result).toMatchObject({ previousQuantity: 10, currentQuantity: 6, quantityDecreased: 4 });
+    expect(transaction.inventoryBalance.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ quantity: { gte: 4 }, version: 2 }),
+      data: { quantity: { decrement: 4 }, version: { increment: 1 } },
+    }));
+    expect(transaction.stockMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        movementType: 'STOCKTAKE_LOSS', referenceType: 'MANUAL_DECREASE', quantityDelta: -4,
+        reason: '发现破损', performedById: 7n,
+      }),
+    }));
+  });
+
+  it('rejects a decrease when the current inventory changed or is insufficient', async () => {
+    const transaction = {
+      stockMovement: { findUnique: jest.fn().mockResolvedValue(null as never) },
+      inventoryBalance: {
+        findUnique: jest.fn().mockResolvedValue({
+          quantity: 3, version: 1, product: { name: '测试商品' },
+          batch: { expiryDate: new Date('2027-08-31T00:00:00.000Z'), expiryPrecision: 'MONTH' },
+        } as never),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 } as never),
+      },
+    };
+    const client = { $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)) };
+    const permissions = { warehousePermission: jest.fn().mockResolvedValue(permission as never) };
+    const service = new StocktakeService({ client } as never, permissions as never);
+
+    await expect(service.decreaseStock(1n, 7n, {
+      productId: '2', batchId: '3', quantity: 5, reason: '数量修正',
+      idempotencyKey: '55555555-5555-4555-8555-555555555555',
+    })).rejects.toBeInstanceOf(ConflictException);
   });
 });
 

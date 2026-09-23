@@ -407,7 +407,9 @@ export class InventoryQueryService {
         movementType: movement.movementType,
         movementLabel: movement.referenceType === 'MANUAL_INCREASE'
           ? '库存增加'
-          : labels[movement.movementType] ?? movement.movementType,
+          : movement.referenceType === 'MANUAL_DECREASE'
+            ? '库存减少'
+            : labels[movement.movementType] ?? movement.movementType,
         productName: movement.product.name,
         barcodes: movement.product.barcodes.map(({ barcode }) => barcode),
         expiryDate: movement.batch.expiryPrecision === 'MONTH'

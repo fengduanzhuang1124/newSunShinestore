@@ -439,6 +439,37 @@ describe('App', () => {
     expect(wrapper.text()).toContain('增加 5 件');
   });
 
+  it('decreases a selected inventory batch and sends the employee reason', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const inventory = { warehouseName: '主仓库', productCount: 1, totalQuantity: 10, products: [{
+      productId: '2', productName: '测试商品', barcodes: ['9400000000001'],
+      batches: [{ batchId: '3', expiryDate: '2027-08', expiryPrecision: 'MONTH', quantity: 10 }], totalQuantity: 10,
+    }] };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: inventory }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {
+        productName: '测试商品', expiryDate: '2027-08', quantityDecreased: 3, previousQuantity: 10, currentQuantity: 7,
+      } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { ...inventory, totalQuantity: 7 } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('button').find((button) => button.text() === '库存减少')!.trigger('click');
+    await wrapper.get('input[aria-label="库存减少数量"]').setValue('3');
+    await wrapper.get('input[aria-label="库存减少原因"]').setValue('发现破损');
+    await wrapper.findAll('button').find((button) => button.text().startsWith('确认减少'))!.trigger('click');
+    await flushPromises();
+
+    const request = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/inventory/stock-decrease'));
+    expect(request).toBeTruthy();
+    expect(JSON.parse(String((request?.[1] as RequestInit).body))).toMatchObject({
+      productId: '2', batchId: '3', quantity: 3, reason: '发现破损', warehouseId: '7',
+    });
+    expect(wrapper.text()).toContain('库存减少成功');
+    expect(wrapper.text()).toContain('减少 3 件');
+  });
+
   it('shows immutable inventory movements in records', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch')

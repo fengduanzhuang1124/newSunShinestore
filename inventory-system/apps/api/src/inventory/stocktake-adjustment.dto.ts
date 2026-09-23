@@ -53,3 +53,30 @@ export class StockIncreaseDto {
   @IsUUID()
   idempotencyKey!: string;
 }
+
+export class StockDecreaseDto {
+  @IsString()
+  @Matches(/^\d+$/)
+  productId!: string;
+
+  @IsString()
+  @Matches(/^\d+$/)
+  batchId!: string;
+
+  @IsInt()
+  @Min(1)
+  quantity!: number;
+
+  @IsString()
+  @MinLength(2)
+  @MaxLength(255)
+  reason!: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d+$/)
+  warehouseId?: string;
+
+  @IsUUID()
+  idempotencyKey!: string;
+}

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { InventoryPermissionService } from './inventory-permission.service.js';
-import { StockIncreaseDto, StocktakeAdjustmentDto } from './stocktake-adjustment.dto.js';
+import { StockDecreaseDto, StockIncreaseDto, StocktakeAdjustmentDto } from './stocktake-adjustment.dto.js';
 import { parseExpiryInput } from './expiry-date.js';
 
 @Injectable()
@@ -172,6 +172,78 @@ export class StocktakeService {
           : batch.expiryDate.toISOString().slice(0, 10),
         quantityAdded: input.quantity, previousQuantity: previous?.quantity ?? 0,
         currentQuantity: balance.quantity, repeated: false,
+      };
+    });
+  }
+
+  async decreaseStock(organizationId: bigint, userId: bigint, input: StockDecreaseDto) {
+    const permission = await this.permissions.warehousePermission(
+      organizationId, userId, 'canReceive', input.warehouseId,
+    );
+    const productId = BigInt(input.productId);
+    const batchId = BigInt(input.batchId);
+    return this.prisma.client.$transaction(async (transaction) => {
+      const repeated = await transaction.stockMovement.findUnique({
+        where: { organizationId_idempotencyKey: { organizationId, idempotencyKey: input.idempotencyKey } },
+        include: { product: true, batch: true },
+      });
+      if (repeated) {
+        if (repeated.referenceType !== 'MANUAL_DECREASE' || repeated.productId !== productId || repeated.batchId !== batchId || repeated.quantityDelta !== -input.quantity) {
+          throw new ConflictException('该库存减少请求编号已被其他操作使用');
+        }
+        const current = await transaction.inventoryBalance.findUniqueOrThrow({
+          where: { organizationId_warehouseId_productId_batchId: {
+            organizationId, warehouseId: permission.warehouseId, productId, batchId,
+          } },
+        });
+        return {
+          movementId: repeated.id.toString(), productName: repeated.product.name,
+          expiryDate: repeated.batch.expiryPrecision === 'MONTH'
+            ? repeated.batch.expiryDate.toISOString().slice(0, 7)
+            : repeated.batch.expiryDate.toISOString().slice(0, 10),
+          quantityDecreased: input.quantity, currentQuantity: current.quantity, repeated: true,
+        };
+      }
+      const balance = await transaction.inventoryBalance.findUnique({
+        where: { organizationId_warehouseId_productId_batchId: {
+          organizationId, warehouseId: permission.warehouseId, productId, batchId,
+        } },
+        include: { product: true, batch: true },
+      });
+      if (!balance) throw new NotFoundException('该商品批次没有库存记录');
+      const updated = await transaction.inventoryBalance.updateMany({
+        where: {
+          organizationId, warehouseId: permission.warehouseId, productId, batchId,
+          quantity: { gte: input.quantity }, version: balance.version,
+        },
+        data: { quantity: { decrement: input.quantity }, version: { increment: 1 } },
+      });
+      if (updated.count !== 1) throw new ConflictException('库存不足或刚刚发生变化，请刷新后重试');
+      const currentQuantity = balance.quantity - input.quantity;
+      const movement = await transaction.stockMovement.create({
+        data: {
+          movementNo: `DEC-${Date.now()}-${randomUUID().slice(0, 6)}`,
+          organizationId, storeId: permission.warehouse.storeId, warehouseId: permission.warehouseId,
+          productId, batchId, movementType: 'STOCKTAKE_LOSS', quantityDelta: -input.quantity,
+          referenceType: 'MANUAL_DECREASE', reason: input.reason, performedById: userId,
+          idempotencyKey: input.idempotencyKey,
+        },
+      });
+      await transaction.auditLog.create({
+        data: {
+          organizationId, userId, storeId: permission.warehouse.storeId, warehouseId: permission.warehouseId,
+          action: 'inventory.manual_decrease', entityType: 'StockMovement', entityId: movement.id.toString(),
+          requestId: input.idempotencyKey, beforeSummary: { quantity: balance.quantity },
+          afterSummary: { quantity: currentQuantity, decreasedBy: input.quantity, reason: input.reason },
+        },
+      });
+      return {
+        movementId: movement.id.toString(), productName: balance.product.name,
+        expiryDate: balance.batch.expiryPrecision === 'MONTH'
+          ? balance.batch.expiryDate.toISOString().slice(0, 7)
+          : balance.batch.expiryDate.toISOString().slice(0, 10),
+        quantityDecreased: input.quantity, previousQuantity: balance.quantity,
+        currentQuantity, repeated: false,
       };
     });
   }
