@@ -1,8 +1,45 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { jest } from '@jest/globals';
 import { MovementService } from './movement.service.js';
+import { InventoryQueryService } from './inventory-query.service.js';
 import { ReceivingService } from './receiving.service.js';
 import { StocktakeService } from './stocktake.service.js';
+
+describe('InventoryQueryService', () => {
+  it('expands nearby brand words and ranks an UMF grade match first', async () => {
+    const products = [
+      {
+        id: 3n, name: '康维他 麦卢卡蜂蜜 UMF25+ 250g', sku: 'HONEY-25', englishName: 'Comvita UMF25+ 250g',
+        chineseName: null, brandName: 'Comvita', categoryName: '蜂蜜', barcodes: [{ barcode: '9400000000003' }], batches: [],
+      },
+      {
+        id: 2n, name: '普通麦卢卡蜂蜜 10+ 250g', sku: 'HONEY-10', englishName: null, chineseName: null,
+        brandName: null, categoryName: '蜂蜜', barcodes: [{ barcode: '9400000000002' }], batches: [],
+      },
+      {
+        id: 1n, name: '康维他 麦卢卡蜂蜜 5+ 500g', sku: 'COMVITA-5', englishName: 'Comvita UMF 5+ 500g',
+        chineseName: '康维他5+ 500g', brandName: 'Comvita', categoryName: '蜂蜜',
+        barcodes: [{ barcode: '9400000000001' }], batches: [],
+      },
+    ];
+    const client = { product: { findMany: jest.fn().mockResolvedValue(products as never) } };
+    const permissions = { warehousePermission: jest.fn().mockResolvedValue({ warehouseId: 7n, warehouse: { name: '主仓库' } } as never) };
+    const service = new InventoryQueryService({ client } as never, permissions as never);
+
+    const result = await service.search(1n, 9n, 'umf 5+');
+
+    expect(result.products[0]?.productName).toBe('康维他 麦卢卡蜂蜜 5+ 500g');
+    expect(client.product.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: expect.arrayContaining([
+          expect.objectContaining({ name: { contains: '5+' } }),
+          expect.objectContaining({ englishName: { contains: 'umf' } }),
+        ]),
+      }),
+      take: 200,
+    }));
+  });
+});
 
 describe('ReceivingService', () => {
   it('creates an internal product code and inventory movement for a barcode-free item', async () => {

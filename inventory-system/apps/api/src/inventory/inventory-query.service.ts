@@ -2,6 +2,19 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../database/prisma.service.js';
 import { InventoryPermissionService } from './inventory-permission.service.js';
 
+const SEARCH_SYNONYM_GROUPS = [
+  ['康维他', 'comvita'],
+  ['麦卢卡医生', 'manuka doctor', 'manukadoctor'],
+  ['麦卢卡', 'manuka'],
+  ['高之源', 'go healthy', 'gohealthy'],
+  ['好健康', 'good health', 'goodhealth'],
+  ['纽乐', 'nutralife', 'nutra life'],
+  ['澳佳宝', 'blackmores'],
+  ['卡诗', 'kerastase'],
+  ['爱乐维', 'elevit'],
+  ['汤普森', 'thompson', 'thompsons'],
+] as const;
+
 @Injectable()
 export class InventoryQueryService {
   constructor(private readonly prisma: PrismaService, private readonly permissions: InventoryPermissionService) {}
@@ -30,6 +43,64 @@ export class InventoryQueryService {
     const result = new Date(value);
     result.setUTCMonth(result.getUTCMonth() + months);
     return result;
+  }
+
+  private normalizeSearchText(value: string) {
+    return value.normalize('NFKC').toLocaleLowerCase()
+      .replace(/[^\p{L}\p{N}+]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private searchTerms(rawQuery: string) {
+    const normalized = this.normalizeSearchText(rawQuery);
+    const terms = new Set([normalized, normalized.replaceAll(' ', '')]);
+    for (const token of normalized.split(' ')) {
+      if (token) terms.add(token);
+    }
+    for (const group of SEARCH_SYNONYM_GROUPS) {
+      const normalizedGroup = group.map((item) => this.normalizeSearchText(item));
+      if (normalizedGroup.some((item) => normalized.includes(item) || item.includes(normalized))) {
+        for (const item of normalizedGroup) {
+          terms.add(item);
+          terms.add(item.replaceAll(' ', ''));
+        }
+      }
+    }
+    return [...terms].filter(Boolean);
+  }
+
+  private productSearchScore(product: {
+    name: string;
+    sku: string | null;
+    englishName: string | null;
+    chineseName: string | null;
+    brandName: string | null;
+    categoryName: string | null;
+    barcodes: Array<{ barcode: string }>;
+  }, rawQuery: string, terms: string[]) {
+    const normalizedQuery = this.normalizeSearchText(rawQuery);
+    const compactQuery = normalizedQuery.replaceAll(' ', '');
+    const fields = [product.name, product.sku, product.englishName, product.chineseName,
+      product.brandName, product.categoryName, ...product.barcodes.map(({ barcode }) => barcode)]
+      .filter((value): value is string => Boolean(value));
+    const normalizedFields = fields.map((value) => this.normalizeSearchText(value));
+    const searchable = normalizedFields.join(' ');
+    const compactSearchable = searchable.replaceAll(' ', '');
+    let score = 0;
+    if (product.barcodes.some(({ barcode }) => barcode === rawQuery.trim())) score += 1_000;
+    if (normalizedFields.some((field) => field === normalizedQuery)) score += 400;
+    if (searchable.includes(normalizedQuery)) score += 180;
+    if (compactQuery && compactSearchable.includes(compactQuery)) score += 160;
+    for (const term of terms) {
+      if (/^\d+\+$/.test(term)) {
+        const grades: string[] = searchable.match(/\d+\+/g) ?? [];
+        if (grades.includes(term)) score += 140;
+        continue;
+      }
+      if (searchable.includes(term) || compactSearchable.includes(term.replaceAll(' ', ''))) score += 25;
+    }
+    return score;
   }
 
   private serializeProduct(
@@ -78,19 +149,22 @@ export class InventoryQueryService {
     if (!query) {
       throw new BadRequestException('请输入商品名称或条码');
     }
+    const terms = this.searchTerms(query);
     const products = await this.prisma.client.product.findMany({
       where: {
         organizationId,
         status: 'ACTIVE',
-        OR: [
-          { name: { contains: query } },
-          { sku: { contains: query } },
-          { englishName: { contains: query } },
-          { chineseName: { contains: query } },
-          { barcodes: { some: { barcode: { contains: query }, status: 'ACTIVE' } } },
-        ],
+        OR: terms.flatMap((term) => [
+          { name: { contains: term } },
+          { sku: { contains: term } },
+          { englishName: { contains: term } },
+          { chineseName: { contains: term } },
+          { brandName: { contains: term } },
+          { categoryName: { contains: term } },
+          { barcodes: { some: { barcode: { contains: term }, status: 'ACTIVE' as const } } },
+        ]),
       },
-      take: 20,
+      take: 200,
       orderBy: { name: 'asc' },
       include: {
         barcodes: { where: { status: 'ACTIVE' }, orderBy: { isPrimary: 'desc' } },
@@ -105,7 +179,11 @@ export class InventoryQueryService {
     return {
       warehouseId: permission.warehouseId.toString(),
       warehouseName: permission.warehouse.name,
-      products: products.map((product) => this.serializeProduct(product)),
+      products: products
+        .map((product) => ({ product, score: this.productSearchScore(product, query, terms) }))
+        .sort((left, right) => right.score - left.score || left.product.name.localeCompare(right.product.name, 'zh-CN'))
+        .slice(0, 20)
+        .map(({ product }) => this.serializeProduct(product)),
     };
   }
 

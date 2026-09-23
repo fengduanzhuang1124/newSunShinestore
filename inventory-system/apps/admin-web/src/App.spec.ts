@@ -109,6 +109,31 @@ describe('App', () => {
     expect(wrapper.text()).toContain('2027-03-01');
   });
 
+  it('shows product matches in a compact dropdown before opening one product', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    localStorage.setItem('sunshine_inventory_mode', 'query');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      data: { products: [
+        { productId: '1', productName: '康维他 麦卢卡蜂蜜 5+ 500g', chineseName: '康维他5+ 500g', englishName: 'Comvita UMF 5+ 500g', sku: 'C5', barcodes: ['9401'], batches: [{ batchId: '1', expiryDate: '2029-03', expiryPrecision: 'MONTH', quantity: 12 }], totalQuantity: 12 },
+        { productId: '2', productName: '康维他 麦卢卡蜂蜜 10+ 500g', chineseName: '康维他10+ 500g', englishName: 'Comvita UMF 10+ 500g', sku: 'C10', barcodes: ['9402'], batches: [], totalQuantity: 0 },
+      ] },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const wrapper = mount(App);
+    await wrapper.get('input[aria-label="商品关键词或条码"]').setValue('umf 5+');
+    await wrapper.get('.inventory-search-row .action-secondary').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('.product-search-dropdown').exists()).toBe(true);
+    expect(wrapper.findAll('.product-search-dropdown [role="option"]')).toHaveLength(2);
+    expect(wrapper.find('.result-list').exists()).toBe(false);
+    await wrapper.get('.product-search-dropdown [role="option"]').trigger('pointerdown');
+
+    expect(wrapper.find('.product-search-dropdown').exists()).toBe(false);
+    expect(wrapper.get('.result-list').text()).toContain('总库存 12 件');
+    expect(wrapper.get('.result-list').text()).toContain('2029-03');
+  });
+
   it('combines repeated scans with the same barcode and expiry before confirmation', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     const wrapper = mount(App);
@@ -267,7 +292,9 @@ describe('App', () => {
 
     expect(wrapper.text()).toContain('找到 1 个商品');
     expect(wrapper.text()).toContain('纽乐植物酵素60粒');
-    expect(wrapper.text()).toContain('选择这个商品入库');
+    expect(wrapper.find('.product-search-dropdown').exists()).toBe(true);
+    await wrapper.get('.product-search-dropdown [role="option"]').trigger('pointerdown');
+    expect(wrapper.text()).toContain('已识别商品');
     expect(wrapper.text()).toContain('到期日期');
   });
 

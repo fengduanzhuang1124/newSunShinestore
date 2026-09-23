@@ -86,6 +86,7 @@ const activeMode = ref<Mode>(savedMode === 'receive' || savedMode === 'issue' ||
   : 'home');
 const query = ref('');
 const results = ref<ProductResult[]>([]);
+const showSearchDropdown = ref(false);
 const selectedProduct = ref<ProductResult | null>(null);
 const receiveSearch = ref('');
 const barcode = ref('');
@@ -256,8 +257,20 @@ watch(
   { deep: true, flush: 'sync' },
 );
 
+watch([query, receiveSearch], () => {
+  showSearchDropdown.value = false;
+});
+
+function closeSearchDropdownOutside(event: PointerEvent) {
+  const target = event.target;
+  if (target instanceof Element && !target.closest('.product-search-shell')) {
+    showSearchDropdown.value = false;
+  }
+}
+
 onMounted(async () => {
   document.documentElement.dataset.theme = theme.value;
+  document.addEventListener('pointerdown', closeSearchDropdownOutside);
   if (!token.value) return;
   if (!storeId.value) {
     logout();
@@ -386,6 +399,7 @@ function logout() {
   expiryDay.value = null;
   receiveQuantity.value = 1;
   selectedProduct.value = null;
+  showSearchDropdown.value = false;
   receiveDraft.value = [];
   localStorage.removeItem(tokenKey);
   localStorage.removeItem(profileKey);
@@ -399,6 +413,7 @@ async function switchMode(mode: Mode) {
   }
   query.value = '';
   results.value = [];
+  showSearchDropdown.value = false;
   selectedProduct.value = null;
   receiveSearch.value = '';
   barcode.value = '';
@@ -505,7 +520,10 @@ async function startCameraScanner(target: 'receive' | 'issue') {
   }
 }
 
-onBeforeUnmount(stopCameraScanner);
+onBeforeUnmount(() => {
+  stopCameraScanner();
+  document.removeEventListener('pointerdown', closeSearchDropdownOutside);
+});
 
 async function loadProductCandidates(page = productReviewPage.value) {
   if (!storeId.value) {
@@ -661,6 +679,9 @@ async function searchProducts(searchText = query.value) {
   try {
     const data = await apiRequest(`/inventory/search?q=${encodeURIComponent(value)}`);
     results.value = data.products;
+    const exactBarcodeProduct = results.value.find((product) => product.barcodes.includes(value));
+    showSearchDropdown.value = results.value.length > 0 && !exactBarcodeProduct;
+    if (exactBarcodeProduct && activeMode.value !== 'receive') results.value = [exactBarcodeProduct];
     if (!results.value.length) message.value = '没有找到商品。';
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '查询失败';
@@ -697,8 +718,20 @@ function chooseProduct(product: ProductResult) {
   productName.value = product.productName;
   if (!barcode.value) barcode.value = product.barcodes[0] ?? '';
   results.value = [];
+  showSearchDropdown.value = false;
   message.value = `已选择 ${product.productName}，全部条码库存会合并统计。`;
   nextTick(() => expiryMonthInput.value?.focus());
+}
+
+function selectSearchSuggestion(product: ProductResult) {
+  if (activeMode.value === 'receive') {
+    chooseProduct(product);
+    return;
+  }
+  results.value = [product];
+  showSearchDropdown.value = false;
+  query.value = product.chineseName || product.productName;
+  message.value = `已选择 ${product.productName}，显示全部到期批次。`;
 }
 
 function addReceiveDraft() {
@@ -946,6 +979,9 @@ async function issueBatch(product: ProductResult, batch: Batch) {
       body: JSON.stringify({ batchId: batch.batchId, quantity, reason: '上货架' }),
     });
     await searchProducts(query.value);
+    const refreshedProduct = results.value.find((item) => item.productId === product.productId);
+    if (refreshedProduct) results.value = [refreshedProduct];
+    showSearchDropdown.value = false;
     issueQuantities.value[batch.batchId] = 1;
     message.value = `出库成功：${data.productName} ${data.expiryDate}，剩余 ${data.currentQuantity} 件。`;
   } catch (reason) {
@@ -1057,10 +1093,18 @@ async function issueBatch(product: ProductResult, batch: Batch) {
 
       <template v-else-if="activeMode === 'receive'">
         <section class="section-heading scanner-heading"><h2>条码 / 商品名称</h2><span class="scanner-status" :class="{ ready: scanReady }"><i></i>{{ scanReady ? '扫码输入就绪' : '点击输入框后扫码' }}</span></section>
-        <div class="search-row scan-search-row">
-          <input ref="scanInput" v-model="receiveSearch" aria-label="查询条码或商品名称" placeholder="扫描条码或输入商品名称关键词" @focus="scanReady = true" @blur="scanReady = false" @keydown.enter.prevent="lookupForReceive" />
-          <button class="action-secondary" :disabled="loading || !receiveSearch.trim()" @click="lookupForReceive">查询</button>
-          <button class="camera-scan-button" type="button" aria-label="打开手机相机扫码入库" @click="startCameraScanner('receive')"><span aria-hidden="true">▣</span> 相机扫码</button>
+        <div class="product-search-shell">
+          <div class="search-row scan-search-row">
+            <input ref="scanInput" v-model="receiveSearch" aria-label="查询条码或商品名称" placeholder="扫描条码或输入商品名称关键词" autocomplete="off" @focus="scanReady = true" @blur="scanReady = false" @keydown.esc="showSearchDropdown = false" @keydown.enter.prevent="lookupForReceive" />
+            <button class="action-secondary" :disabled="loading || !receiveSearch.trim()" @click="lookupForReceive">查询</button>
+            <button class="camera-scan-button" type="button" aria-label="打开手机相机扫码入库" @click="startCameraScanner('receive')"><span aria-hidden="true">▣</span> 相机扫码</button>
+          </div>
+          <div v-if="showSearchDropdown && results.length" class="product-search-dropdown" role="listbox" aria-label="商品搜索结果">
+            <button v-for="product in results" :key="product.productId" type="button" role="option" @pointerdown.prevent="selectSearchSuggestion(product)">
+              <span><strong>{{ product.chineseName || product.productName }}</strong><small v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</small><small>{{ product.barcodes.join('、') || product.sku || '无条码' }}</small></span>
+              <span class="search-option-stock"><b>{{ product.totalQuantity }}</b> 件<small>{{ product.batches[0]?.expiryDate ? `最近 ${product.batches[0].expiryDate}` : '暂无批次' }}</small></span>
+            </button>
+          </div>
         </div>
 
         <article v-if="selectedProduct" class="receive-product-card" aria-live="polite">
@@ -1310,10 +1354,18 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <div><h2 v-if="activeMode === 'issue'">查找要出库的商品</h2><p v-if="activeMode === 'query'">共 {{ inventorySummary.productCount }} 种商品 · {{ inventorySummary.totalQuantity }} 件库存</p></div>
           <button v-if="activeMode === 'query'" class="inventory-refresh secondary" :disabled="loading" @click="loadInventoryReport">刷新</button>
         </section>
-        <div v-if="activeMode === 'issue' || inventoryView === 'ledger'" class="search-row inventory-search-row" :class="{ 'has-camera-button': activeMode === 'issue' }">
-          <input ref="scanInput" v-model="query" aria-label="商品关键词或条码" placeholder="输入商品名称或扫描条码" @focus="scanReady = true" @blur="scanReady = false" @keydown.enter.prevent="searchProducts()" />
-          <button class="action-secondary" :disabled="loading || !query.trim()" @click="searchProducts()">查询</button>
-          <button v-if="activeMode === 'issue'" class="camera-scan-button" type="button" aria-label="打开手机相机扫码出库" @click="startCameraScanner('issue')"><span aria-hidden="true">▣</span> 相机扫码</button>
+        <div v-if="activeMode === 'issue' || inventoryView === 'ledger'" class="product-search-shell">
+          <div class="search-row inventory-search-row" :class="{ 'has-camera-button': activeMode === 'issue' }">
+            <input ref="scanInput" v-model="query" aria-label="商品关键词或条码" placeholder="输入商品名称、相近词或扫描条码" autocomplete="off" @focus="scanReady = true" @blur="scanReady = false" @keydown.esc="showSearchDropdown = false" @keydown.enter.prevent="searchProducts()" />
+            <button class="action-secondary" :disabled="loading || !query.trim()" @click="searchProducts()">查询</button>
+            <button v-if="activeMode === 'issue'" class="camera-scan-button" type="button" aria-label="打开手机相机扫码出库" @click="startCameraScanner('issue')"><span aria-hidden="true">▣</span> 相机扫码</button>
+          </div>
+          <div v-if="showSearchDropdown && results.length" class="product-search-dropdown" role="listbox" aria-label="商品搜索结果">
+            <button v-for="product in results" :key="product.productId" type="button" role="option" @pointerdown.prevent="selectSearchSuggestion(product)">
+              <span><strong>{{ product.chineseName || product.productName }}</strong><small v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</small><small>{{ product.barcodes.join('、') || product.sku || '无条码' }}</small></span>
+              <span class="search-option-stock"><b>{{ product.totalQuantity }}</b> 件<small>{{ product.batches[0]?.expiryDate ? `最近 ${product.batches[0].expiryDate}` : '暂无批次' }}</small></span>
+            </button>
+          </div>
         </div>
         <section v-if="activeMode === 'query' && inventoryView === 'ledger' && !results.length" class="inventory-browser" aria-label="现有库存">
           <div class="inventory-browser-title"><h3>现有库存</h3><span>{{ inventorySummary.productCount }} 种</span></div>
@@ -1343,7 +1395,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         </section>
       </template>
 
-      <section v-if="results.length" class="result-list">
+      <section v-if="results.length && !showSearchDropdown" class="result-list">
         <article v-for="product in results" :key="product.productId" class="product-card">
           <div class="product-summary">
             <div><h3>{{ product.chineseName || product.productName }}</h3><p v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</p><p>SKU：{{ product.sku || '—' }} · 条码：{{ product.barcodes.join('、') || '无' }}</p></div>
