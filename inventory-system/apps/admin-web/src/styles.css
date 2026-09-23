@@ -1006,6 +1006,7 @@ th { color: #667085; background: #f7f9fc; } td { color: var(--ops-text); }
 .inventory-stock-main > strong { flex: 0 0 auto; color: var(--ops-blue); font-size: 25px; }.inventory-stock-main > strong small { margin-left: 2px; color: var(--ops-muted); font-size: 11px; }
 .inventory-batches { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; padding-top: 10px; border-top: 1px solid #edf1f6; }
 .inventory-batches span { display: inline-flex; gap: 6px; padding: 5px 7px; border-radius: 7px; color: #48566a; background: #f2f5f9; font-size: 11px; }.inventory-batches em { color: #7a8494; font-style: normal; }
+.inventory-stock-actions { display: flex; justify-content: flex-end; margin-top: 10px; }.inventory-stock-actions button { min-height: 36px; padding: 7px 12px; color: var(--ops-blue); border-color: #bad5f7; background: #edf6ff; }
 
 @media (max-width: 720px) {
   .workbench-metrics { margin-bottom: 16px; }.workbench-metrics button { min-height: 76px; padding: 9px; box-shadow: none; }
@@ -1116,6 +1117,11 @@ button, .action-primary { background: var(--ops-gradient-primary); }
 .stocktake-desktop-table { max-height: 520px; overflow: auto; }.stocktake-desktop-table th { position: sticky; top: 0; z-index: 1; }
 .account-overlay { position: fixed !important; z-index: 50 !important; inset: 0; display: grid; place-items: center; padding: 18px; background: rgb(13 23 38 / 52%); backdrop-filter: blur(5px); }
 .account-sheet { position: relative; width: min(460px, 100%); padding: 24px; border: 1px solid var(--ops-border); border-radius: 20px; background: var(--ops-gradient-soft); box-shadow: 0 24px 70px rgb(15 35 63 / 28%); }
+.stock-increase-sheet { position: relative; display: grid; width: min(500px, 100%); gap: 13px; padding: 24px; border: 1px solid var(--ops-border); border-radius: 20px; color: var(--ops-text); background: var(--ops-gradient-soft); box-shadow: 0 24px 70px rgb(15 35 63 / 28%); }
+.stock-increase-sheet h2, .stock-increase-sheet p { margin: 0; }.stock-increase-code { color: var(--ops-muted); font-size: 12px; overflow-wrap: anywhere; }
+.stock-increase-sheet label { display: grid; gap: 6px; color: var(--ops-text); font-size: 13px; font-weight: 750; }.stock-increase-sheet input, .stock-increase-sheet select { width: 100%; min-height: 46px; }
+.stock-change-preview { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; padding: 12px; border-radius: 13px; background: rgb(225 238 255 / 68%); }.stock-change-preview span { display: grid; gap: 3px; color: var(--ops-muted); font-size: 11px; }.stock-change-preview span:last-child { text-align: right; }.stock-change-preview strong { color: var(--ops-text); font-size: 22px; }.stock-change-preview i { color: var(--ops-blue); font-style: normal; font-size: 20px; }
+.stock-increase-confirm { width: 100%; min-height: 48px; }
 .account-eyebrow { margin: 0 42px 18px 0; color: var(--ops-blue); font-size: 14px; font-weight: 800; letter-spacing: .08em; }
 .account-close { position: absolute; top: 12px; right: 12px; display: grid; width: 36px; height: 36px; place-items: center; padding: 0; color: #657184; background: #edf3fa; font-size: 25px; line-height: 1; }
 .movement-mobile-card, .stocktake-mobile-card { border: 1px solid var(--ops-border); background: var(--ops-gradient-soft); }
@@ -1176,6 +1182,7 @@ button, .action-primary { background: var(--ops-gradient-primary); }
   .movement-mobile-card h3 { margin-top: 11px; }.movement-mobile-card dl { display: grid; gap: 5px; margin: 11px 0 0; padding-top: 9px; border-top: 1px solid var(--ops-border); }.movement-mobile-card dl div { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }.movement-mobile-card dt { color: var(--ops-muted); }.movement-mobile-card dd { margin: 0; color: var(--ops-text); text-align: right; }
   .movement-mobile-card .reversal-action { grid-template-columns: minmax(0, 1fr) auto; min-width: 0; margin-top: 10px; }.movement-mobile-card .reversal-action input { min-width: 0; }
   .account-overlay { align-items: end; padding: 0; }.account-sheet { width: 100%; padding: 22px 18px calc(18px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; }
+  .stock-increase-sheet { width: 100%; max-height: 88dvh; overflow-y: auto; padding: 20px 17px calc(18px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; }
   .home-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 12px; min-height: calc(100dvh - 84px); align-content: space-between; padding-bottom: 2px; }
   .home-panel .workbench-hero, .home-panel .workbench-metrics, .home-panel .quick-actions { margin: 0; }
   .workbench-hero { align-items: center; min-height: 116px; }

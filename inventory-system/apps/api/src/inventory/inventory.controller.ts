@@ -17,7 +17,7 @@ import { MovementService } from './movement.service.js';
 import { StocktakeService } from './stocktake.service.js';
 import { ScanReceiveDto } from './scan-receive.dto.js';
 import { ManualIssueDto } from './manual-issue.dto.js';
-import { StocktakeAdjustmentDto } from './stocktake-adjustment.dto.js';
+import { StockIncreaseDto, StocktakeAdjustmentDto } from './stocktake-adjustment.dto.js';
 import { ReverseMovementDto } from './reverse-movement.dto.js';
 
 @Controller('inventory')
@@ -169,6 +169,19 @@ export class InventoryController {
       code: 200,
       message: '盘点调整成功',
       data: await this.stocktakes.stocktakeAdjustment(user.organizationId, user.id, input),
+    };
+  }
+
+  @Post('stock-increase')
+  async increaseStock(
+    @Req() request: AuthenticatedRequest,
+    @Body() input: StockIncreaseDto,
+  ) {
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: '库存增加成功',
+      data: await this.stocktakes.increaseStock(user.organizationId, user.id, input),
     };
   }
 

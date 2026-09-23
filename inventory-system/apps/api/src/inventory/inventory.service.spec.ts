@@ -179,6 +179,44 @@ describe('StocktakeService', () => {
       batchId: '3', actualQuantity: 10, reason: '现场盘点',
     })).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it('allows an employee with receiving permission to increase an existing batch and records the operation', async () => {
+    const transaction = {
+      stockMovement: {
+        findUnique: jest.fn().mockResolvedValue(null as never),
+        create: jest.fn().mockResolvedValue({ id: 8n } as never),
+      },
+      product: { findFirst: jest.fn().mockResolvedValue({ id: 2n, name: '测试商品' } as never) },
+      productBatch: { findFirst: jest.fn().mockResolvedValue({
+        id: 3n, productId: 2n, expiryDate: new Date('2027-08-31T00:00:00.000Z'), expiryPrecision: 'MONTH',
+      } as never) },
+      inventoryBalance: {
+        findUnique: jest.fn().mockResolvedValue({ quantity: 10 } as never),
+        upsert: jest.fn().mockResolvedValue({ quantity: 15 } as never),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({ id: 9n } as never) },
+    };
+    const client = { $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)) };
+    const permissions = { warehousePermission: jest.fn().mockResolvedValue(permission as never) };
+    const service = new StocktakeService({ client } as never, permissions as never);
+
+    const result = await service.increaseStock(1n, 7n, {
+      productId: '2', batchId: '3', quantity: 5, reason: '后续发现库存',
+      idempotencyKey: '33333333-3333-4333-8333-333333333333',
+    });
+
+    expect(permissions.warehousePermission).toHaveBeenCalledWith(1n, 7n, 'canReceive', undefined);
+    expect(result).toMatchObject({ productName: '测试商品', previousQuantity: 10, currentQuantity: 15, quantityAdded: 5 });
+    expect(transaction.inventoryBalance.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { quantity: { increment: 5 }, version: { increment: 1 } },
+    }));
+    expect(transaction.stockMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        movementType: 'STOCKTAKE_GAIN', referenceType: 'MANUAL_INCREASE', quantityDelta: 5,
+        reason: '后续发现库存', performedById: 7n,
+      }),
+    }));
+  });
 });
 
 describe('MovementService', () => {

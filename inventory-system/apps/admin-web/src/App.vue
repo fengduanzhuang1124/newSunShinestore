@@ -134,6 +134,12 @@ const movements = ref<Movement[]>([]);
 const stocktakeActual = ref<Record<string, number>>({});
 const stocktakeReasons = ref<Record<string, string>>({});
 const stocktakeQuery = ref('');
+const increaseProduct = ref<ProductResult | null>(null);
+const increaseBatchChoice = ref('new');
+const increaseExpiryMonth = ref('');
+const increaseExpiryDay = ref<number | null>(null);
+const increaseQuantity = ref(1);
+const increaseReason = ref('后续发现库存');
 const reversalReasons = ref<Record<string, string>>({});
 const receiveDraft = ref<ReceiveDraftItem[]>([]);
 const filteredStocktakeProducts = computed(() => {
@@ -147,6 +153,11 @@ const filteredStocktakeProducts = computed(() => {
     ...product.barcodes,
   ].some((value) => value?.toLocaleLowerCase().includes(keyword)));
 });
+const selectedIncreaseBatch = computed(() => increaseProduct.value?.batches.find(
+  (batch) => batch.batchId === increaseBatchChoice.value,
+) ?? null);
+const increaseCurrentQuantity = computed(() => selectedIncreaseBatch.value?.quantity ?? 0);
+const increaseResultQuantity = computed(() => increaseCurrentQuantity.value + (Number.isInteger(increaseQuantity.value) ? increaseQuantity.value : 0));
 const milkCandidates = ref<MilkCandidate[]>([]);
 const milkReviewFilter = ref<'PENDING' | 'APPROVED' | 'IGNORED'>('PENDING');
 const milkReviewReasons = ref<Record<string, string>>({});
@@ -896,6 +907,62 @@ async function adjustStocktake(product: ProductResult, batch: Batch) {
   }
 }
 
+function openStockIncrease(product: ProductResult) {
+  increaseProduct.value = product;
+  increaseBatchChoice.value = product.batches[0]?.batchId ?? 'new';
+  increaseExpiryMonth.value = '';
+  increaseExpiryDay.value = null;
+  increaseQuantity.value = 1;
+  increaseReason.value = '后续发现库存';
+  clearStatus();
+}
+
+function closeStockIncrease() {
+  if (!loading.value) increaseProduct.value = null;
+}
+
+async function submitStockIncrease() {
+  const product = increaseProduct.value;
+  const quantity = increaseQuantity.value;
+  const reason = increaseReason.value.trim();
+  const usesNewBatch = increaseBatchChoice.value === 'new';
+  if (!product || !Number.isInteger(quantity) || quantity < 1 || reason.length < 2
+    || (usesNewBatch && !increaseExpiryMonth.value)) {
+    error.value = '请选择到期批次或填写新到期日期，并输入增加数量和至少2个字的原因。';
+    return;
+  }
+  loading.value = true;
+  clearStatus();
+  try {
+    const data = await apiRequest('/inventory/stock-increase', {
+      method: 'POST',
+      body: JSON.stringify({
+        productId: product.productId,
+        ...(usesNewBatch
+          ? { expiryMonth: increaseExpiryMonth.value, expiryDay: increaseExpiryDay.value || undefined }
+          : { batchId: increaseBatchChoice.value }),
+        quantity,
+        reason,
+        warehouseId: warehouseId.value,
+        idempotencyKey: createClientUuid(),
+      }),
+    });
+    increaseProduct.value = null;
+    message.value = `库存增加成功：${data.productName} ${data.expiryDate}，增加 ${data.quantityAdded} 件，现有 ${data.currentQuantity} 件。`;
+    await loadInventoryReport();
+    if (query.value.trim()) {
+      await searchProducts(query.value);
+      const refreshed = results.value.find((item) => item.productId === product.productId);
+      if (refreshed) results.value = [refreshed];
+      showSearchDropdown.value = false;
+    }
+  } catch (reasonValue) {
+    error.value = reasonValue instanceof Error ? reasonValue.message : '库存增加失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
 async function completeCurrentReceipt() {
   loading.value = true;
   clearStatus();
@@ -1373,6 +1440,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             <article v-for="product in inventorySummary.products" :key="product.productId" class="inventory-stock-card">
               <div class="inventory-stock-main"><div><h3>{{ product.chineseName || product.productName }}</h3><p v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</p><small>{{ product.barcodes.join('、') || product.sku || '无条码' }}</small></div><strong>{{ product.totalQuantity }}<small>件</small></strong></div>
               <div class="inventory-batches"><span v-for="batch in product.batches" :key="batch.batchId"><em>{{ batch.expiryDate }}</em>{{ batch.quantity }} 件</span></div>
+              <div class="inventory-stock-actions"><button class="secondary" type="button" @click="openStockIncrease(product)">库存增加</button></div>
             </article>
           </div>
           <p v-else class="empty-state compact">当前仓库还没有库存。</p>
@@ -1403,6 +1471,9 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           </div>
           <div v-if="activeMode === 'receive'" class="bind-action">
             <button class="secondary" @click="chooseProduct(product)">选择这个商品入库</button>
+          </div>
+          <div v-if="activeMode === 'query'" class="bind-action inventory-result-actions">
+            <button class="action-primary" type="button" @click="openStockIncrease(product)">库存增加</button>
           </div>
           <div v-for="batch in product.batches" :key="batch.batchId" class="batch-row">
             <div class="batch-value"><small>到期日期</small><strong>{{ batch.expiryDate }}</strong></div>
@@ -1444,6 +1515,28 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <div class="account-avatar">{{ (displayName || '员工').slice(0, 1) }}</div><div class="account-heading"><h2>{{ displayName || '员工' }}</h2><p>库存作业账号</p></div>
           <dl class="account-details"><div><dt>所属门店</dt><dd>{{ storeName || '未分配门店' }}</dd></div><div><dt>作业仓库</dt><dd>{{ reportWarehouseName || '当前授权仓库' }}</dd></div><div><dt>当前日期</dt><dd>{{ reportDate }}</dd></div></dl>
           <div class="account-actions"><button class="secondary" type="button" @click="toggleTheme">{{ theme === 'light' ? '开启护眼模式' : '关闭护眼模式' }}</button><button class="account-logout" type="button" @click="logout">退出当前账号</button></div>
+        </section>
+      </div>
+
+      <div v-if="increaseProduct" class="account-overlay" role="presentation" @click.self="closeStockIncrease">
+        <section class="stock-increase-sheet" role="dialog" aria-modal="true" aria-label="库存增加">
+          <button class="account-close" type="button" aria-label="关闭库存增加" @click="closeStockIncrease">×</button>
+          <p class="account-eyebrow">库存增加</p>
+          <h2>{{ increaseProduct.chineseName || increaseProduct.productName }}</h2>
+          <p class="stock-increase-code">{{ increaseProduct.barcodes.join('、') || increaseProduct.sku || '无条码商品' }}</p>
+          <label>到期批次
+            <select v-model="increaseBatchChoice">
+              <option v-for="batch in increaseProduct.batches" :key="batch.batchId" :value="batch.batchId">{{ batch.expiryDate }} · 当前 {{ batch.quantity }} 件</option>
+              <option value="new">＋ 新的到期日期</option>
+            </select>
+          </label>
+          <label v-if="increaseBatchChoice === 'new'">新到期日期
+            <span class="expiry-fields"><input v-model="increaseExpiryMonth" type="month" aria-label="库存增加到期年月" /><input v-model.number="increaseExpiryDay" type="number" min="1" max="31" aria-label="库存增加到期日（可不选）" placeholder="日（可不选）" /></span>
+          </label>
+          <label>增加数量<input v-model.number="increaseQuantity" aria-label="库存增加数量" type="number" min="1" step="1" /></label>
+          <label>增加原因<input v-model="increaseReason" aria-label="库存增加原因" maxlength="255" placeholder="如：后续发现库存" /></label>
+          <div class="stock-change-preview"><span>当前批次数量<strong>{{ increaseCurrentQuantity }}</strong></span><i>→</i><span>调整后数量<strong>{{ increaseResultQuantity }}</strong></span></div>
+          <button class="action-primary stock-increase-confirm" type="button" :disabled="loading || increaseQuantity < 1 || increaseReason.trim().length < 2 || (increaseBatchChoice === 'new' && !increaseExpiryMonth)" @click="submitStockIncrease">{{ loading ? '正在增加…' : `确认增加 ${increaseQuantity} 件` }}</button>
         </section>
       </div>
     </section>

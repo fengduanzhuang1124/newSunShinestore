@@ -408,6 +408,37 @@ describe('App', () => {
     expect(wrapper.text()).toContain('没有找到匹配的盘点商品');
   });
 
+  it('increases an existing inventory batch from the inventory page', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const inventory = { warehouseName: '主仓库', productCount: 1, totalQuantity: 10, products: [{
+      productId: '2', productName: '测试商品', barcodes: ['9400000000001'],
+      batches: [{ batchId: '3', expiryDate: '2027-08', expiryPrecision: 'MONTH', quantity: 10 }], totalQuantity: 10,
+    }] };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: inventory }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {
+        productName: '测试商品', expiryDate: '2027-08', quantityAdded: 5, previousQuantity: 10, currentQuantity: 15,
+      } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { ...inventory, totalQuantity: 15 } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('button').find((button) => button.text() === '库存增加')!.trigger('click');
+    await wrapper.get('input[aria-label="库存增加数量"]').setValue('5');
+    await wrapper.get('input[aria-label="库存增加原因"]').setValue('后续发现库存');
+    await wrapper.findAll('button').find((button) => button.text().startsWith('确认增加'))!.trigger('click');
+    await flushPromises();
+
+    const request = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/inventory/stock-increase'));
+    expect(request).toBeTruthy();
+    expect(JSON.parse(String((request?.[1] as RequestInit).body))).toMatchObject({
+      productId: '2', batchId: '3', quantity: 5, reason: '后续发现库存', warehouseId: '7',
+    });
+    expect(wrapper.text()).toContain('库存增加成功');
+    expect(wrapper.text()).toContain('增加 5 件');
+  });
+
   it('shows immutable inventory movements in records', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch')

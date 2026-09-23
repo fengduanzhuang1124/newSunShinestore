@@ -405,7 +405,9 @@ export class InventoryQueryService {
         movementId: movement.id.toString(),
         movementNo: movement.movementNo,
         movementType: movement.movementType,
-        movementLabel: labels[movement.movementType] ?? movement.movementType,
+        movementLabel: movement.referenceType === 'MANUAL_INCREASE'
+          ? '库存增加'
+          : labels[movement.movementType] ?? movement.movementType,
         productName: movement.product.name,
         barcodes: movement.product.barcodes.map(({ barcode }) => barcode),
         expiryDate: movement.batch.expiryPrecision === 'MONTH'
