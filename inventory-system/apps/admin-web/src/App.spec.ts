@@ -127,7 +127,7 @@ describe('App', () => {
     expect(wrapper.find('.product-search-dropdown').exists()).toBe(true);
     expect(wrapper.findAll('.product-search-dropdown [role="option"]')).toHaveLength(2);
     expect(wrapper.find('.result-list').exists()).toBe(false);
-    await wrapper.get('.product-search-dropdown [role="option"]').trigger('pointerdown');
+    await wrapper.get('.product-search-dropdown [role="option"]').trigger('click');
 
     expect(wrapper.find('.product-search-dropdown').exists()).toBe(false);
     expect(wrapper.get('.result-list').text()).toContain('总库存 12 件');
@@ -293,7 +293,7 @@ describe('App', () => {
     expect(wrapper.text()).toContain('找到 1 个商品');
     expect(wrapper.text()).toContain('纽乐植物酵素60粒');
     expect(wrapper.find('.product-search-dropdown').exists()).toBe(true);
-    await wrapper.get('.product-search-dropdown [role="option"]').trigger('pointerdown');
+    await wrapper.get('.product-search-dropdown [role="option"]').trigger('click');
     expect(wrapper.text()).toContain('已识别商品');
     expect(wrapper.text()).toContain('到期日期');
   });

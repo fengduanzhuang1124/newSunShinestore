@@ -320,7 +320,7 @@ header { justify-content: space-between; gap: 20px; }
 .search-row input { font-size: 19px; }
 .product-search-shell { position: relative; z-index: 20; }
 .product-search-dropdown { position: absolute; z-index: 40; top: calc(100% + 7px); right: 0; left: 0; max-height: min(420px, 48vh); overflow-y: auto; overscroll-behavior: contain; padding: 7px; border: 1px solid #cdddea; border-radius: 15px; background: rgb(255 255 255 / 98%); box-shadow: 0 18px 42px rgb(26 55 91 / 20%); backdrop-filter: blur(18px); }
-.product-search-dropdown button { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 12px 13px; color: var(--ink); border: 0; border-radius: 11px; background: transparent; box-shadow: none; text-align: left; }
+.product-search-dropdown button { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 12px 13px; color: var(--ink); border: 0; border-radius: 11px; background: transparent; box-shadow: none; text-align: left; touch-action: manipulation; }
 .product-search-dropdown button + button { border-top: 1px solid #edf1f6; border-radius: 0; }
 .product-search-dropdown button:hover, .product-search-dropdown button:focus-visible { background: #edf6ff; }
 .product-search-dropdown button > span:first-child { display: grid; min-width: 0; gap: 3px; }

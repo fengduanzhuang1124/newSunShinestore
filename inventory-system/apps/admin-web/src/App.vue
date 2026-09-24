@@ -1190,7 +1190,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             <button class="camera-scan-button" type="button" aria-label="打开手机相机扫码入库" @click="startCameraScanner('receive')"><span aria-hidden="true">▣</span> 相机扫码</button>
           </div>
           <div v-if="showSearchDropdown && results.length" class="product-search-dropdown" role="listbox" aria-label="商品搜索结果">
-            <button v-for="product in results" :key="product.productId" type="button" role="option" @pointerdown.prevent="selectSearchSuggestion(product)">
+            <button v-for="product in results" :key="product.productId" type="button" role="option" @click.stop="selectSearchSuggestion(product)">
               <span><strong>{{ product.chineseName || product.productName }}</strong><small v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</small><small>{{ product.barcodes.join('、') || product.sku || '无条码' }}</small></span>
               <span class="search-option-stock"><b>{{ product.totalQuantity }}</b> 件<small>{{ product.batches[0]?.expiryDate ? `最近 ${product.batches[0].expiryDate}` : '暂无批次' }}</small></span>
             </button>
@@ -1451,7 +1451,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             <button v-if="activeMode === 'issue'" class="camera-scan-button" type="button" aria-label="打开手机相机扫码出库" @click="startCameraScanner('issue')"><span aria-hidden="true">▣</span> 相机扫码</button>
           </div>
           <div v-if="showSearchDropdown && results.length" class="product-search-dropdown" role="listbox" aria-label="商品搜索结果">
-            <button v-for="product in results" :key="product.productId" type="button" role="option" @pointerdown.prevent="selectSearchSuggestion(product)">
+            <button v-for="product in results" :key="product.productId" type="button" role="option" @click.stop="selectSearchSuggestion(product)">
               <span><strong>{{ product.chineseName || product.productName }}</strong><small v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</small><small>{{ product.barcodes.join('、') || product.sku || '无条码' }}</small></span>
               <span class="search-option-stock"><b>{{ product.totalQuantity }}</b> 件<small>{{ product.batches[0]?.expiryDate ? `最近 ${product.batches[0].expiryDate}` : '暂无批次' }}</small></span>
             </button>
