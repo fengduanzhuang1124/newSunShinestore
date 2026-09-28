@@ -60,6 +60,7 @@ describe('App', () => {
     expect(wrapper.findAll('.mobile-bottom-nav button')).toHaveLength(3);
     expect(wrapper.findAll('.mobile-bottom-nav button').map((button) => button.text()))
       .toEqual(['⌂工作台', '⌕库存', '▤记录']);
+    expect(wrapper.get('.management-entry').text()).toBe('经营管理');
     await wrapper.get('.workbench-profile').trigger('click');
     expect(wrapper.text()).toContain('账户与设置');
     expect(wrapper.text()).toContain('退出当前账号');

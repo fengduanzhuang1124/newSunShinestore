@@ -808,6 +808,7 @@ body { background: var(--ops-bg); }
 .brand-block { gap: 12px; }.brand-block h1 { margin: 4px 0 0; font-size: 25px; letter-spacing: -.02em; }
 .brand-block .eyebrow { color: var(--ops-muted); font-size: 10px; letter-spacing: .12em; }
 .account { color: var(--ops-text); font-size: 13px; }
+.management-entry { min-height: 38px; padding: 8px 13px; border: 0; border-radius: 10px; color: #fff; background: var(--ops-gradient-primary); font-weight: 800; box-shadow: 0 6px 16px rgb(39 118 225 / 20%); }
 .store-badge, .theme-toggle, .secondary {
   border: 1px solid var(--ops-border);
   background: #fff;
@@ -902,6 +903,7 @@ th { color: #667085; background: #f7f9fc; } td { color: var(--ops-text); }
   .brand-logo { width: 34px; height: 34px; }.brand-block { gap: 8px; }.brand-block h1 { font-size: 19px; }.brand-block .eyebrow { display: none; }
   .account { display: flex; width: auto; margin-left: auto; gap: 5px; }
   .account .store-badge, .account > span:not(.store-badge) { display: none; }
+  .management-entry { min-width: auto; padding: 9px 10px; font-size: 12px; }
   .theme-toggle { min-width: 40px; width: 40px; height: 38px; padding: 0; font-size: 0; }.theme-toggle span { font-size: 18px; }
   .account .secondary { min-width: auto; padding: 9px 10px; font-size: 12px; }
   .alert { margin: 8px 0; }
@@ -970,7 +972,7 @@ th { color: #667085; background: #f7f9fc; } td { color: var(--ops-text); }
 
 @media (max-width: 720px) {
   .workspace > header { display: none; }
-  .mobile-bottom-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .mobile-bottom-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .workbench-hero { min-height: 106px; padding: 15px; }
   .workbench-brand { gap: 9px; min-width: 0; }.workbench-brand img { flex: 0 0 auto; width: 46px; height: 46px; border-width: 2px; }
   .workbench-brand h2 { font-size: 22px; }.workbench-brand p { font-size: 10px; }.workbench-brand small { display: block; max-width: 150px; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1163,7 +1165,7 @@ button, .action-primary { background: var(--ops-gradient-primary); }
 .workbench-page-header h2 { margin: 0; }
 
 @media (max-width: 720px) {
-  .mobile-bottom-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .mobile-bottom-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .product-search-dropdown { max-height: min(360px, 44vh); padding: 5px; border-radius: 13px; }
   .product-search-dropdown button { gap: 9px; padding: 10px; }
   .product-search-dropdown strong { font-size: 14px; }.product-search-dropdown small { max-width: 230px; font-size: 10px; }
@@ -1398,4 +1400,73 @@ button, .action-primary { background: var(--ops-gradient-primary); }
   40%, 76% { transform: translate3d(58px, 7px, -8px) rotateX(-31deg) rotateY(6deg) rotateZ(9deg); }
   89% { transform: translate3d(8px, 2px, -4px) rotateX(-16deg) rotateZ(2deg); }
   95% { transform: translate3d(2px, 0, 0) rotateX(-4deg); }
+}
+
+/* Final responsive cascade: both workspaces use the current viewport instead of fixed device widths. */
+.workspace {
+  width: min(1440px, calc(100vw - clamp(20px, 4vw, 64px)));
+  max-width: none;
+  margin-inline: auto;
+}
+.workspace.management-shell {
+  width: 100%;
+  min-height: 100dvh;
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.app-shell.management-app-shell { padding: 0; background: var(--ops-gradient-page); }
+.management-shell > header { padding-inline: clamp(16px, 2vw, 34px); }
+.management-shell .mode-panel { min-height: calc(100dvh - 86px); }
+.mode-panel,
+.management-shell .mode-panel,
+.table-wrap,
+.inventory-table { min-width: 0; max-width: 100%; }
+.table-wrap,
+.inventory-table { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+img, video { max-width: 100%; }
+
+@media (max-width: 960px) {
+  .workspace { width: calc(100vw - 20px); padding-inline: 16px; }
+  .workspace.management-shell { width: 100%; padding-inline: 16px; }
+  .workspace > header { flex-wrap: wrap; }
+  .receive-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workbench-metrics,
+  .quick-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .workspace,
+  .workspace.management-shell {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    padding-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right));
+  }
+  .workspace.management-shell { padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+  .workspace.management-shell > header { display: flex; min-height: 52px; padding-bottom: 10px; }
+  .management-shell .brand-logo,
+  .management-shell .theme-toggle,
+  .management-shell .account .store-badge,
+  .management-shell .account > span,
+  .management-shell .account .secondary { display: none; }
+  .management-shell .brand-block { min-width: 0; }
+  .management-shell .brand-block h1 { overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
+  .management-shell .account { display: flex; width: auto; margin-left: auto; }
+  .management-shell .management-entry { white-space: nowrap; }
+  .receive-form,
+  .report-actions,
+  .inventory-actions,
+  .expiry-actions,
+  .movement-actions { grid-template-columns: 1fr; }
+  input, select, button { max-width: 100%; }
+}
+
+@media (max-width: 390px) {
+  .workspace,
+  .workspace.management-shell { padding-inline: 9px; }
+  .workbench-metrics,
+  .quick-action-grid { gap: 7px; }
+  .workbench-metrics button,
+  .quick-action-grid button { padding: 9px 8px; }
 }

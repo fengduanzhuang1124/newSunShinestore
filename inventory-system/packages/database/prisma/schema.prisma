@@ -102,34 +102,54 @@ enum PosInventoryPolicy {
   REVIEW_REQUIRED
 }
 
+enum ProductInsightTagDimension {
+  AUDIENCE
+  HEALTH_NEED
+  USE_CASE
+}
+
+enum ProductInsightConfidence {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ProductInsightReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model Organization {
-  id                   BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
-  code                 String                    @unique @db.VarChar(32)
-  name                 String                    @db.VarChar(120)
-  timezone             String                    @default("Pacific/Auckland") @db.VarChar(64)
-  currency             String                    @default("NZD") @db.Char(3)
-  status               RecordStatus              @default(ACTIVE)
-  createdAt            DateTime                  @default(now()) @map("created_at")
-  updatedAt            DateTime                  @updatedAt @map("updated_at")
-  stores               Store[]
-  products             Product[]
-  productBarcodes      ProductBarcode[]
-  productBatches       ProductBatch[]
-  users                User[]
-  roles                Role[]
-  stockMovements       StockMovement[]
-  stockReceipts        StockReceipt[]
-  inventoryBalances    InventoryBalance[]
-  stockTransfers       StockTransfer[]
-  expiryAlertSettings  ExpiryAlertSetting?
-  auditLogs            AuditLog[]
-  posProductMappings   PosProductMapping[]
-  posProductCandidates PosProductCandidate[]
-  posMilkCandidates    PosMilkProductCandidate[]
-  posOrders            PosOrder[]
-  posSyncCursors       PosSyncCursor[]
-  posSyncRuns          PosSyncRun[]
-  posSimulations       PosInventorySimulation[]
+  id                        BigInt                        @id @default(autoincrement()) @db.UnsignedBigInt
+  code                      String                        @unique @db.VarChar(32)
+  name                      String                        @db.VarChar(120)
+  timezone                  String                        @default("Pacific/Auckland") @db.VarChar(64)
+  currency                  String                        @default("NZD") @db.Char(3)
+  status                    RecordStatus                  @default(ACTIVE)
+  createdAt                 DateTime                      @default(now()) @map("created_at")
+  updatedAt                 DateTime                      @updatedAt @map("updated_at")
+  stores                    Store[]
+  products                  Product[]
+  productBarcodes           ProductBarcode[]
+  productBatches            ProductBatch[]
+  users                     User[]
+  roles                     Role[]
+  stockMovements            StockMovement[]
+  stockReceipts             StockReceipt[]
+  inventoryBalances         InventoryBalance[]
+  stockTransfers            StockTransfer[]
+  expiryAlertSettings       ExpiryAlertSetting?
+  auditLogs                 AuditLog[]
+  posProductMappings        PosProductMapping[]
+  posProductCandidates      PosProductCandidate[]
+  posMilkCandidates         PosMilkProductCandidate[]
+  posOrders                 PosOrder[]
+  posSyncCursors            PosSyncCursor[]
+  posSyncRuns               PosSyncRun[]
+  posSimulations            PosInventorySimulation[]
+  productInsightTags        ProductInsightTag[]
+  productInsightAssignments ProductInsightTagAssignment[]
 
   @@map("organizations")
 }
@@ -205,22 +225,22 @@ model Warehouse {
 }
 
 model Product {
-  id                 BigInt                       @id @default(autoincrement()) @db.UnsignedBigInt
-  organizationId     BigInt                       @map("organization_id") @db.UnsignedBigInt
-  sku                String                       @db.VarChar(64)
-  name               String                       @db.VarChar(255)
-  englishName        String?                      @map("english_name") @db.VarChar(255)
-  chineseName        String?                      @map("chinese_name") @db.VarChar(255)
-  brandName          String?                      @map("brand_name") @db.VarChar(80)
-  categoryName       String?                      @map("category_name") @db.VarChar(120)
-  description        String?                      @db.Text
-  unit               String                       @default("piece") @db.VarChar(20)
-  status             RecordStatus                 @default(ACTIVE)
-  createdById        BigInt?                      @map("created_by") @db.UnsignedBigInt
-  createdAt          DateTime                     @default(now()) @map("created_at")
-  updatedAt          DateTime                     @updatedAt @map("updated_at")
-  organization       Organization                 @relation(fields: [organizationId], references: [id])
-  createdBy          User?                        @relation("ProductCreatedBy", fields: [createdById], references: [id])
+  id                 BigInt                        @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId     BigInt                        @map("organization_id") @db.UnsignedBigInt
+  sku                String                        @db.VarChar(64)
+  name               String                        @db.VarChar(255)
+  englishName        String?                       @map("english_name") @db.VarChar(255)
+  chineseName        String?                       @map("chinese_name") @db.VarChar(255)
+  brandName          String?                       @map("brand_name") @db.VarChar(80)
+  categoryName       String?                       @map("category_name") @db.VarChar(120)
+  description        String?                       @db.Text
+  unit               String                        @default("piece") @db.VarChar(20)
+  status             RecordStatus                  @default(ACTIVE)
+  createdById        BigInt?                       @map("created_by") @db.UnsignedBigInt
+  createdAt          DateTime                      @default(now()) @map("created_at")
+  updatedAt          DateTime                      @updatedAt @map("updated_at")
+  organization       Organization                  @relation(fields: [organizationId], references: [id])
+  createdBy          User?                         @relation("ProductCreatedBy", fields: [createdById], references: [id])
   storeProducts      StoreProduct[]
   barcodes           ProductBarcode[]
   batches            ProductBatch[]
@@ -231,6 +251,7 @@ model Product {
   posProductMappings PosProductMapping[]
   posOrderItems      PosOrderItem[]
   posSimulationItems PosInventorySimulationItem[]
+  insightAssignments ProductInsightTagAssignment[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, name])
@@ -314,31 +335,73 @@ model ProductBatch {
 }
 
 model User {
-  id                       BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
-  organizationId           BigInt                    @map("organization_id") @db.UnsignedBigInt
-  username                 String                    @db.VarChar(80)
-  passwordHash             String                    @map("password_hash") @db.VarChar(255)
-  mustChangePassword       Boolean                   @default(true) @map("must_change_password")
-  displayName              String                    @map("display_name") @db.VarChar(120)
-  status                   RecordStatus              @default(ACTIVE)
-  createdAt                DateTime                  @default(now()) @map("created_at")
-  updatedAt                DateTime                  @updatedAt @map("updated_at")
-  organization             Organization              @relation(fields: [organizationId], references: [id])
-  storeRoles               UserStoreRole[]
-  warehousePermissions     UserWarehousePermission[]
-  performedStockMovements  StockMovement[]           @relation("MovementPerformedBy")
-  openedStockReceipts      StockReceipt[]            @relation("ReceiptOpenedBy")
-  completedStockReceipts   StockReceipt[]            @relation("ReceiptCompletedBy")
-  createdProducts          Product[]                 @relation("ProductCreatedBy")
-  createdBatches           ProductBatch[]            @relation("BatchCreatedBy")
-  requestedTransfers       StockTransfer[]           @relation("TransferRequestedBy")
-  dispatchedTransfers      StockTransfer[]           @relation("TransferDispatchedBy")
-  receivedTransfers        StockTransfer[]           @relation("TransferReceivedBy")
-  auditLogs                AuditLog[]
-  resolvedPosRefundReviews PosRefundReview[]         @relation("PosRefundReviewResolvedBy")
+  id                         BigInt                        @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId             BigInt                        @map("organization_id") @db.UnsignedBigInt
+  username                   String                        @db.VarChar(80)
+  passwordHash               String                        @map("password_hash") @db.VarChar(255)
+  mustChangePassword         Boolean                       @default(true) @map("must_change_password")
+  displayName                String                        @map("display_name") @db.VarChar(120)
+  status                     RecordStatus                  @default(ACTIVE)
+  createdAt                  DateTime                      @default(now()) @map("created_at")
+  updatedAt                  DateTime                      @updatedAt @map("updated_at")
+  organization               Organization                  @relation(fields: [organizationId], references: [id])
+  storeRoles                 UserStoreRole[]
+  warehousePermissions       UserWarehousePermission[]
+  performedStockMovements    StockMovement[]               @relation("MovementPerformedBy")
+  openedStockReceipts        StockReceipt[]                @relation("ReceiptOpenedBy")
+  completedStockReceipts     StockReceipt[]                @relation("ReceiptCompletedBy")
+  createdProducts            Product[]                     @relation("ProductCreatedBy")
+  createdBatches             ProductBatch[]                @relation("BatchCreatedBy")
+  requestedTransfers         StockTransfer[]               @relation("TransferRequestedBy")
+  dispatchedTransfers        StockTransfer[]               @relation("TransferDispatchedBy")
+  receivedTransfers          StockTransfer[]               @relation("TransferReceivedBy")
+  auditLogs                  AuditLog[]
+  resolvedPosRefundReviews   PosRefundReview[]             @relation("PosRefundReviewResolvedBy")
+  assignedProductInsightTags ProductInsightTagAssignment[] @relation("ProductInsightAssignedBy")
 
   @@unique([organizationId, username])
   @@map("users")
+}
+
+model ProductInsightTag {
+  id             BigInt                        @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt                        @map("organization_id") @db.UnsignedBigInt
+  code           String                        @db.VarChar(80)
+  name           String                        @db.VarChar(120)
+  dimension      ProductInsightTagDimension
+  description    String?                       @db.VarChar(255)
+  status         RecordStatus                  @default(ACTIVE)
+  createdAt      DateTime                      @default(now()) @map("created_at")
+  updatedAt      DateTime                      @updatedAt @map("updated_at")
+  organization   Organization                  @relation(fields: [organizationId], references: [id])
+  assignments    ProductInsightTagAssignment[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, dimension, status])
+  @@map("product_insight_tags")
+}
+
+model ProductInsightTagAssignment {
+  id             BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt                     @map("organization_id") @db.UnsignedBigInt
+  productId      BigInt                     @map("product_id") @db.UnsignedBigInt
+  tagId          BigInt                     @map("tag_id") @db.UnsignedBigInt
+  confidence     ProductInsightConfidence   @default(MEDIUM)
+  evidence       String?                    @db.VarChar(255)
+  source         String                     @default("MANUAL") @db.VarChar(30)
+  reviewStatus   ProductInsightReviewStatus @default(PENDING) @map("review_status")
+  assignedById   BigInt?                    @map("assigned_by") @db.UnsignedBigInt
+  createdAt      DateTime                   @default(now()) @map("created_at")
+  updatedAt      DateTime                   @updatedAt @map("updated_at")
+  organization   Organization               @relation(fields: [organizationId], references: [id])
+  product        Product                    @relation(fields: [productId], references: [id])
+  tag            ProductInsightTag          @relation(fields: [tagId], references: [id])
+  assignedBy     User?                      @relation("ProductInsightAssignedBy", fields: [assignedById], references: [id])
+
+  @@unique([productId, tagId])
+  @@index([organizationId, reviewStatus])
+  @@index([tagId, reviewStatus])
+  @@map("product_insight_tag_assignments")
 }
 
 model Role {

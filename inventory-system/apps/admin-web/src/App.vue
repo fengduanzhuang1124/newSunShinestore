@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import type { IScannerControls } from '@zxing/browser';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import ManagementDashboard from './management/ManagementDashboard.vue';
 
-type Mode = 'home' | 'receive' | 'issue' | 'query' | 'productReview' | 'milkReview' | 'reports';
+type Mode = 'home' | 'receive' | 'issue' | 'query' | 'productReview' | 'milkReview' | 'reports' | 'management';
 type Theme = 'light' | 'dark';
 type Batch = { batchId: string; expiryDate: string; expiryPrecision: 'MONTH' | 'DATE'; quantity: number };
 type ProductResult = {
@@ -74,6 +75,7 @@ const userId = ref(storedProfile.id ?? '');
 const username = ref('');
 const password = ref('');
 const displayName = ref(storedProfile.displayName ?? '');
+const roles = ref<{ code: string; storeId: string; storeName: string }[]>(storedProfile.roles ?? []);
 const storeName = ref(storedProfile.roles?.[0]?.storeName ?? '');
 const storeId = ref(storedProfile.roles?.[0]?.storeId ?? '');
 const warehouseId = ref(storedProfile.warehouses?.find((item: { canReceive?: boolean }) => item.canReceive)?.warehouseId
@@ -81,9 +83,10 @@ const warehouseId = ref(storedProfile.warehouses?.find((item: { canReceive?: boo
   ?? '');
 const mustChangePassword = ref(storedProfile.mustChangePassword ?? false);
 const savedMode = localStorage.getItem(modeKey);
-const activeMode = ref<Mode>(savedMode === 'receive' || savedMode === 'issue' || savedMode === 'query' || savedMode === 'reports'
+const activeMode = ref<Mode>(savedMode === 'receive' || savedMode === 'issue' || savedMode === 'query' || savedMode === 'reports' || (savedMode === 'management' && roles.value.some((role) => role.code === 'ADMIN'))
   ? savedMode
   : 'home');
+const isAdmin = computed(() => roles.value.some((role) => role.code === 'ADMIN' && (!storeId.value || role.storeId === storeId.value)));
 const query = ref('');
 const results = ref<ProductResult[]>([]);
 const showSearchDropdown = ref(false);
@@ -378,6 +381,7 @@ async function login() {
     token.value = data.accessToken;
     userId.value = data.user.id;
     displayName.value = data.user.displayName;
+    roles.value = data.user.roles ?? [];
     storeName.value = data.user.roles?.[0]?.storeName ?? '';
     storeId.value = data.user.roles?.[0]?.storeId ?? '';
     warehouseId.value = data.user.warehouses?.find((item: { canReceive?: boolean }) => item.canReceive)?.warehouseId
@@ -402,6 +406,7 @@ function logout() {
   token.value = '';
   userId.value = '';
   displayName.value = '';
+  roles.value = [];
   storeName.value = '';
   storeId.value = '';
   warehouseId.value = '';
@@ -420,8 +425,12 @@ function logout() {
 
 async function switchMode(mode: Mode) {
   stopCameraScanner();
+  if (mode === 'management' && !isAdmin.value) {
+    error.value = '只有管理员可以查看经营数据大屏';
+    return;
+  }
   activeMode.value = mode;
-  if (mode === 'home' || mode === 'receive' || mode === 'issue' || mode === 'query' || mode === 'reports') {
+  if (mode === 'home' || mode === 'receive' || mode === 'issue' || mode === 'query' || mode === 'reports' || mode === 'management') {
     localStorage.setItem(modeKey, mode);
   }
   query.value = '';
@@ -1083,7 +1092,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
 </script>
 
 <template>
-  <main class="app-shell">
+  <main class="app-shell" :class="{ 'management-app-shell': Boolean(token) && activeMode === 'management' }">
     <section v-if="!token" class="login-card login-ip-card">
       <button class="theme-toggle login-theme-toggle" type="button" :aria-label="theme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="toggleTheme">
         <span aria-hidden="true">{{ theme === 'light' ? '☾' : '☀' }}</span>{{ theme === 'light' ? 'Dark' : 'Light' }}
@@ -1112,21 +1121,21 @@ async function issueBatch(product: ProductResult, batch: Batch) {
       </div>
     </section>
 
-    <section v-else class="workspace">
+    <section v-else class="workspace" :class="{ 'management-shell': activeMode === 'management' }">
       <header>
         <div class="brand-block">
           <img class="brand-logo" src="/sunshine-health-logo.png" alt="阳光特产 Sunshine Health" />
           <div>
-            <p class="eyebrow">SUNSHINE INVENTORY</p>
-            <h1>库存管理</h1>
+            <p class="eyebrow">{{ activeMode === 'management' ? 'SUNSHINE MANAGEMENT' : 'SUNSHINE INVENTORY' }}</p>
+            <h1>{{ activeMode === 'management' ? '经营管理中心' : '库存管理' }}</h1>
           </div>
         </div>
-        <div class="account"><button class="theme-toggle" type="button" :aria-label="theme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="toggleTheme"><span aria-hidden="true">{{ theme === 'light' ? '☾' : '☀' }}</span>{{ theme === 'light' ? 'Dark' : 'Light' }}</button><span class="store-badge">{{ storeName || '未分配门店' }}</span><span>{{ displayName || '员工' }}</span><button class="secondary" @click="logout">退出</button></div>
+        <div class="account"><button v-if="isAdmin" class="management-entry" type="button" @click="switchMode(activeMode === 'management' ? 'home' : 'management')">{{ activeMode === 'management' ? '返回库存系统' : '经营管理' }}</button><button class="theme-toggle" type="button" :aria-label="theme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="toggleTheme"><span aria-hidden="true">{{ theme === 'light' ? '☾' : '☀' }}</span>{{ theme === 'light' ? 'Dark' : 'Light' }}</button><span class="store-badge">{{ storeName || '未分配门店' }}</span><span>{{ displayName || '员工' }}</span><button class="secondary" @click="logout">退出</button></div>
       </header>
 
       <p v-if="mustChangePassword" class="alert warning">当前使用临时密码，请勿把密码交给其他人。</p>
 
-      <nav class="mode-tabs primary-navigation" aria-label="库存操作分类">
+      <nav v-if="activeMode !== 'management'" class="mode-tabs primary-navigation" aria-label="库存操作分类">
         <button :class="{ active: activeMode === 'home' }" @click="switchMode('home')">工作台</button>
         <button :class="{ active: activeMode === 'query' }" @click="switchMode('query')">库存</button>
         <button :class="{ active: activeMode === 'reports' }" @click="switchMode('reports')">记录与报表</button>
@@ -1141,7 +1150,8 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         <button :class="{ active: activeMode === 'receive' }" @click="switchMode('receive')">扫码入库</button>
         <button :class="{ active: activeMode === 'issue' }" @click="switchMode('issue')">扫码出库</button>
       </nav>
-      <template v-if="activeMode === 'home'">
+      <ManagementDashboard v-if="activeMode === 'management'" :api-base-url="apiBaseUrl" :token="token" :store-id="storeId" :store-name="storeName" />
+      <template v-else-if="activeMode === 'home'">
         <section class="workbench-page-header report-header">
           <h2>仓管通</h2>
         </section>
@@ -1513,7 +1523,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         </div>
       </Transition>
 
-      <nav class="mobile-bottom-nav" aria-label="手机库存操作">
+      <nav v-if="activeMode !== 'management'" class="mobile-bottom-nav" aria-label="手机库存操作">
         <button :class="{ active: activeMode === 'home' }" @click="switchMode('home')"><span>⌂</span>工作台</button>
         <button :class="{ active: activeMode === 'query' }" @click="switchMode('query')"><span>⌕</span>库存</button>
         <button :class="{ active: activeMode === 'reports' }" @click="switchMode('reports')"><span>▤</span>记录</button>
