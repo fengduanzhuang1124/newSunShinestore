@@ -187,7 +187,7 @@ export class ManagementController {
     if (!input.productId || !/^\d+$/.test(input.productId)) throw new BadRequestException('商品参数无效');
     if (!input.tagCode || !/^[a-z][a-z0-9._-]{2,79}$/.test(input.tagCode)) throw new BadRequestException('标签代码格式无效');
     if (!input.tagName?.trim() || input.tagName.trim().length > 120) throw new BadRequestException('标签名称无效');
-    if (!input.dimension || !['AUDIENCE', 'HEALTH_NEED', 'USE_CASE'].includes(input.dimension)) throw new BadRequestException('标签维度无效');
+    if (!input.dimension || !['BUSINESS_CATEGORY', 'AUDIENCE', 'HEALTH_NEED', 'USE_CASE', 'OPERATION', 'MARKETING'].includes(input.dimension)) throw new BadRequestException('标签维度无效');
     const confidence = input.confidence ?? 'MEDIUM';
     if (!['LOW', 'MEDIUM', 'HIGH'].includes(confidence)) throw new BadRequestException('置信度无效');
     if (input.evidence && input.evidence.trim().length > 255) throw new BadRequestException('判断依据不能超过255个字符');
@@ -196,9 +196,65 @@ export class ManagementController {
       code: 200, message: '商品消费倾向标签保存成功',
       data: await this.management.assignProductInsightTag(user.organizationId, user.id, storeId, {
         productId: BigInt(input.productId), tagCode: input.tagCode, tagName: input.tagName.trim(),
-        dimension: input.dimension as 'AUDIENCE' | 'HEALTH_NEED' | 'USE_CASE', confidence: confidence as 'LOW' | 'MEDIUM' | 'HIGH', evidence: input.evidence?.trim() || undefined,
+        dimension: input.dimension as 'BUSINESS_CATEGORY' | 'AUDIENCE' | 'HEALTH_NEED' | 'USE_CASE' | 'OPERATION' | 'MARKETING', confidence: confidence as 'LOW' | 'MEDIUM' | 'HIGH', evidence: input.evidence?.trim() || undefined,
       }),
     };
+  }
+
+  @Post('product-insight-tags/definitions')
+  async saveProductInsightTagDefinition(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue: string | undefined,
+    @Body() input: { id?: string; name?: string; dimension?: string; parentId?: string | null; description?: string; sortOrder?: number; status?: string },
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    if (input.id && !/^\d+$/.test(input.id)) throw new BadRequestException('标签参数无效');
+    if (!input.name?.trim() || input.name.trim().length > 120) throw new BadRequestException('标签名称无效');
+    if (!input.dimension || !['BUSINESS_CATEGORY', 'AUDIENCE', 'HEALTH_NEED', 'USE_CASE', 'OPERATION', 'MARKETING'].includes(input.dimension)) throw new BadRequestException('标签维度无效');
+    if (input.parentId && !/^\d+$/.test(input.parentId)) throw new BadRequestException('上级标签参数无效');
+    if (input.description && input.description.trim().length > 255) throw new BadRequestException('标签说明不能超过255个字符');
+    if (input.status && !['ACTIVE', 'INACTIVE'].includes(input.status)) throw new BadRequestException('标签状态无效');
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: input.id ? '标签已更新' : '标签已创建',
+      data: await this.management.saveProductInsightTagDefinition(user.organizationId, user.id, storeId, {
+        id: input.id ? BigInt(input.id) : undefined,
+        name: input.name.trim(),
+        dimension: input.dimension as 'BUSINESS_CATEGORY' | 'AUDIENCE' | 'HEALTH_NEED' | 'USE_CASE' | 'OPERATION' | 'MARKETING',
+        parentId: input.parentId ? BigInt(input.parentId) : null,
+        description: input.description?.trim() || undefined,
+        sortOrder: typeof input.sortOrder === 'number' && Number.isInteger(input.sortOrder) ? input.sortOrder : 0,
+        status: (input.status ?? 'ACTIVE') as 'ACTIVE' | 'INACTIVE',
+      }),
+    };
+  }
+
+  @Post('product-insight-tags/import')
+  async importProductInsightTags(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue: string | undefined,
+    @Body() input: { categories?: { externalId?: string; name?: string; dimension?: string; parentExternalId?: string | null; description?: string; sortOrder?: number; status?: string }[] },
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    if (!Array.isArray(input.categories) || !input.categories.length || input.categories.length > 1000) throw new BadRequestException('一次需导入1至1000个分类');
+    const dimensions = ['BUSINESS_CATEGORY', 'AUDIENCE', 'HEALTH_NEED', 'USE_CASE', 'OPERATION', 'MARKETING'];
+    const seen = new Set<string>();
+    const categories = input.categories.map((item, index) => {
+      const externalId = item.externalId?.trim();
+      const name = item.name?.trim();
+      if (!externalId || externalId.length > 64) throw new BadRequestException(`第${index + 1}项分类ID无效`);
+      if (seen.has(externalId)) throw new BadRequestException(`分类ID重复：${externalId}`);
+      seen.add(externalId);
+      if (!name || name.length > 120) throw new BadRequestException(`第${index + 1}项名称无效`);
+      if (!item.dimension || !dimensions.includes(item.dimension)) throw new BadRequestException(`第${index + 1}项标签类型无效`);
+      if (item.description && item.description.trim().length > 255) throw new BadRequestException(`第${index + 1}项说明过长`);
+      if (item.status && !['ACTIVE', 'INACTIVE'].includes(item.status)) throw new BadRequestException(`第${index + 1}项状态无效`);
+      return { externalId, name, dimension: item.dimension as 'BUSINESS_CATEGORY' | 'AUDIENCE' | 'HEALTH_NEED' | 'USE_CASE' | 'OPERATION' | 'MARKETING', parentExternalId: item.parentExternalId?.trim() || null, description: item.description?.trim() || undefined, sortOrder: typeof item.sortOrder === 'number' && Number.isInteger(item.sortOrder) ? item.sortOrder : index, status: (item.status ?? 'ACTIVE') as 'ACTIVE' | 'INACTIVE' };
+    });
+    for (const item of categories) if (item.parentExternalId && !seen.has(item.parentExternalId)) throw new BadRequestException(`找不到上级分类：${item.parentExternalId}`);
+    const user = request.inventoryUser!;
+    return { code: 200, message: '小程序分类导入完成', data: await this.management.importProductInsightTags(user.organizationId, user.id, storeId, categories) };
   }
 
   @Get('overview')

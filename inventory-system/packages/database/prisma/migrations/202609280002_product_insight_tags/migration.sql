@@ -26,7 +26,7 @@ CREATE TABLE `product_insight_tag_assignments` (
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at` DATETIME(3) NOT NULL,
   UNIQUE INDEX `product_insight_tag_assignments_product_id_tag_id_key`(`product_id`, `tag_id`),
-  INDEX `product_insight_tag_assignments_organization_id_review_status_idx`(`organization_id`, `review_status`),
+  INDEX `pit_assign_org_review_status_idx`(`organization_id`, `review_status`),
   INDEX `product_insight_tag_assignments_tag_id_review_status_idx`(`tag_id`, `review_status`),
   PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

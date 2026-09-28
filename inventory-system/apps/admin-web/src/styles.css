@@ -969,6 +969,13 @@ th { color: #667085; background: #f7f9fc; } td { color: var(--ops-text); }
 .account-details div { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 0; border-bottom: 1px solid var(--ops-border); }
 .account-details dt { color: var(--ops-muted); }.account-details dd { margin: 0; color: var(--ops-text); font-weight: 700; text-align: right; }
 .account-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }.account-logout { background: #e84c4c; }
+.account-settings-trigger { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--ops-border); border-radius: 10px; color: var(--ink); background: var(--surface-soft); font: inherit; font-weight: 750; cursor: pointer; }.account-settings-trigger i { color: var(--muted); font-size: 12px; font-style: normal; }
+.password-warning { width: 100%; border: 1px solid #f0cf6a; text-align: left; cursor: pointer; }
+.password-form { display: grid; gap: 11px; margin: 18px 0; padding: 16px; border: 1px solid var(--ops-border); border-radius: 16px; background: var(--surface-soft); }
+.password-form h3 { margin: 0 0 2px; }
+.password-form label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 750; }
+.password-form input { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid var(--ops-border); border-radius: 11px; color: var(--ink); background: var(--surface); font: inherit; }
+.password-success { margin: 0; color: #14835f; font-weight: 750; }
 
 @media (max-width: 720px) {
   .workspace > header { display: none; }

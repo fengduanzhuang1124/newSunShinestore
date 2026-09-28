@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { compare } from 'bcryptjs';
+import { compare, hash } from 'bcryptjs';
+import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 import { LoginDto } from './login.dto.js';
 
@@ -53,5 +54,15 @@ export class AuthService {
         })),
       },
     };
+  }
+
+  async changePassword(organizationId: bigint, userId: bigint, currentPassword: string, newPassword: string) {
+    const user = await this.prisma.client.user.findFirst({ where: { id: userId, organizationId, status: 'ACTIVE' }, select: { id: true, passwordHash: true } });
+    if (!user || !(await compare(currentPassword, user.passwordHash))) throw new UnauthorizedException('当前密码不正确');
+    await this.prisma.client.$transaction([
+      this.prisma.client.user.update({ where: { id: user.id }, data: { passwordHash: await hash(newPassword, 12), mustChangePassword: false } }),
+      this.prisma.client.auditLog.create({ data: { organizationId, userId, action: 'auth.password.change', entityType: 'User', entityId: user.id.toString(), requestId: randomUUID(), afterSummary: { passwordChanged: true } } }),
+    ]);
+    return { passwordChanged: true };
   }
 }

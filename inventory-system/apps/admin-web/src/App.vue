@@ -116,6 +116,10 @@ let lastCameraCodeAt = 0;
 const reportView = ref<'receipts' | 'inventory' | 'expiry' | 'movements'>('receipts');
 const inventoryView = ref<'ledger' | 'stocktake'>('ledger');
 const showAccountPanel = ref(false);
+const currentPassword = ref('');
+const newPassword = ref('');
+const confirmPassword = ref('');
+const passwordMessage = ref('');
 const reportDate = ref(new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit',
 }).format(new Date()));
@@ -401,6 +405,22 @@ async function login() {
   }
 }
 
+async function changePassword() {
+  passwordMessage.value = '';
+  if (newPassword.value.length < 8) { error.value = '新密码至少需要8位'; return; }
+  if (newPassword.value !== confirmPassword.value) { error.value = '两次输入的新密码不一致'; return; }
+  loading.value = true; clearStatus();
+  try {
+    await apiRequest('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword: currentPassword.value, newPassword: newPassword.value }) });
+    mustChangePassword.value = false;
+    const profile = JSON.parse(localStorage.getItem(profileKey) ?? '{}');
+    localStorage.setItem(profileKey, JSON.stringify({ ...profile, mustChangePassword: false }));
+    currentPassword.value = ''; newPassword.value = ''; confirmPassword.value = '';
+    passwordMessage.value = '密码修改成功，请使用新密码登录。';
+  } catch (reason) { error.value = reason instanceof Error ? reason.message : '密码修改失败'; }
+  finally { loading.value = false; }
+}
+
 function logout() {
   stopCameraScanner();
   token.value = '';
@@ -419,6 +439,8 @@ function logout() {
   selectedProduct.value = null;
   showSearchDropdown.value = false;
   receiveDraft.value = [];
+  showAccountPanel.value = false;
+  currentPassword.value = ''; newPassword.value = ''; confirmPassword.value = ''; passwordMessage.value = '';
   localStorage.removeItem(tokenKey);
   localStorage.removeItem(profileKey);
 }
@@ -1130,10 +1152,10 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             <h1>{{ activeMode === 'management' ? '经营管理中心' : '库存管理' }}</h1>
           </div>
         </div>
-        <div class="account"><button v-if="isAdmin" class="management-entry" type="button" @click="switchMode(activeMode === 'management' ? 'home' : 'management')">{{ activeMode === 'management' ? '返回库存系统' : '经营管理' }}</button><button class="theme-toggle" type="button" :aria-label="theme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="toggleTheme"><span aria-hidden="true">{{ theme === 'light' ? '☾' : '☀' }}</span>{{ theme === 'light' ? 'Dark' : 'Light' }}</button><span class="store-badge">{{ storeName || '未分配门店' }}</span><span>{{ displayName || '员工' }}</span><button class="secondary" @click="logout">退出</button></div>
+        <div class="account"><button v-if="isAdmin" class="management-entry" type="button" @click="switchMode(activeMode === 'management' ? 'home' : 'management')">{{ activeMode === 'management' ? '返回库存系统' : '经营管理' }}</button><button class="theme-toggle" type="button" :aria-label="theme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="toggleTheme"><span aria-hidden="true">{{ theme === 'light' ? '☾' : '☀' }}</span>{{ theme === 'light' ? 'Dark' : 'Light' }}</button><span class="store-badge">{{ storeName || '未分配门店' }}</span><button class="account-settings-trigger" type="button" aria-label="打开账户设置" @click="showAccountPanel = true"><span>{{ displayName || '员工' }}</span><i aria-hidden="true">⚙</i></button><button class="secondary" @click="logout">退出</button></div>
       </header>
 
-      <p v-if="mustChangePassword" class="alert warning">当前使用临时密码，请勿把密码交给其他人。</p>
+      <button v-if="mustChangePassword" class="alert warning password-warning" type="button" @click="showAccountPanel = true">当前使用临时密码，请立即设置自己的密码。</button>
 
       <nav v-if="activeMode !== 'management'" class="mode-tabs primary-navigation" aria-label="库存操作分类">
         <button :class="{ active: activeMode === 'home' }" @click="switchMode('home')">工作台</button>
@@ -1150,7 +1172,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         <button :class="{ active: activeMode === 'receive' }" @click="switchMode('receive')">扫码入库</button>
         <button :class="{ active: activeMode === 'issue' }" @click="switchMode('issue')">扫码出库</button>
       </nav>
-      <ManagementDashboard v-if="activeMode === 'management'" :api-base-url="apiBaseUrl" :token="token" :store-id="storeId" :store-name="storeName" />
+      <ManagementDashboard v-if="activeMode === 'management'" :api-base-url="apiBaseUrl" :token="token" :store-id="storeId" :store-name="storeName" :administrator="isAdmin" />
       <template v-else-if="activeMode === 'home'">
         <section class="workbench-page-header report-header">
           <h2>仓管通</h2>
@@ -1548,6 +1570,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <p class="account-eyebrow">账户与设置</p>
           <div class="account-avatar">{{ (displayName || '员工').slice(0, 1) }}</div><div class="account-heading"><h2>{{ displayName || '员工' }}</h2><p>库存作业账号</p></div>
           <dl class="account-details"><div><dt>所属门店</dt><dd>{{ storeName || '未分配门店' }}</dd></div><div><dt>作业仓库</dt><dd>{{ reportWarehouseName || '当前授权仓库' }}</dd></div><div><dt>当前日期</dt><dd>{{ reportDate }}</dd></div></dl>
+          <form class="password-form" @submit.prevent="changePassword"><h3>修改密码</h3><label>当前密码<input v-model="currentPassword" type="password" autocomplete="current-password" required placeholder="输入现在使用的密码" /></label><label>新密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required placeholder="至少8位" /></label><label>再次输入新密码<input v-model="confirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required placeholder="再次输入新密码" /></label><p v-if="passwordMessage" class="password-success">{{ passwordMessage }}</p><button class="action-primary" type="submit" :disabled="loading || !currentPassword || newPassword.length < 8 || newPassword !== confirmPassword">{{ loading ? '正在保存…' : '保存新密码' }}</button></form>
           <div class="account-actions"><button class="secondary" type="button" @click="toggleTheme">{{ theme === 'light' ? '开启护眼模式' : '关闭护眼模式' }}</button><button class="account-logout" type="button" @click="logout">退出当前账号</button></div>
         </section>
       </div>

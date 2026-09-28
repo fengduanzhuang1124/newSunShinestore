@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { calendarDateStart, dateTimeInZone, nextCalendarDateStart } from '../pos/application/pos-date.js';
 import { PosObservationService } from '../pos/application/pos-observation.service.js';
@@ -513,8 +513,8 @@ export class ManagementService {
     } : {};
     const [tags, products] = await Promise.all([
       this.prisma.client.productInsightTag.findMany({
-        where: { organizationId, status: 'ACTIVE' }, orderBy: [{ dimension: 'asc' }, { name: 'asc' }],
-        select: { id: true, code: true, name: true, dimension: true, description: true },
+        where: { organizationId }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        select: { id: true, code: true, name: true, dimension: true, description: true, parentId: true, source: true, externalId: true, sortOrder: true, status: true },
       }),
       this.prisma.client.product.findMany({
         where: { organizationId, status: 'ACTIVE', storeProducts: { some: { storeId, enabled: true } }, ...textFilter },
@@ -535,9 +535,15 @@ export class ManagementService {
       generatedAt: new Date().toISOString(), store: { id: store.id.toString(), name: store.name },
       disclaimer: '标签描述商品的消费需求与人群倾向，不代表购买者真实年龄、性别或身份。',
       dimensions: [
-        { code: 'AUDIENCE', name: '人群倾向' }, { code: 'HEALTH_NEED', name: '健康需求' }, { code: 'USE_CASE', name: '使用场景' },
+        { code: 'BUSINESS_CATEGORY', name: '商品分类' }, { code: 'HEALTH_NEED', name: '健康需求' },
+        { code: 'AUDIENCE', name: '人群倾向' }, { code: 'USE_CASE', name: '使用场景' },
+        { code: 'OPERATION', name: '运营标签' }, { code: 'MARKETING', name: '营销标签' },
       ],
-      tags: tags.map((tag) => ({ ...tag, id: tag.id.toString() })),
+      tags: tags.map((tag) => ({ ...tag, id: tag.id.toString(), parentId: tag.parentId?.toString() ?? null })),
+      tagTree: tags.filter((tag) => !tag.parentId).map((tag) => ({
+        ...tag, id: tag.id.toString(), parentId: null,
+        children: tags.filter((child) => child.parentId === tag.id).map((child) => ({ ...child, id: child.id.toString(), parentId: tag.id.toString() })),
+      })),
       coverage: { productCount: products.length, approvedProducts: withApproved, pendingProducts: withPending, untaggedProducts: products.length - withApproved - withPending, approvedCoveragePercent: products.length ? this.money(withApproved / products.length * 100) : 0 },
       products: products.map((product) => ({
         productId: product.id.toString(), sku: product.sku,
@@ -550,7 +556,7 @@ export class ManagementService {
 
   async assignProductInsightTag(
     organizationId: bigint, userId: bigint, storeId: bigint,
-    input: { productId: bigint; tagCode: string; tagName: string; dimension: 'AUDIENCE' | 'HEALTH_NEED' | 'USE_CASE'; confidence: 'LOW' | 'MEDIUM' | 'HIGH'; evidence?: string },
+    input: { productId: bigint; tagCode: string; tagName: string; dimension: 'BUSINESS_CATEGORY' | 'AUDIENCE' | 'HEALTH_NEED' | 'USE_CASE' | 'OPERATION' | 'MARKETING'; confidence: 'LOW' | 'MEDIUM' | 'HIGH'; evidence?: string },
   ) {
     await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.permissions);
     const product = await this.prisma.client.product.findFirst({
@@ -558,11 +564,8 @@ export class ManagementService {
     });
     if (!product) throw new NotFoundException('商品不存在或未在当前门店启用');
     const result = await this.prisma.client.$transaction(async (transaction) => {
-      const tag = await transaction.productInsightTag.upsert({
-        where: { organizationId_code: { organizationId, code: input.tagCode } },
-        update: { name: input.tagName, dimension: input.dimension, status: 'ACTIVE' },
-        create: { organizationId, code: input.tagCode, name: input.tagName, dimension: input.dimension },
-      });
+      const tag = await transaction.productInsightTag.findFirst({ where: { organizationId, code: input.tagCode, status: 'ACTIVE' } });
+      if (!tag) throw new NotFoundException('标签不存在或已停用');
       const assignment = await transaction.productInsightTagAssignment.upsert({
         where: { productId_tagId: { productId: input.productId, tagId: tag.id } },
         update: { confidence: input.confidence, evidence: input.evidence ?? null, source: 'MANUAL', reviewStatus: 'APPROVED', assignedById: userId },
@@ -574,6 +577,64 @@ export class ManagementService {
       return { assignment, tag };
     });
     return { assignmentId: result.assignment.id.toString(), productId: product.id.toString(), productName: product.name, tag: { code: result.tag.code, name: result.tag.name, dimension: result.tag.dimension }, confidence: result.assignment.confidence, reviewStatus: result.assignment.reviewStatus };
+  }
+
+  async saveProductInsightTagDefinition(
+    organizationId: bigint, userId: bigint, storeId: bigint,
+    input: { id?: bigint; name: string; dimension: 'BUSINESS_CATEGORY' | 'AUDIENCE' | 'HEALTH_NEED' | 'USE_CASE' | 'OPERATION' | 'MARKETING'; parentId: bigint | null; description?: string; sortOrder: number; status: 'ACTIVE' | 'INACTIVE' },
+  ) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.permissions);
+    if (input.parentId) {
+      const parent = await this.prisma.client.productInsightTag.findFirst({ where: { id: input.parentId, organizationId }, select: { id: true, parentId: true } });
+      if (!parent) throw new NotFoundException('上级标签不存在');
+      if (parent.parentId) throw new BadRequestException('当前只支持两级标签，上级必须是一级标签');
+      if (input.id && input.parentId === input.id) throw new BadRequestException('标签不能选择自己作为上级');
+    }
+    const tag = input.id
+      ? await this.prisma.client.productInsightTag.update({
+          where: { id: input.id, organizationId },
+          data: { name: input.name, dimension: input.dimension, parentId: input.parentId, description: input.description ?? null, sortOrder: input.sortOrder, status: input.status },
+        })
+      : await this.prisma.client.productInsightTag.create({
+          data: { organizationId, code: `manual.${randomUUID()}`, name: input.name, dimension: input.dimension, parentId: input.parentId, description: input.description, sortOrder: input.sortOrder, status: input.status, source: 'MANUAL' },
+        });
+    await this.prisma.client.auditLog.create({
+      data: { organizationId, userId, storeId, action: input.id ? 'management.product_insight_tag.update' : 'management.product_insight_tag.create', entityType: 'ProductInsightTag', entityId: tag.id.toString(), requestId: randomUUID(), afterSummary: { name: tag.name, dimension: tag.dimension, parentId: tag.parentId?.toString() ?? null, source: tag.source, status: tag.status } },
+    });
+    return { ...tag, id: tag.id.toString(), organizationId: tag.organizationId.toString(), parentId: tag.parentId?.toString() ?? null };
+  }
+
+  async importProductInsightTags(
+    organizationId: bigint, userId: bigint, storeId: bigint,
+    categories: { externalId: string; name: string; dimension: 'BUSINESS_CATEGORY' | 'AUDIENCE' | 'HEALTH_NEED' | 'USE_CASE' | 'OPERATION' | 'MARKETING'; parentExternalId: string | null; description?: string; sortOrder: number; status: 'ACTIVE' | 'INACTIVE' }[],
+  ) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.permissions);
+    const imported = await this.prisma.client.$transaction(async (transaction) => {
+      const ids = new Map<string, bigint>();
+      for (const item of categories.filter((category) => !category.parentExternalId)) {
+        const tag = await transaction.productInsightTag.upsert({
+          where: { organizationId_source_externalId: { organizationId, source: 'MINIPROGRAM', externalId: item.externalId } },
+          update: { name: item.name, dimension: item.dimension, description: item.description ?? null, parentId: null, sortOrder: item.sortOrder, status: item.status },
+          create: { organizationId, code: `miniprogram.${item.externalId}`, name: item.name, dimension: item.dimension, description: item.description, source: 'MINIPROGRAM', externalId: item.externalId, sortOrder: item.sortOrder, status: item.status },
+        });
+        ids.set(item.externalId, tag.id);
+      }
+      for (const item of categories.filter((category) => category.parentExternalId)) {
+        const parentId = ids.get(item.parentExternalId!);
+        if (!parentId) throw new BadRequestException(`找不到上级分类：${item.parentExternalId}`);
+        const tag = await transaction.productInsightTag.upsert({
+          where: { organizationId_source_externalId: { organizationId, source: 'MINIPROGRAM', externalId: item.externalId } },
+          update: { name: item.name, dimension: item.dimension, description: item.description ?? null, parentId, sortOrder: item.sortOrder, status: item.status },
+          create: { organizationId, code: `miniprogram.${item.externalId}`, name: item.name, dimension: item.dimension, description: item.description, parentId, source: 'MINIPROGRAM', externalId: item.externalId, sortOrder: item.sortOrder, status: item.status },
+        });
+        ids.set(item.externalId, tag.id);
+      }
+      await transaction.auditLog.create({
+        data: { organizationId, userId, storeId, action: 'management.product_insight_tag.import', entityType: 'ProductInsightTag', requestId: randomUUID(), afterSummary: { source: 'MINIPROGRAM', count: categories.length, externalIds: categories.map((item) => item.externalId) } },
+      });
+      return ids;
+    });
+    return { source: 'MINIPROGRAM', importedCount: imported.size };
   }
 
   async dataFoundation(organizationId: bigint, userId: bigint, storeId: bigint) {

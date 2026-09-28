@@ -103,9 +103,12 @@ enum PosInventoryPolicy {
 }
 
 enum ProductInsightTagDimension {
+  BUSINESS_CATEGORY
   AUDIENCE
   HEALTH_NEED
   USE_CASE
+  OPERATION
+  MARKETING
 }
 
 enum ProductInsightConfidence {
@@ -370,14 +373,22 @@ model ProductInsightTag {
   name           String                        @db.VarChar(120)
   dimension      ProductInsightTagDimension
   description    String?                       @db.VarChar(255)
+  parentId       BigInt?                       @map("parent_id") @db.UnsignedBigInt
+  source         String                        @default("MANUAL") @db.VarChar(30)
+  externalId     String?                       @map("external_id") @db.VarChar(64)
+  sortOrder      Int                           @default(0) @map("sort_order")
   status         RecordStatus                  @default(ACTIVE)
   createdAt      DateTime                      @default(now()) @map("created_at")
   updatedAt      DateTime                      @updatedAt @map("updated_at")
   organization   Organization                  @relation(fields: [organizationId], references: [id])
+  parent         ProductInsightTag?            @relation("ProductInsightTagTree", fields: [parentId], references: [id])
+  children       ProductInsightTag[]           @relation("ProductInsightTagTree")
   assignments    ProductInsightTagAssignment[]
 
   @@unique([organizationId, code])
+  @@unique([organizationId, source, externalId])
   @@index([organizationId, dimension, status])
+  @@index([parentId, sortOrder])
   @@map("product_insight_tags")
 }
 

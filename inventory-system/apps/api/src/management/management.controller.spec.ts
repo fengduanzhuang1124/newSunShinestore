@@ -106,4 +106,31 @@ describe('ManagementController POS sync', () => {
       productId: 9n, tagCode: 'health.cardiovascular', tagName: '心血管健康', dimension: 'HEALTH_NEED', confidence: 'HIGH', evidence: '鱼油产品明确对应心血管需求',
     });
   });
+
+  it('validates and updates a tag definition', async () => {
+    const management = { saveProductInsightTagDefinition: jest.fn().mockResolvedValue({ id: '8' } as never) };
+    const controller = new ManagementController(management as never);
+    await expect(controller.saveProductInsightTagDefinition(request as never, '3', {
+      id: '8', name: '中老年营养', dimension: 'AUDIENCE', parentId: '2', sortOrder: 30, status: 'INACTIVE',
+    })).resolves.toEqual({ code: 200, message: '标签已更新', data: { id: '8' } });
+    expect(management.saveProductInsightTagDefinition).toHaveBeenCalledWith(2n, 1n, 3n, {
+      id: 8n, name: '中老年营养', dimension: 'AUDIENCE', parentId: 2n, description: undefined, sortOrder: 30, status: 'INACTIVE',
+    });
+  });
+
+  it('validates a hierarchical mini-program category import', async () => {
+    const management = { importProductInsightTags: jest.fn().mockResolvedValue({ importedCount: 2 } as never) };
+    const controller = new ManagementController(management as never);
+    const categories = [
+      { externalId: '2', name: '保健食品', dimension: 'BUSINESS_CATEGORY', sortOrder: 1 },
+      { externalId: '356', name: '深海鱼油', dimension: 'HEALTH_NEED', parentExternalId: '2', sortOrder: 2 },
+    ];
+    await expect(controller.importProductInsightTags(request as never, '3', { categories })).resolves.toEqual({
+      code: 200, message: '小程序分类导入完成', data: { importedCount: 2 },
+    });
+    expect(management.importProductInsightTags).toHaveBeenCalledWith(2n, 1n, 3n, [
+      { externalId: '2', name: '保健食品', dimension: 'BUSINESS_CATEGORY', parentExternalId: null, description: undefined, sortOrder: 1, status: 'ACTIVE' },
+      { externalId: '356', name: '深海鱼油', dimension: 'HEALTH_NEED', parentExternalId: '2', description: undefined, sortOrder: 2, status: 'ACTIVE' },
+    ]);
+  });
 });
