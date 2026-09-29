@@ -1,0 +1,75 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.cer
+**/.cert/
+*.key
+*.p12
+*.pfx
+
+# Dependencies
+node_modules/
+**/node_modules/
+.pnpm-store/
+
+# Build and generated output
+dist/
+build/
+coverage/
+.nyc_output/
+unpackage/
+**/unpackage/
+*.tsbuildinfo
+*.map
+**/generated/prisma/
+
+# Runtime data
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.pid
+*.pid.lock
+
+# Database dumps and local data
+*.sql.gz
+*.dump
+*.sqlite
+*.sqlite3
+backups/
+
+# Local tooling and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test and cache output
+.cache/
+.vite/
+.eslintcache
+.pytest_cache/
+
+# Generated reports, business exports, and temporary render files
+inventory-system/outputs/
+output/
+outputs/
+tmp/
+
+# Local tunnel binaries and transient configuration
+cloudflared
+cloudflared.exe
+
+# Project records generated from templates
+docs/records/**
+!docs/records/.gitkeep
+
+# Local agent state
+.agents/
+.codex/
