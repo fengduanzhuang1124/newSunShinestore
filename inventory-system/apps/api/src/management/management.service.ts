@@ -22,7 +22,7 @@ export class ManagementService {
     const granted = new Set(access.permissions);
     const can = (permission: ManagementPermission) => access.admin || granted.has(permission);
     return {
-      store: access.store, roleCodes: access.roleCodes, administrator: access.admin,
+      store: { id: access.store.id.toString(), name: access.store.name }, roleCodes: access.roleCodes, administrator: access.admin,
       capabilities: {
         overviewView: can(MANAGEMENT_PERMISSIONS.overview), salesView: can(MANAGEMENT_PERMISSIONS.sales),
         inventoryView: can(MANAGEMENT_PERMISSIONS.inventory), posSync: can(MANAGEMENT_PERMISSIONS.posSync),
@@ -281,7 +281,7 @@ export class ManagementService {
       return {
         productId: key, sku: product.sku,
         productName: product.chineseName || product.name || product.englishName || '未命名商品',
-        brandName: product.brandName || '未标注品牌', categoryName: product.categoryName || '未标注品类',
+        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName), categoryName: product.categoryName || '未标注品类',
         barcode: product.barcodes[0]?.barcode ?? null,
         unitsSold: this.money(sold.units), salesRevenue: this.money(sold.revenue), currentInventory, minimumStock,
         sellingPriceCents: product.storeProducts[0]?.sellingPriceCents ?? product.storeProducts[0]?.level4PriceCents ?? null,
@@ -400,7 +400,7 @@ export class ManagementService {
       const slowMoving = currentInventory > 0 && (soldUnits <= 0 || (daysSinceLastSale !== null && daysSinceLastSale >= Math.min(lookbackDays, 60)) || (coverageDays !== null && coverageDays > 180));
       return {
         productId: key, sku: product.sku, productName: product.chineseName || product.name || product.englishName || '未命名商品',
-        brandName: product.brandName || '未标注品牌', categoryName: product.categoryName || '未标注品类',
+        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName), categoryName: product.categoryName || '未标注品类',
         currentInventory, minimumStock, soldUnits, dailyVelocity: this.money(dailyVelocity), coverageDays,
         lastSoldAt: sales.get(key)?.lastSoldAt?.toISOString() ?? null, daysSinceLastSale,
         lastMovementAt: lastMovement.get(key)?.toISOString() ?? null,
@@ -548,7 +548,7 @@ export class ManagementService {
       products: products.map((product) => ({
         productId: product.id.toString(), sku: product.sku,
         productName: product.chineseName || product.name || product.englishName || '未命名商品',
-        brandName: product.brandName || '未标注品牌', categoryName: product.categoryName || '未标注品类',
+        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName), categoryName: product.categoryName || '未标注品类',
         assignments: product.insightAssignments.map((assignment) => ({ ...assignment, id: assignment.id.toString(), updatedAt: assignment.updatedAt.toISOString() })),
       })),
     };
@@ -898,7 +898,7 @@ export class ManagementService {
         const itemRevenue = quantity * Number(item.unitPrice ?? 0);
         unitsSold += quantity;
         const name = item.product?.chineseName || item.product?.name || item.sourceName || '未命名商品';
-        const brandName = item.product?.brandName || '未标注品牌';
+        const brandName = this.displayBrand(item.product?.brandName, item.sourceName, item.product?.chineseName, item.product?.name);
         const product = products.get(name) ?? { productName: name, brandName, quantity: 0, revenue: 0 };
         product.quantity += quantity;
         product.revenue += itemRevenue;
@@ -1004,7 +1004,7 @@ export class ManagementService {
         lineRevenue += revenue;
         orderUnits += quantity;
         const productName = item.product?.chineseName || item.product?.name || item.sourceName || '未命名商品';
-        const brandName = item.product?.brandName || '未标注品牌';
+        const brandName = this.displayBrand(item.product?.brandName, item.sourceName, item.product?.chineseName, item.product?.name);
         const categoryName = item.product?.categoryName || '未标注品类';
         const product = products.get(productName) ?? { productName, brandName, categoryName, quantity: 0, revenue: 0 };
         product.quantity += quantity; product.revenue += revenue; products.set(productName, product);
@@ -1062,6 +1062,26 @@ export class ManagementService {
 
   private money(value: number) {
     return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  private displayBrand(explicitBrand: string | null | undefined, ...names: (string | null | undefined)[]) {
+    if (explicitBrand?.trim()) return explicitBrand.trim();
+    const sourceName = names.find((name) => name?.trim())?.trim() ?? '';
+    const normalized = sourceName.toLowerCase().replace(/[\s_-]+/g, '');
+    const knownBrands: [RegExp, string][] = [
+      [/comvita|康维他/, '康维他 Comvita'],
+      [/gohealthy|高之源/, '高之源 GO Healthy'],
+      [/vidaglow/, 'Vida Glow'],
+      [/mitoq/, 'MitoQ'],
+      [/bioisland/, 'Bio Island'],
+      [/blackmores|澳佳宝/, '澳佳宝 Blackmores'],
+      [/goodhealth|好健康/, '好健康 Good Health'],
+      [/bepure/, 'BePure'],
+    ];
+    const known = knownBrands.find(([pattern]) => pattern.test(normalized));
+    if (known) return known[1];
+    const leadingName = sourceName.match(/^([A-Za-z][A-Za-z&'-]*(?:\s+[A-Za-z][A-Za-z&'-]*)?)/)?.[1]?.trim();
+    return leadingName || '待识别品牌';
   }
 
   private async requireStorePermission(organizationId: bigint, userId: bigint, storeId: bigint, permission: ManagementPermission) {

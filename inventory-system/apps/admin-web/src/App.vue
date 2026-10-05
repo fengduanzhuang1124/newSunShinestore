@@ -1,4 +1,5 @@
 <script setup lang="ts">
+/* finesse · adaptive inventory workspace · mobile navigation consolidation */
 import type { IScannerControls } from '@zxing/browser';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ManagementDashboard from './management/ManagementDashboard.vue';
@@ -64,11 +65,13 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 const tokenKey = 'sunshine_inventory_access_token';
 const profileKey = 'sunshine_inventory_profile';
 const themeKey = 'sunshine_inventory_theme';
+const managementThemeKey = 'sunshine_management_theme';
 const modeKey = 'sunshine_inventory_mode';
 const savedTheme = localStorage.getItem(themeKey);
 const theme = ref<Theme>(savedTheme === 'dark' || savedTheme === 'light'
   ? savedTheme
   : (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+const managementTheme = ref<Theme>(localStorage.getItem(managementThemeKey) === 'light' ? 'light' : 'dark');
 const storedProfile = JSON.parse(localStorage.getItem(profileKey) ?? '{}');
 const token = ref(localStorage.getItem(tokenKey) ?? '');
 const userId = ref(storedProfile.id ?? '');
@@ -86,6 +89,8 @@ const savedMode = localStorage.getItem(modeKey);
 const activeMode = ref<Mode>(savedMode === 'receive' || savedMode === 'issue' || savedMode === 'query' || savedMode === 'reports' || (savedMode === 'management' && roles.value.some((role) => role.code === 'ADMIN'))
   ? savedMode
   : 'home');
+const effectiveTheme = computed<Theme>(() => activeMode.value === 'management' ? managementTheme.value : theme.value);
+const showMobileMore = ref(false);
 const isAdmin = computed(() => roles.value.some((role) => role.code === 'ADMIN' && (!storeId.value || role.storeId === storeId.value)));
 const query = ref('');
 const results = ref<ProductResult[]>([]);
@@ -289,7 +294,7 @@ function closeSearchDropdownOutside(event: PointerEvent) {
 }
 
 onMounted(async () => {
-  document.documentElement.dataset.theme = theme.value;
+  document.documentElement.dataset.theme = effectiveTheme.value;
   document.addEventListener('pointerdown', closeSearchDropdownOutside);
   if (!token.value) return;
   if (!storeId.value) {
@@ -314,9 +319,14 @@ onMounted(async () => {
 });
 
 function toggleTheme() {
-  theme.value = theme.value === 'light' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = theme.value;
-  localStorage.setItem(themeKey, theme.value);
+  if (activeMode.value === 'management') {
+    managementTheme.value = managementTheme.value === 'light' ? 'dark' : 'light';
+    localStorage.setItem(managementThemeKey, managementTheme.value);
+  } else {
+    theme.value = theme.value === 'light' ? 'dark' : 'light';
+    localStorage.setItem(themeKey, theme.value);
+  }
+  document.documentElement.dataset.theme = effectiveTheme.value;
 }
 
 async function apiRequest(path: string, options: RequestInit = {}) {
@@ -452,6 +462,8 @@ async function switchMode(mode: Mode) {
     return;
   }
   activeMode.value = mode;
+  showMobileMore.value = false;
+  document.documentElement.dataset.theme = effectiveTheme.value;
   if (mode === 'home' || mode === 'receive' || mode === 'issue' || mode === 'query' || mode === 'reports' || mode === 'management') {
     localStorage.setItem(modeKey, mode);
   }
@@ -1116,13 +1128,13 @@ async function issueBatch(product: ProductResult, batch: Batch) {
 <template>
   <main class="app-shell" :class="{ 'management-app-shell': Boolean(token) && activeMode === 'management' }">
     <section v-if="!token" class="login-card login-ip-card">
-      <button class="theme-toggle login-theme-toggle" type="button" :aria-label="theme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="toggleTheme">
-        <span aria-hidden="true">{{ theme === 'light' ? '☾' : '☀' }}</span>{{ theme === 'light' ? 'Dark' : 'Light' }}
+      <button class="theme-toggle login-theme-toggle" type="button" :aria-label="effectiveTheme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="toggleTheme">
+        <span aria-hidden="true">{{ effectiveTheme === 'light' ? '☾' : '☀' }}</span>{{ effectiveTheme === 'light' ? 'Dark' : 'Light' }}
       </button>
       <div class="login-layout">
         <div class="login-form-panel">
           <div class="login-brand-row">
-            <span class="login-logo-stage"><img class="login-logo" src="/sunshine-health-logo.png" alt="阳光特产 Sunshine Health" /></span>
+            <span class="login-logo-stage"><img class="login-logo" src="/sunshine-health-horizontal-logo.png" alt="阳光特产 Sunshine Health" /></span>
             <p class="eyebrow">SUNSHINE HEALTH</p>
           </div>
           <p class="login-kicker">员工库存工作台</p>
@@ -1146,13 +1158,13 @@ async function issueBatch(product: ProductResult, batch: Batch) {
     <section v-else class="workspace" :class="{ 'management-shell': activeMode === 'management' }">
       <header>
         <div class="brand-block">
-          <img class="brand-logo" src="/sunshine-health-logo.png" alt="阳光特产 Sunshine Health" />
+          <img class="brand-logo" src="/sunshine-health-horizontal-logo.png" alt="阳光特产 Sunshine Health" />
           <div>
             <p class="eyebrow">{{ activeMode === 'management' ? 'SUNSHINE MANAGEMENT' : 'SUNSHINE INVENTORY' }}</p>
             <h1>{{ activeMode === 'management' ? '经营管理中心' : '库存管理' }}</h1>
           </div>
         </div>
-        <div class="account"><button v-if="isAdmin" class="management-entry" type="button" @click="switchMode(activeMode === 'management' ? 'home' : 'management')">{{ activeMode === 'management' ? '返回库存系统' : '经营管理' }}</button><button class="theme-toggle" type="button" :aria-label="theme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="toggleTheme"><span aria-hidden="true">{{ theme === 'light' ? '☾' : '☀' }}</span>{{ theme === 'light' ? 'Dark' : 'Light' }}</button><span class="store-badge">{{ storeName || '未分配门店' }}</span><button class="account-settings-trigger" type="button" aria-label="打开账户设置" @click="showAccountPanel = true"><span>{{ displayName || '员工' }}</span><i aria-hidden="true">⚙</i></button><button class="secondary" @click="logout">退出</button></div>
+        <div class="account"><button v-if="isAdmin" class="management-entry" type="button" @click="switchMode(activeMode === 'management' ? 'home' : 'management')">{{ activeMode === 'management' ? '返回库存系统' : '经营管理' }}</button><button class="theme-toggle" type="button" :aria-label="effectiveTheme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="toggleTheme"><span aria-hidden="true">{{ effectiveTheme === 'light' ? '☾' : '☀' }}</span>{{ effectiveTheme === 'light' ? 'Dark' : 'Light' }}</button><span class="store-badge">{{ storeName || '未分配门店' }}</span><button class="account-settings-trigger" type="button" aria-label="打开账户设置" @click="showAccountPanel = true"><span>{{ displayName || '员工' }}</span><i aria-hidden="true">⚙</i></button><button class="secondary" @click="logout">退出</button></div>
       </header>
 
       <button v-if="mustChangePassword" class="alert warning password-warning" type="button" @click="showAccountPanel = true">当前使用临时密码，请立即设置自己的密码。</button>
@@ -1179,11 +1191,11 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         </section>
         <section class="workbench-hero">
           <div class="workbench-brand">
-            <img src="/sunshine-health-wordmark.png" alt="阳光特产 Sunshine Health" />
+            <img src="/sunshine-health-horizontal-logo.png" alt="阳光特产 Sunshine Health" />
             <small>当前仓库：{{ reportWarehouseName || storeName }}</small>
           </div>
           <div class="workbench-tools">
-            <button class="workbench-eye" type="button" :aria-label="theme === 'light' ? '开启护眼模式' : '关闭护眼模式'" @click="toggleTheme"><span aria-hidden="true">{{ theme === 'light' ? '☾' : '☀' }}</span></button>
+            <button class="workbench-eye" type="button" :aria-label="effectiveTheme === 'light' ? '开启护眼模式' : '关闭护眼模式'" @click="toggleTheme"><span aria-hidden="true">{{ effectiveTheme === 'light' ? '☾' : '☀' }}</span></button>
             <button class="workbench-profile" type="button" aria-label="打开个人设置" @click="showAccountPanel = true">{{ (displayName || '员工').slice(0, 1) }}</button>
           </div>
         </section>
@@ -1547,9 +1559,24 @@ async function issueBatch(product: ProductResult, batch: Batch) {
 
       <nav v-if="activeMode !== 'management'" class="mobile-bottom-nav" aria-label="手机库存操作">
         <button :class="{ active: activeMode === 'home' }" @click="switchMode('home')"><span>⌂</span>工作台</button>
+        <button :class="{ active: activeMode === 'receive' }" @click="switchMode('receive')"><span>＋</span>入库</button>
+        <button :class="{ active: activeMode === 'issue' }" @click="switchMode('issue')"><span>−</span>出库</button>
         <button :class="{ active: activeMode === 'query' }" @click="switchMode('query')"><span>⌕</span>库存</button>
-        <button :class="{ active: activeMode === 'reports' }" @click="switchMode('reports')"><span>▤</span>记录</button>
+        <button :class="{ active: ['reports', 'productReview', 'milkReview'].includes(activeMode) }" :aria-expanded="showMobileMore" @click="showMobileMore = true"><span>•••</span>更多</button>
       </nav>
+
+      <div v-if="activeMode !== 'management' && showMobileMore" class="mobile-more-overlay" role="presentation" @click.self="showMobileMore = false">
+        <section class="mobile-more-sheet" role="dialog" aria-modal="true" aria-label="更多库存功能">
+          <header><div><small>MORE TOOLS</small><h2>更多功能</h2></div><button type="button" aria-label="关闭更多功能" @click="showMobileMore = false">×</button></header>
+          <div class="mobile-more-grid">
+            <button type="button" @click="switchMode('reports')"><span>▤</span><strong>记录与报表</strong><small>流水、到期与库存记录</small></button>
+            <button v-if="isAdmin" type="button" @click="switchMode('productReview')"><span>✓</span><strong>商品审核</strong><small>商品资料与 POS 映射</small></button>
+            <button v-if="isAdmin" type="button" @click="switchMode('milkReview')"><span>◎</span><strong>奶粉核对</strong><small>奶粉规格与箱规复核</small></button>
+            <button v-if="isAdmin" type="button" @click="switchMode('management')"><span>⌁</span><strong>经营管理</strong><small>销售、库存与经营洞察</small></button>
+            <button type="button" @click="showMobileMore = false; showAccountPanel = true"><span>⚙</span><strong>账户设置</strong><small>密码、主题与退出登录</small></button>
+          </div>
+        </section>
+      </div>
 
       <div v-if="cameraOpen" class="camera-scanner-overlay" role="dialog" aria-modal="true" aria-label="手机相机扫码">
         <section class="camera-scanner-sheet">
@@ -1571,7 +1598,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <div class="account-avatar">{{ (displayName || '员工').slice(0, 1) }}</div><div class="account-heading"><h2>{{ displayName || '员工' }}</h2><p>库存作业账号</p></div>
           <dl class="account-details"><div><dt>所属门店</dt><dd>{{ storeName || '未分配门店' }}</dd></div><div><dt>作业仓库</dt><dd>{{ reportWarehouseName || '当前授权仓库' }}</dd></div><div><dt>当前日期</dt><dd>{{ reportDate }}</dd></div></dl>
           <form class="password-form" @submit.prevent="changePassword"><h3>修改密码</h3><label>当前密码<input v-model="currentPassword" type="password" autocomplete="current-password" required placeholder="输入现在使用的密码" /></label><label>新密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required placeholder="至少8位" /></label><label>再次输入新密码<input v-model="confirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required placeholder="再次输入新密码" /></label><p v-if="passwordMessage" class="password-success">{{ passwordMessage }}</p><button class="action-primary" type="submit" :disabled="loading || !currentPassword || newPassword.length < 8 || newPassword !== confirmPassword">{{ loading ? '正在保存…' : '保存新密码' }}</button></form>
-          <div class="account-actions"><button class="secondary" type="button" @click="toggleTheme">{{ theme === 'light' ? '开启护眼模式' : '关闭护眼模式' }}</button><button class="account-logout" type="button" @click="logout">退出当前账号</button></div>
+          <div class="account-actions"><button class="secondary" type="button" @click="toggleTheme">{{ effectiveTheme === 'light' ? '开启护眼模式' : '关闭护眼模式' }}</button><button class="account-logout" type="button" @click="logout">退出当前账号</button></div>
         </section>
       </div>
 

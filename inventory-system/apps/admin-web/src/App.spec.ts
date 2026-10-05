@@ -57,9 +57,9 @@ describe('App', () => {
     expect(wrapper.text()).toContain('当前库存96');
     expect(wrapper.text()).toContain('今日入库18');
     expect(wrapper.text()).toContain('到期关注10');
-    expect(wrapper.findAll('.mobile-bottom-nav button')).toHaveLength(3);
+    expect(wrapper.findAll('.mobile-bottom-nav button')).toHaveLength(5);
     expect(wrapper.findAll('.mobile-bottom-nav button').map((button) => button.text()))
-      .toEqual(['⌂工作台', '⌕库存', '▤记录']);
+      .toEqual(['⌂工作台', '＋入库', '−出库', '⌕库存', '•••更多']);
     expect(wrapper.get('.management-entry').text()).toBe('经营管理');
     await wrapper.get('.workbench-profile').trigger('click');
     expect(wrapper.text()).toContain('账户与设置');
