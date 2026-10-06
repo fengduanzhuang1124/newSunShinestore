@@ -1,0 +1,86 @@
+/* Sunshine decision pages: retain the existing dark palette and business controls. */
+.decision-workspace {
+  --decision-border: var(--dash-border, #29394e);
+  --decision-muted: var(--dash-muted, #9aabc1);
+  --decision-text: var(--dash-text, #e7effb);
+  --decision-accent: var(--dash-cyan, #45c6e4);
+  --decision-surface: var(--dash-card, #101a2a);
+  --decision-selected: #193347;
+}
+.decision-workspace .management-content { grid-template-rows: none; grid-auto-rows: max-content; }
+.decision-workspace .management-alert { margin: 0; min-height: 0; flex-wrap: wrap; align-items: center; line-height: 1.6; }
+.decision-workspace .management-alert > span { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.decision-workspace .management-heading { min-height: 72px; border-radius: 10px; }
+.decision-workspace .management-heading > div > p { display: none; }
+.decision-workspace .management-heading::after { content: none; }
+.decision-workspace .management-heading h2 { font-size: 24px; }
+.decision-workspace .navigation-group { display: grid; gap: 4px; margin-bottom: 14px; }
+.decision-workspace .navigation-group h3 { margin: 4px 12px; font-size: 11px; font-weight: 500; color: var(--decision-muted); }
+.decision-workspace .management-sidebar button { width: 100%; border-radius: 8px; }
+.decision-workspace .management-sidebar button:hover { transform: none; }
+.decision-workspace .sidebar-heading { margin-bottom: 10px; padding-bottom: 12px; }
+.decision-workspace .sidebar-heading p { display: none; }
+.decision-workspace .data-freshness { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; color: var(--decision-muted); font-size: 12px; line-height: 1.5; }
+.decision-workspace .text-action { padding: 6px 0; border: 0; background: transparent; color: var(--decision-accent); font: inherit; font-size: 13px; cursor: pointer; text-align: left; box-shadow: none; }
+.decision-workspace .text-action:disabled { opacity: .5; cursor: not-allowed; }
+.decision-workspace .secondary-action { padding: 8px 12px; min-height: 38px; border: 1px solid var(--decision-border); border-radius: 6px; background: var(--decision-surface); color: var(--decision-text); font: inherit; font-size: 13px; cursor: pointer; box-shadow: none; white-space: nowrap; }
+.decision-workspace .scope-note { margin: 8px 0; color: var(--decision-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.decision-workspace .inline-notice, .decision-workspace .page-load-status { margin: 0; padding: 10px 12px; border: 1px solid var(--decision-border); border-radius: 6px; color: var(--decision-muted); font-size: 13px; line-height: 1.6; }
+.decision-workspace .analysis-method { padding: 8px 12px; border: 1px solid var(--decision-border); border-radius: 6px; font-size: 12px; color: var(--decision-muted); line-height: 1.6; }
+.decision-workspace summary { cursor: pointer; padding: 6px 0; font-weight: 600; }
+.decision-workspace .analysis-method .management-alert { padding: 8px 0; border: 0; background: transparent; }
+.decision-workspace .action-list { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 12px; }
+.decision-workspace .action-list button { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--decision-border); border-radius: 8px; background: transparent; color: var(--decision-text); font: inherit; text-align: left; cursor: pointer; }
+.decision-workspace .action-list strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.decision-workspace .action-list span, .decision-workspace .action-list small { color: var(--decision-muted); font-size: 12px; }
+.decision-workspace .analysis-shortcuts { display: flex; flex-direction: column; gap: 14px; }
+.decision-workspace .view-switcher { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--decision-border); }
+.decision-workspace .view-switcher button { padding: 8px 14px; min-height: 40px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--decision-muted); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.decision-workspace .view-switcher button[aria-pressed=true] { color: var(--decision-text); background: var(--decision-selected); border-color: var(--decision-border); }
+.decision-workspace .product-analysis-grid, .decision-workspace .inventory-operation-grid { grid-template-columns: minmax(0,1fr); }
+.decision-workspace .product-analysis-grid > .system-card { max-height: none; }
+.decision-workspace .product-analysis-grid ol { max-height: 55dvh; }
+.decision-workspace .sales-filter-panel, .decision-workspace .product-filter-panel { grid-template-columns: repeat(5,minmax(100px,1fr)) auto; }
+.decision-workspace .sales-filter-panel > .secondary-action, .decision-workspace .product-filter-panel > .secondary-action { grid-column: 1 / -1; justify-self: start; }
+.decision-workspace .inventory-operation-filters { grid-template-columns: 170px minmax(140px,1fr) auto auto; }
+.decision-workspace .kpi-filter { display: grid; width: 100%; gap: 6px; padding: 0; border: 0; text-align: left; color: inherit; background: transparent; font: inherit; cursor: pointer; }
+.decision-workspace .clear-table-filter { align-self: flex-start; }
+.decision-workspace .quality-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin: 14px 0; }
+.decision-workspace .quality-metrics article { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--decision-border); border-radius: 8px; }
+.decision-workspace .quality-metrics span, .decision-workspace .quality-metrics small { color: var(--decision-muted); font-size: 12px; }
+.decision-workspace .quality-metrics strong { font-size: 22px; font-variant-numeric: tabular-nums; }
+.decision-workspace .dictionary-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.decision-workspace .period-shortcuts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--decision-muted); font-size: 12px; }
+.decision-workspace .period-shortcuts button { min-height: 36px; padding: 6px 12px; border: 1px solid var(--decision-border); border-radius: 6px; color: var(--decision-text); background: transparent; font: inherit; cursor: pointer; }
+.decision-workspace .chart-values text { fill: var(--decision-muted); font-size: 18px; font-variant-numeric: tabular-nums; }
+.decision-workspace .trend-axis { padding-left: 13%; }
+.decision-workspace .trend-data { color: var(--decision-muted); font-size: 12px; }
+.decision-workspace .trend-data dl { max-height: 200px; overflow-y: auto; margin: 6px 0; }
+.decision-workspace .trend-data dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 6px; border-bottom: 1px solid var(--decision-border); }
+.decision-workspace .trend-data dd { margin: 0; color: var(--decision-text); font-variant-numeric: tabular-nums; }
+.decision-workspace .access-summary-card > .card-title { margin-top: 12px; }
+.decision-workspace .store-card-grid { grid-template-columns: minmax(0,1fr); }
+.decision-workspace table td:not(:first-child), .decision-workspace table th:not(:first-child) { font-variant-numeric: tabular-nums; }
+.decision-workspace .store-comparison-table td:not(:first-child), .decision-workspace .store-comparison-table th:not(:first-child) { text-align: right; white-space: nowrap; }
+.decision-workspace :is(button, summary, input, select):focus-visible { outline: 2px solid var(--decision-accent); outline-offset: 3px; }
+.decision-workspace .management-more-sheet { max-height: calc(100dvh - 120px); overflow-y: auto; }
+@media(max-width:1100px) {
+  .decision-workspace .sales-filter-panel, .decision-workspace .product-filter-panel { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .decision-workspace .inventory-operation-filters { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:720px) {
+  .decision-workspace .management-heading { min-height: 0; padding: 12px; }
+  .decision-workspace .management-heading h2 { font-size: 22px; }
+  .decision-workspace .management-heading span { line-height: 1.5; }
+  .decision-workspace .action-list, .decision-workspace .quality-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .decision-workspace .action-list button:last-child { grid-column: 1 / -1; }
+  .decision-workspace .sales-filter-panel, .decision-workspace .product-filter-panel, .decision-workspace .inventory-operation-filters { grid-template-columns: minmax(0,1fr); }
+  .decision-workspace .view-switcher button, .decision-workspace .text-action, .decision-workspace .secondary-action { min-height: 44px; }
+  .decision-workspace .period-shortcuts button { min-height: 44px; }
+  .decision-workspace .card-title { flex-wrap: wrap; }
+  .decision-workspace .data-freshness { align-items: flex-start; flex-direction: column; gap: 4px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .decision-workspace .trend-line-chart circle { opacity: 1; transform: none; }
+  .decision-workspace .hour-bars b, .decision-workspace .bar-column b { transform: none; }
+}

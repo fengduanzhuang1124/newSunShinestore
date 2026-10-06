@@ -112,6 +112,12 @@ type InsightDimension = 'BUSINESS_CATEGORY' | 'AUDIENCE' | 'HEALTH_NEED' | 'USE_
 type InsightTag = { id: string; code: string; name: string; dimension: InsightDimension; description: string | null; parentId: string | null; source: string; externalId: string | null; sortOrder: number; status: 'ACTIVE' | 'INACTIVE' };
 
 const props = defineProps<{ apiBaseUrl: string; token: string; storeId: string; storeName: string; administrator?: boolean }>();
+const emit = defineEmits<{ 'open-report': [view: 'receipts' | 'expiry' | 'movements'] }>();
+const productView = ref<'products' | 'brands' | 'categories'>('products');
+const tagView = ref<'products' | 'dictionary'>('products');
+const tagEditorOpen = ref(false);
+const systemView = ref<'sync' | 'quality' | 'issues'>('sync');
+const posLoadError = ref('');
 const month = ref(new Intl.DateTimeFormat('en-CA', { timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit' }).format(new Date()));
 const overview = ref<Overview | null>(null);
 const foundation = ref<DataFoundation | null>(null);
@@ -180,12 +186,17 @@ const activeSection = ref<ManagementSection>('overview');
 const showMobileMore = ref(false);
 const allSections: { id: ManagementSection; label: string; description: string; ready: boolean }[] = [
   { id: 'overview', label: '经营总览', description: '核心指标与经营提醒', ready: true },
-  { id: 'sales', label: '销售分析', description: '趋势、时段与同比环比', ready: true },
-  { id: 'products', label: '商品与品牌', description: '销售、库存与资料质量', ready: true },
+  { id: 'sales', label: '销售分析', description: '销售趋势、时段与上期比较', ready: true },
+  { id: 'products', label: '商品分析', description: '商品、品牌与品类表现', ready: true },
   { id: 'inventory', label: '库存经营', description: '覆盖、滞销与低库存', ready: true },
-  { id: 'customers', label: '消费人群倾向', description: '商品需求标签与人工复核', ready: true },
+  { id: 'customers', label: '分类与标签', description: '商品标记与标签字典', ready: true },
   { id: 'stores', label: '门店对比', description: '门店经营基线与比较', ready: true },
-  { id: 'system', label: '数据与权限', description: 'POS 同步与管理权限', ready: true },
+  { id: 'system', label: '数据中心', description: 'POS 同步、检查与异常', ready: true },
+];
+const navigationGroups = [
+  { label: '经营分析', ids: ['overview', 'sales', 'products', 'inventory', 'stores'] },
+  { label: '资料维护', ids: ['customers'] },
+  { label: '系统支持', ids: ['system'] },
 ];
 const canSection = (id: ManagementSection) => {
   if (props.administrator) return true;
@@ -203,6 +214,37 @@ function selectSection(section: ManagementSection) {
   if (!canSection(section)) return;
   activeSection.value = section;
   showMobileMore.value = false;
+}
+function openDataCenter(view: 'sync' | 'quality' | 'issues' = 'quality') {
+  systemView.value = view;
+  selectSection('system');
+}
+function openSalesFromOverview() {
+  if (!overview.value) return;
+  const selectedMonth = overview.value.period.month;
+  const [year, monthNumber] = selectedMonth.split('-').map(Number);
+  salesFrom.value = `${selectedMonth}-01`;
+  salesTo.value = selectedMonth === today.slice(0, 7) ? today : `${selectedMonth}-${new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()}`;
+  salesBrand.value = ''; salesCategory.value = ''; salesDimension.value = 'DAY';
+  selectSection('sales');
+}
+function clearSalesFilters() { salesBrand.value = ''; salesCategory.value = ''; }
+function clearProductFilters() { productQuery.value = ''; productBrand.value = ''; productCategory.value = ''; }
+function setDateRange(target: 'sales' | 'products' | 'stores', preset: 'today' | 'week' | 'month') {
+  const weekStart = new Date(`${today}T00:00:00Z`);
+  weekStart.setUTCDate(weekStart.getUTCDate() - 6);
+  const from = preset === 'today' ? today : preset === 'week' ? weekStart.toISOString().slice(0, 10) : `${today.slice(0, 7)}-01`;
+  if (target === 'sales') { salesFrom.value = from; salesTo.value = today; }
+  if (target === 'products') { productFrom.value = from; productTo.value = today; }
+  if (target === 'stores') { storeFrom.value = from; storeTo.value = today; }
+}
+function clearInventoryFilters() {
+  inventoryTableQuery.value = ''; inventoryBrandFilter.value = ''; inventoryCategoryFilter.value = ''; inventoryStatusFilter.value = 'ALL';
+}
+const pageBusy = computed(() => ({ overview: loading.value, sales: salesLoading.value, products: productsLoading.value, inventory: inventoryLoading.value, customers: insightLoading.value, stores: storeLoading.value, system: posLoading.value }[activeSection.value]));
+function retryCurrentPage() {
+  const loaders = { overview: loadOverview, sales: loadSalesAnalysis, products: loadProductsBrands, inventory: loadInventoryOperations, customers: loadProductInsights, stores: loadStoreComparison, system: loadSystemManagement };
+  void loaders[activeSection.value]();
 }
 const maxDailyRevenue = computed(() => Math.max(1, ...(overview.value?.sales.current.dailySales.map((item) => item.revenue) ?? [1])));
 const salesTimeBuckets = computed(() => Array.from({ length: 8 }, (_, index) => {
@@ -310,7 +352,7 @@ const money = (value: number) => new Intl.NumberFormat('zh-CN', {
   style: 'currency', currency: overview.value?.currency || 'NZD', maximumFractionDigits: 2,
 }).format(value);
 const number = (value: number) => new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value);
-const percent = (value: number | null) => value === null ? '暂无上月基数' : `${value >= 0 ? '+' : ''}${value}%`;
+const percent = (value: number | null) => value === null ? '暂无可比较基数' : `${value >= 0 ? '+' : ''}${value}%`;
 const comparisonClass = (value: number | null) => value === null ? 'neutral' : value >= 0 ? 'up' : 'down';
 const dateTime = (value: string | null) => value ? new Date(value).toLocaleString('zh-CN') : '尚无记录';
 const readinessLabel = (status: DataFoundation['domains'][number]['status']) => ({ READY: '可用', PARTIAL: '逐步完善', WAITING_FOR_DATA: '等待数据', BLOCKED: '缺少基础数据' }[status]);
@@ -372,6 +414,7 @@ async function loadPosManagement() {
   if (!props.storeId) return;
   posLoading.value = true;
   error.value = '';
+  posLoadError.value = '';
   try {
     const store = encodeURIComponent(props.storeId);
     if (managementAccess.value?.capabilities.posIssues) posCheck.value = await managementRequest<PosDataCheck>(`/management/pos-sync/check?storeId=${store}`);
@@ -379,6 +422,7 @@ async function loadPosManagement() {
     if (managementAccess.value?.capabilities.posIssues) posIssues.value = await managementRequest<PosSyncIssues>(`/management/pos-sync/issues?storeId=${store}&page=1&pageSize=20`);
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'POS管理数据加载失败';
+    posLoadError.value = error.value;
   } finally {
     posLoading.value = false;
   }
@@ -436,7 +480,7 @@ async function loadProductsBrands() {
     productsBrands.value = await managementRequest<ProductsBrands>(`/management/products-brands?${params.toString()}`);
     productDetailPage.value = 1;
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '商品与品牌分析加载失败';
+    error.value = reason instanceof Error ? reason.message : '商品分析加载失败';
   } finally {
     productsLoading.value = false;
   }
@@ -496,12 +540,14 @@ async function assignInsightTag() {
 }
 
 function editInsightTag(tag: InsightTag) {
+  tagEditorOpen.value = true;
   editingTagId.value = tag.id; newTagName.value = tag.name; newTagDimension.value = tag.dimension;
   newTagParentId.value = tag.parentId ?? ''; newTagDescription.value = tag.description ?? '';
   newTagSortOrder.value = tag.sortOrder; newTagStatus.value = tag.status;
 }
 
 function resetInsightTagEditor() {
+  tagEditorOpen.value = false;
   editingTagId.value = ''; newTagName.value = ''; newTagDimension.value = 'HEALTH_NEED';
   newTagParentId.value = ''; newTagDescription.value = ''; newTagSortOrder.value = 0; newTagStatus.value = 'ACTIVE';
 }
@@ -539,7 +585,7 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
 </script>
 
 <template>
-  <section class="management-workspace">
+  <section class="management-workspace decision-workspace" :class="{ 'inventory-master': activeSection === 'inventory' }">
     <aside class="management-sidebar">
       <div class="sidebar-heading">
         <p>MANAGEMENT</p>
@@ -547,29 +593,28 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
         <small>选择下面的分析模块</small>
       </div>
       <nav aria-label="经营管理功能">
-        <button v-for="section in sections" :key="section.id" type="button" :disabled="!canSection(section.id)" :class="{ active: activeSection === section.id, locked: !canSection(section.id) }" :title="canSection(section.id) ? section.description : '当前账号没有此模块权限'" @click="selectSection(section.id)">
+        <section v-for="group in navigationGroups" :key="group.label" class="navigation-group" :aria-label="group.label">
+        <h3>{{ group.label }}</h3>
+        <button v-for="section in sections.filter(item => group.ids.includes(item.id))" :key="section.id" type="button" :disabled="!canSection(section.id)" :aria-current="activeSection === section.id ? 'page' : undefined" :class="{ active: activeSection === section.id, locked: !canSection(section.id) }" :title="canSection(section.id) ? section.description : '当前账号没有此模块权限'" @click="selectSection(section.id)">
           <span>{{ section.label }}</span><small>{{ section.description }}</small><em v-if="!canSection(section.id)">无权限</em><em v-else-if="!section.ready">规划中</em>
         </button>
+        </section>
       </nav>
       <p>正式数据来自 Homi 数据库<br />POS 数据同步后自动更新</p>
     </aside>
 
-    <main class="management-content">
+    <main class="management-content" :class="{ 'overview-content': activeSection === 'overview' }">
     <header class="management-heading">
       <div><p>MANAGEMENT / {{ activeSection.toUpperCase() }}</p><h2>{{ currentSection.label }}</h2><span>{{ overview?.store.name || storeName }} · {{ currentSection.description }}</span></div>
       <div v-if="activeSection === 'overview'" class="management-filters"><label>统计月份<input v-model="month" type="month" @click="openNativePicker" /></label><button type="button" :disabled="loading" @click="loadOverview">{{ loading ? '加载中…' : '刷新数据' }}</button></div>
-      <div v-else-if="activeSection === 'sales'" class="management-filters"><button type="button" :disabled="salesLoading" @click="loadSalesAnalysis">{{ salesLoading ? '加载中…' : '刷新销售' }}</button></div>
-      <div v-else-if="activeSection === 'products'" class="management-filters"><button type="button" :disabled="productsLoading" @click="loadProductsBrands">{{ productsLoading ? '加载中…' : '刷新商品' }}</button></div>
-      <div v-else-if="activeSection === 'inventory'" class="management-filters"><button type="button" :disabled="inventoryLoading" @click="loadInventoryOperations">{{ inventoryLoading ? '加载中…' : '刷新库存' }}</button></div>
-      <div v-else-if="activeSection === 'stores'" class="management-filters"><button type="button" :disabled="storeLoading" @click="loadStoreComparison">{{ storeLoading ? '加载中…' : '刷新门店' }}</button></div>
-      <div v-else-if="activeSection === 'customers'" class="management-filters"><button type="button" :disabled="insightLoading" @click="loadProductInsights">{{ insightLoading ? '加载中…' : '刷新标签' }}</button></div>
       <div v-else-if="activeSection === 'system'" class="management-filters"><button type="button" :disabled="posLoading || posRunning" @click="loadSystemManagement">{{ posLoading ? '加载中…' : '刷新状态' }}</button></div>
     </header>
 
-    <p v-if="error" class="management-alert error">{{ error }}</p>
+    <div v-if="error" class="management-alert error" role="alert"><span>{{ error }}。本次数据未能更新，已显示的内容可能不是最新结果。</span><button class="text-action" type="button" :disabled="pageBusy" @click="retryCurrentPage">重新加载</button></div>
+    <p v-if="pageBusy" class="page-load-status" role="status">正在更新{{ currentSection.label }}…</p>
     <template v-if="activeSection === 'overview'">
-    <p v-if="overview && !overview.salesAvailable" class="management-alert pending sync-required-alert"><strong>POS 销售数据尚未同步</strong><span>当前销售卡片显示为 0，“刷新数据”只查询本地数据库，不会从 POS 拉取订单，也不会使用演示数据。</span><button type="button" @click="activeSection = 'system'">前往 POS 同步</button></p>
-    <p v-if="foundation" class="management-alert inventory-source"><strong>正式库存数据</strong><span>库存更新时间：{{ dateTime(foundation.quality.inventory.latestUpdatedAt) }}。盘库可以继续进行，页面会按数据库中的最新结果更新。</span></p>
+    <p v-if="overview && !overview.salesAvailable" class="management-alert pending sync-required-alert"><strong>POS 销售数据尚未同步</strong><span>当前销售卡片显示为 0，“刷新数据”只查询本地数据库，不会从 POS 拉取订单，也不会使用演示数据。</span><button type="button" :disabled="!canSection('system')" @click="openDataCenter('sync')">前往 POS 同步</button></p>
+    <div class="data-freshness" aria-label="数据更新时间"><span>库存更新：{{ dateTime(foundation?.quality.inventory.latestUpdatedAt ?? null) }}</span><span>POS 最近成功同步：{{ dateTime(overview?.lastPosSyncAt ?? null) }}</span><button v-if="canSection('system')" class="text-action" type="button" @click="openDataCenter()">查看数据检查</button></div>
 
     <template v-if="overview">
       <div class="management-kpis">
@@ -581,52 +626,31 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
         <article class="expiry-kpi"><span>到期关注</span><strong>{{ number(overview.inventory.expiryAttentionQuantity) }} 件</strong><small>已过期、紧急、预警及提前关注</small></article>
       </div>
 
-      <section v-if="foundation" class="inventory-truth-panel">
-        <div class="card-title"><div><h3>真实库存基础</h3><p>只统计当前正式数据库，不补充演示数据</p></div><span>{{ foundation.overallStatus === 'PARTIALLY_READY' ? '数据逐步完善中' : '盘库录入中' }}</span></div>
-        <div class="inventory-truth-grid">
-          <article>
-            <span>库存覆盖</span><strong>{{ foundation.quality.inventory.productCount }} / {{ foundation.quality.catalog.productCount }} 种</strong>
-            <small>已有正库存商品 / 已启用商品</small>
-          </article>
-          <article>
-            <span>资料完整度</span>
-            <div class="coverage-row"><small>品牌</small><b><i :style="{ width: `${foundation.quality.catalog.brandCoveragePercent}%` }"></i></b><em>{{ foundation.quality.catalog.brandCoveragePercent }}%</em></div>
-            <div class="coverage-row"><small>品类</small><b><i :style="{ width: `${foundation.quality.catalog.categoryCoveragePercent}%` }"></i></b><em>{{ foundation.quality.catalog.categoryCoveragePercent }}%</em></div>
-            <div class="coverage-row"><small>售价</small><b><i :style="{ width: `${foundation.quality.catalog.sellingPriceCoveragePercent}%` }"></i></b><em>{{ foundation.quality.catalog.sellingPriceCoveragePercent }}%</em></div>
-          </article>
-          <article>
-            <span>本月库存作业</span><strong>{{ overview.inventory.activity.movementCountThisMonth }} 笔流水</strong>
-            <small>其中盘点修正 {{ overview.inventory.activity.stocktakeAdjustmentsThisMonth }} 笔</small>
-          </article>
-          <article>
-            <span>待提交入库单</span><strong>{{ overview.inventory.activity.openReceiptCount }} 单</strong>
-            <small>最近库存流水：{{ dateTime(overview.inventory.activity.latestMovement?.createdAt ?? null) }}</small>
-          </article>
+      <section class="management-card overview-actions">
+        <div class="card-title"><div><h3>经营关注与待办</h3><p>查看分析，或进入库存系统处理</p></div></div>
+        <div class="action-list">
+          <button type="button" @click="emit('open-report', 'receipts')"><span>待提交入库单</span><strong>{{ overview.inventory.activity.openReceiptCount }} 单</strong><small>查看入库单 →</small></button>
+          <button type="button" @click="emit('open-report', 'expiry')"><span>到期关注</span><strong>{{ number(overview.inventory.expiryAttentionQuantity) }} 件</strong><small>查看批次明细 →</small></button>
+          <button type="button" @click="emit('open-report', 'movements')"><span>本月库存作业</span><strong>{{ overview.inventory.activity.movementCountThisMonth }} 笔流水</strong><small>盘点修正 {{ overview.inventory.activity.stocktakeAdjustmentsThisMonth }} 笔 · 查看流水 →</small></button>
         </div>
-        <div class="readiness-list">
-          <div v-for="domain in foundation.domains.filter((item) => ['OVERVIEW', 'INVENTORY_OPERATIONS', 'SALES'].includes(item.code))" :key="domain.code">
-            <span>{{ domainLabel(domain.code) }}</span>
-            <b :class="domain.status.toLowerCase()">{{ readinessLabel(domain.status) }}</b>
-            <small>{{ domain.gaps[0] || '当前基础指标可以使用' }}</small>
-          </div>
-        </div>
-        <p class="inventory-note">条码不是库存商品的必填条件；无条码奶粉整箱和手工建立的新品仍会正常计入库存。</p>
+        <p class="scope-note">最近库存流水：{{ dateTime(overview.inventory.activity.latestMovement?.createdAt ?? null) }}</p>
       </section>
 
       <div class="management-grid">
         <section class="management-card sales-trend">
-          <div class="card-title"><div><h3>本月销售走势</h3><p>{{ overview.period.month }} 每日净销售概览</p></div><span>退款 {{ money(overview.sales.current.refunds) }}</span></div>
+          <div class="card-title"><div><h3>本月销售走势</h3><p>{{ overview.period.month }} 每日净销售概览 · 退款 {{ money(overview.sales.current.refunds) }}</p></div><button v-if="canSection('sales')" class="text-action" type="button" @click="openSalesFromOverview">销售详情 →</button></div>
+          <p v-if="overview.sales.current.dailySales.length === 1" class="scope-note">当前只有 1 个有记录的日期；尚不足以形成多日趋势。</p>
           <div v-if="overview.sales.current.dailySales.length" class="trend-line-chart">
-            <svg viewBox="0 0 1000 230" role="img" aria-label="本月每日净销售趋势">
+            <svg viewBox="-150 0 1160 230" role="img" aria-label="本月每日净销售趋势">
               <defs><linearGradient id="overview-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#24d6e5" stop-opacity=".38"/><stop offset="100%" stop-color="#24d6e5" stop-opacity="0"/></linearGradient></defs>
-              <g class="chart-grid"><line v-for="y in [40,82,124,166,210]" :key="y" x1="0" :y1="y" x2="1000" :y2="y" /></g>
+              <g class="chart-grid"><line v-for="y in [40,82,124,166,210]" :key="y" x1="0" :y1="y" x2="1000" :y2="y" /></g><g class="chart-values"><text v-for="y in [40,124,210]" :key="y" x="-12" :y="y + 5" text-anchor="end">{{ money(maxDailyRevenue * (210 - y) / 170) }}</text></g>
               <path :d="areaPath(overviewTrendPoints)" fill="url(#overview-area)" />
               <polyline :points="linePath(overviewTrendPoints)" />
               <circle v-for="(point,index) in overviewTrendPoints" :key="index" :cx="point.x" :cy="point.y" r="4"><title>{{ overview.sales.current.dailySales[index].date }} · {{ money(point.value) }}</title></circle>
             </svg>
             <div class="trend-axis"><span v-for="day in overview.sales.current.dailySales.filter((_,index,rows) => index === 0 || index === rows.length - 1 || index % Math.max(1, Math.ceil(rows.length / 5)) === 0)" :key="day.date">{{ day.date.slice(5) }}</span></div>
           </div>
-          <p v-else class="management-empty">本月暂无已同步销售记录。</p>
+          <p v-else class="management-empty">本月暂无已同步销售记录。</p><details v-if="overview.sales.current.dailySales.length" class="trend-data"><summary>查看趋势数值</summary><p class="scope-note">仅列出接口返回日期；缺少记录不自动补零。</p><dl><div v-for="day in overview.sales.current.dailySales" :key="day.date"><dt>{{ day.date }}</dt><dd>{{ money(day.revenue) }}</dd></div></dl></details>
         </section>
 
         <section class="management-card expiry-panel">
@@ -638,34 +662,31 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
         </section>
 
         <section class="management-card ranking">
-          <div class="card-title"><div><h3>热销商品</h3><p>按销售额排序</p></div></div>
-          <ol v-if="overview.sales.current.topProducts.length"><li v-for="(item, index) in overview.sales.current.topProducts" :key="item.productName"><b>{{ index + 1 }}</b><span><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ number(item.quantity) }} 件</small></span><em>{{ money(item.revenue) }}</em></li></ol>
+          <div class="card-title"><div><h3>热销商品 · 前 5 名</h3><p>{{ overview.period.month }} · 按商品销售金额排序</p></div><button v-if="canSection('sales')" class="text-action" type="button" @click="openSalesFromOverview">查看完整排行 →</button></div>
+          <ol v-if="overview.sales.current.topProducts.length"><li v-for="(item, index) in overview.sales.current.topProducts.slice(0,5)" :key="item.productName"><b>{{ index + 1 }}</b><span><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ number(item.quantity) }} 件</small></span><em>{{ money(item.revenue) }}</em></li></ol>
           <p v-else class="management-empty">POS 同步后将在这里显示商品排行。</p>
         </section>
 
-        <section class="management-card ranking">
-          <div class="card-title"><div><h3>品牌表现</h3><p>按销售额排序</p></div></div>
-          <ol v-if="overview.sales.current.topBrands.length"><li v-for="(item, index) in overview.sales.current.topBrands" :key="item.brandName"><b>{{ index + 1 }}</b><span><strong>{{ item.brandName }}</strong><small>{{ number(item.quantity) }} 件</small></span><em>{{ money(item.revenue) }}</em></li></ol>
-          <p v-else class="management-empty">POS 同步后将在这里显示品牌分析。</p>
-        </section>
+        <section class="management-card analysis-shortcuts"><div class="card-title"><div><h3>继续分析</h3><p>按经营问题进入明细</p></div></div><button v-if="canSection('products')" class="text-action" type="button" @click="productView = 'brands'; selectSection('products')">品牌销售与库存结构 →</button><button v-if="canSection('inventory')" class="text-action" type="button" @click="selectSection('inventory')">缺货、滞销与库存覆盖 →</button></section>
       </div>
-      <p class="sync-note">最近 POS 同步：{{ overview.lastPosSyncAt ? new Date(overview.lastPosSyncAt).toLocaleString() : '尚无成功同步记录' }}</p>
     </template>
     </template>
 
     <section v-else-if="activeSection === 'sales'" class="sales-analysis-page">
+      <div class="period-shortcuts" role="group" aria-label="快捷日期"><span>快捷日期</span><button type="button" @click="setDateRange('sales', 'today')">今天</button><button type="button" @click="setDateRange('sales', 'week')">近7天</button><button type="button" @click="setDateRange('sales', 'month')">本月</button><small>修改条件后点击更新分析</small></div>
       <form class="sales-filter-panel" @submit.prevent="loadSalesAnalysis">
         <label>开始日期<input v-model="salesFrom" type="date" @click="openNativePicker" /></label>
         <label>结束日期<input v-model="salesTo" type="date" @click="openNativePicker" /></label>
         <label>统计维度<select v-model="salesDimension"><option value="DAY">按日</option><option value="WEEK">按周</option><option value="MONTH">按月</option></select></label>
         <label>品牌<input v-model="salesBrand" placeholder="全部品牌" /></label>
         <label>品类<input v-model="salesCategory" placeholder="全部品类" /></label>
-        <button type="submit" :disabled="salesLoading">{{ salesLoading ? '查询中…' : '查询销售' }}</button>
+        <button type="submit" :disabled="salesLoading">{{ salesLoading ? '查询中…' : '更新分析' }}</button><button class="secondary-action" type="button" @click="clearSalesFilters">清除品牌 / 品类</button>
       </form>
-      <p v-if="salesAnalysis?.channelNotice" class="management-alert pending sync-required-alert"><strong>渠道说明</strong><span>{{ salesAnalysis.channelNotice }}“查询销售”只读取已同步数据。</span><button v-if="!salesAnalysis.dataAvailable" type="button" @click="activeSection = 'system'">前往 POS 同步</button></p>
-      <p v-if="salesAnalysis?.refundNotice" class="management-alert pending"><strong>退款口径</strong><span>{{ salesAnalysis.refundNotice }}</span></p>
+      <details v-if="salesAnalysis" class="analysis-method"><summary>销售统计口径与筛选说明</summary><p class="scope-note">品牌按正式品牌名称精确匹配，品类按商品主档匹配；名称识别的品牌尚不能代替正式字段。商品分类与健康需求标签分开统计。</p><p v-if="salesAnalysis?.channelNotice" class="management-alert pending sync-required-alert"><strong>渠道说明</strong><span>{{ salesAnalysis.channelNotice }}“更新分析”只读取已同步数据。</span><button v-if="!salesAnalysis.dataAvailable" type="button" :disabled="!canSection('system')" @click="openDataCenter('sync')">前往 POS 同步</button></p>
+      <p v-if="salesAnalysis?.refundNotice" class="management-alert pending"><strong>退款口径</strong><span>{{ salesAnalysis.refundNotice }}</span></p></details><p v-if="salesAnalysis && !salesAnalysis.dataAvailable" class="inline-notice">所选期间没有已同步订单，不代表门店没有销售。<button v-if="canSection('system')" type="button" class="text-action" @click="openDataCenter('sync')">检查 POS 同步 →</button></p>
 
       <template v-if="salesAnalysis">
+        <p class="scope-note">当前：{{ salesAnalysis.period.from }} 至 {{ salesAnalysis.period.to }} · 对比：{{ salesAnalysis.period.previousFrom }} 至 {{ salesAnalysis.period.previousTo }}（前一等长时段，非同比）</p>
         <div class="sales-kpis">
           <article><span>净销售额</span><strong>{{ money(salesAnalysis.metrics.netRevenue) }}</strong><small :class="comparisonClass(salesAnalysis.comparison.netRevenuePercent)">较上期 {{ percent(salesAnalysis.comparison.netRevenuePercent) }}</small></article>
           <article><span>订单数</span><strong>{{ salesAnalysis.metrics.orderCount }}</strong><small :class="comparisonClass(salesAnalysis.comparison.orderCountPercent)">较上期 {{ percent(salesAnalysis.comparison.orderCountPercent) }}</small></article>
@@ -675,43 +696,44 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
         </div>
 
         <div class="sales-dashboard-grid">
-          <section class="system-card sales-trend-card"><div class="card-title"><div><h3>{{ singleDaySales ? '当日销售走势' : '销售趋势' }}</h3><p>{{ singleDaySales ? '每 3 小时汇总净销售额' : `${salesAnalysis.period.from} 至 ${salesAnalysis.period.to}` }}</p></div></div><div v-if="salesTrendSeries.some((item) => item.revenue > 0)" class="trend-line-chart sales-line-chart"><svg viewBox="0 0 1000 230" role="img" aria-label="查询期间销售走势"><defs><linearGradient id="sales-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6d7cff" stop-opacity=".4"/><stop offset="100%" stop-color="#6d7cff" stop-opacity="0"/></linearGradient></defs><g class="chart-grid"><line v-for="y in [40,82,124,166,210]" :key="y" x1="0" :y1="y" x2="1000" :y2="y" /></g><path :d="areaPath(salesTrendPoints)" fill="url(#sales-area)"/><polyline :points="linePath(salesTrendPoints)"/><circle v-for="(point,index) in salesTrendPoints" :key="index" :cx="point.x" :cy="point.y" r="4"><title>{{ salesTrendSeries[index].label }} · {{ money(point.value) }}</title></circle></svg><div class="trend-axis"><span v-for="item in salesTrendSeries.filter((_,index,rows) => index === 0 || index === rows.length - 1 || index % Math.max(1, Math.ceil(rows.length / 5)) === 0)" :key="item.label">{{ item.label.length > 5 ? item.label.slice(5) : item.label }}</span></div></div><p v-else class="system-empty">所选日期暂无 POS 销售数据。</p></section>
+          <section class="system-card sales-trend-card"><div class="card-title"><div><h3>{{ singleDaySales ? '当日销售走势' : '销售趋势' }}</h3><p>{{ singleDaySales ? '每 3 小时汇总净销售额' : `${salesAnalysis.period.from} 至 ${salesAnalysis.period.to}` }}</p></div></div><p v-if="salesTrendSeries.length === 1" class="scope-note">当前只有 1 个有记录的统计时段，尚不足以形成趋势。</p><div v-if="salesTrendSeries.length && salesAnalysis.dataAvailable" class="trend-line-chart sales-line-chart"><svg viewBox="-150 0 1160 230" role="img" aria-label="查询期间销售走势"><defs><linearGradient id="sales-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6d7cff" stop-opacity=".4"/><stop offset="100%" stop-color="#6d7cff" stop-opacity="0"/></linearGradient></defs><g class="chart-grid"><line v-for="y in [40,82,124,166,210]" :key="y" x1="0" :y1="y" x2="1000" :y2="y" /></g><g class="chart-values"><text v-for="y in [40,124,210]" :key="y" x="-12" :y="y + 5" text-anchor="end">{{ money(maxSalesTrend * (210 - y) / 170) }}</text></g><path :d="areaPath(salesTrendPoints)" fill="url(#sales-area)"/><polyline :points="linePath(salesTrendPoints)"/><circle v-for="(point,index) in salesTrendPoints" :key="index" :cx="point.x" :cy="point.y" r="4"><title>{{ salesTrendSeries[index].label }} · {{ money(point.value) }}</title></circle></svg><div class="trend-axis"><span v-for="item in salesTrendSeries.filter((_,index,rows) => index === 0 || index === rows.length - 1 || index % Math.max(1, Math.ceil(rows.length / 5)) === 0)" :key="item.label">{{ item.label.length > 5 ? item.label.slice(5) : item.label }}</span></div></div><p v-else class="system-empty">所选日期暂无 POS 销售数据。</p><details v-if="salesAnalysis.dataAvailable" class="trend-data"><summary>查看趋势数值</summary><p class="scope-note">按返回的统计时段展示，未返回的日期不自动补零。</p><dl><div v-for="(item,index) in salesTrendSeries" :key="index"><dt>{{ item.label }}</dt><dd>{{ money(item.revenue) }}</dd></div></dl></details></section>
           <div class="sales-side-column">
-            <section class="system-card source-quality"><div class="card-title"><div><h3>数据可用情况</h3><p>帮助判断分析结果是否完整</p></div></div><dl><div><dt>已读取订单</dt><dd>{{ salesAnalysis.sourceQuality.orders }}</dd></div><div><dt>商品销售行</dt><dd>{{ salesAnalysis.sourceQuality.activeItems }}</dd></div><div><dt>已关联商品</dt><dd>{{ salesAnalysis.sourceQuality.mappedItems }}</dd></div><div><dt>待人工确认</dt><dd>{{ salesAnalysis.sourceQuality.reviewRequiredItems }}</dd></div></dl></section>
-            <section class="system-card hourly-card"><div class="card-title"><div><h3>销售时段概览</h3><p>每 3 小时汇总</p></div></div><div class="time-bucket-grid"><article v-for="item in salesTimeBuckets" :key="item.label"><span>{{ item.label }}</span><strong>{{ money(item.revenue) }}</strong><small>{{ item.orders }} 单</small></article></div></section>
+            <details class="system-card source-quality"><summary>本次查询的数据范围</summary><div class="card-title"><div><h3>数据可用情况</h3><p>帮助判断分析结果是否完整</p></div></div><dl><div><dt>已读取订单</dt><dd>{{ salesAnalysis.sourceQuality.orders }}</dd></div><div><dt>商品销售行</dt><dd>{{ salesAnalysis.sourceQuality.activeItems }}</dd></div><div><dt>已关联商品</dt><dd>{{ salesAnalysis.sourceQuality.mappedItems }}</dd></div><div><dt>待人工确认</dt><dd>{{ salesAnalysis.sourceQuality.reviewRequiredItems }}</dd></div></dl><button v-if="canSection('system')" type="button" class="text-action" @click="openDataCenter('issues')">查看关联异常 →</button></details>
+            <section v-if="!singleDaySales" class="system-card hourly-card"><div class="card-title"><div><h3>销售时段概览</h3><p>每 3 小时汇总</p></div></div><div class="time-bucket-grid"><article v-for="item in salesTimeBuckets" :key="item.label"><span>{{ item.label }}</span><strong>{{ money(item.revenue) }}</strong><small>{{ item.orders }} 单</small></article></div></section>
           </div>
           <section class="system-card sales-ranking"><div class="card-title"><div><h3>热销商品</h3><p>{{ salesAnalysis.period.from }} 至 {{ salesAnalysis.period.to }} · 按销售金额排序</p></div></div><ol v-if="salesAnalysis.topProducts.length"><li v-for="(item,index) in salesAnalysis.topProducts.slice(0,10)" :key="item.productName"><b>{{ index + 1 }}</b><span><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ number(item.quantity) }} 件</small></span><em>{{ money(item.revenue) }}</em></li></ol><p v-else class="system-empty">暂无商品排行。</p></section>
-          <section class="system-card sales-ranking"><div class="card-title"><div><h3>品牌表现</h3><p>商品资料优先，缺失时按商品名称识别</p></div></div><ol v-if="salesAnalysis.topBrands.length"><li v-for="(item,index) in salesAnalysis.topBrands.slice(0,10)" :key="item.brandName"><b>{{ index + 1 }}</b><span><strong>{{ item.brandName }}</strong><small>{{ number(item.quantity) }} 件</small></span><em>{{ money(item.revenue) }}</em></li></ol><p v-else class="system-empty">同步销售数据后显示品牌排行。</p></section>
+          <section class="system-card sales-ranking"><div class="card-title"><div><h3>品牌销售贡献</h3><p>按商品销售金额排序，未分摊订单级退款；品牌优先取正式资料，缺失时由名称识别</p></div></div><ol v-if="salesAnalysis.topBrands.length"><li v-for="(item,index) in salesAnalysis.topBrands.slice(0,10)" :key="item.brandName"><b>{{ index + 1 }}</b><span><strong>{{ item.brandName }}</strong><small>{{ number(item.quantity) }} 件</small></span><em>{{ money(item.revenue) }}</em></li></ol><p v-else class="system-empty">同步销售数据后显示品牌排行。</p></section>
         </div>
       </template>
     </section>
 
     <section v-else-if="activeSection === 'products'" class="products-page">
+      <div class="period-shortcuts" role="group" aria-label="快捷日期"><span>快捷日期</span><button type="button" @click="setDateRange('products', 'today')">今天</button><button type="button" @click="setDateRange('products', 'week')">近7天</button><button type="button" @click="setDateRange('products', 'month')">本月</button><small>修改条件后点击更新分析</small></div>
       <form class="product-filter-panel" @submit.prevent="loadProductsBrands">
         <label>开始日期<input v-model="productFrom" type="date" @click="openNativePicker" /></label>
         <label>结束日期<input v-model="productTo" type="date" @click="openNativePicker" /></label>
         <label>商品搜索<input v-model="productQuery" placeholder="名称、SKU或条码" /></label>
         <label>品牌<input v-model="productBrand" placeholder="全部品牌" /></label>
         <label>品类<input v-model="productCategory" placeholder="全部品类" /></label>
-        <button type="submit" :disabled="productsLoading">{{ productsLoading ? '查询中…' : '查询商品' }}</button>
+        <button type="submit" :disabled="productsLoading">{{ productsLoading ? '查询中…' : '更新分析' }}</button><button class="secondary-action" type="button" @click="clearProductFilters">清除商品条件</button>
       </form>
-      <p v-if="productsBrands && !productsBrands.marginAvailable" class="management-alert pending"><strong>毛利暂不展示</strong><span>{{ productsBrands.marginNotice }}</span></p>
+      <details class="analysis-method"><summary>商品分析口径</summary><p>本页仅展示经营数据，不提供商品新增、售价或条码维护。销售金额按已关联正式商品的明细累计，可能与订单净销售额不同；库存是当前余额，不是所选日期的历史库存。</p><p>品牌及品类筛选读取正式商品字段。展示名称可能来自名称识别；商品主档分类不等同于健康需求或人群标签。</p><p v-if="productsBrands && !productsBrands.marginAvailable">{{ productsBrands.marginNotice }}</p><button v-if="canSection('system')" class="text-action" type="button" @click="openDataCenter()">查看正式资料完整度 →</button></details>
       <template v-if="productsBrands">
         <div class="product-kpis">
           <article><span>启用商品</span><strong>{{ productsBrands.summary.productCount }}</strong><small>所选条件下的正式商品</small></article>
           <article><span>有销售商品</span><strong>{{ productsBrands.summary.soldProductCount }}</strong><small>销售 {{ number(productsBrands.summary.unitsSold) }} 件</small></article>
-          <article><span>商品销售额</span><strong>{{ money(productsBrands.summary.salesRevenue) }}</strong><small>{{ productFrom }} 至 {{ productTo }}</small></article>
+          <article><span>商品销售额</span><strong>{{ money(productsBrands.summary.salesRevenue) }}</strong><small>{{ productsBrands.period.from }} 至 {{ productsBrands.period.to }}</small></article>
           <article><span>当前库存</span><strong>{{ number(productsBrands.summary.currentInventory) }} 件</strong><small>来自正式库存表</small></article>
           <article><span>缺货/低库存</span><strong>{{ productsBrands.summary.lowStockProducts }}</strong><small>按现有最低库存配置判断</small></article>
         </div>
-        <div class="product-analysis-grid">
-          <section class="system-card product-ranking"><div class="card-title"><div><h3>品牌表现</h3><p>销售与当前库存关联</p></div></div><ol v-if="productsBrands.brands.length"><li v-for="(item,index) in productsBrands.brands.slice(0,10)" :key="item.name"><b>{{ index + 1 }}</b><span><strong>{{ item.name }}</strong><small>{{ item.productCount }} 种 · 销售 {{ number(item.unitsSold) }} 件 · 库存 {{ number(item.currentInventory) }} 件</small></span><em>{{ money(item.salesRevenue) }}</em></li></ol><p v-else class="system-empty">暂无品牌数据。</p></section>
-          <section class="system-card product-ranking"><div class="card-title"><div><h3>品类结构</h3><p>按商品销售额排序</p></div></div><ol v-if="productsBrands.categories.length"><li v-for="(item,index) in productsBrands.categories.slice(0,10)" :key="item.name"><b>{{ index + 1 }}</b><span><strong>{{ item.name }}</strong><small>{{ item.productCount }} 种 · 销售 {{ number(item.unitsSold) }} 件</small></span><em>{{ money(item.salesRevenue) }}</em></li></ol><p v-else class="system-empty">暂无品类数据。</p></section>
-          <section class="system-card source-quality"><div class="card-title"><div><h3>商品资料质量</h3><p>条码为可选项，不阻止无条码商品入库</p></div></div><dl><div><dt>品牌覆盖</dt><dd>{{ productsBrands.catalogQuality.brandCoveragePercent }}%</dd></div><div><dt>品类覆盖</dt><dd>{{ productsBrands.catalogQuality.categoryCoveragePercent }}%</dd></div><div><dt>条码覆盖</dt><dd>{{ productsBrands.catalogQuality.barcodeCoveragePercent }}%</dd></div><div><dt>POS映射覆盖</dt><dd>{{ productsBrands.mappingQuality.coveragePercent }}%</dd></div></dl></section>
+        <div class="view-switcher" role="group" aria-label="商品分析视图"><button type="button" :aria-pressed="productView === 'products'" @click="productView = 'products'">商品明细</button><button type="button" :aria-pressed="productView === 'brands'" @click="productView = 'brands'">品牌结构</button><button type="button" :aria-pressed="productView === 'categories'" @click="productView = 'categories'">品类结构</button></div>
+        <div v-show="productView !== 'products'" class="product-analysis-grid">
+          <section v-show="productView === 'brands'" class="system-card product-ranking"><div class="card-title"><div><h3>品牌销售与库存结构</h3><p>销售与当前库存关联</p></div></div><ol v-if="productsBrands.brands.length"><li v-for="(item,index) in productsBrands.brands.slice(0,10)" :key="item.name"><b>{{ index + 1 }}</b><span><strong>{{ item.name }}</strong><small>{{ item.productCount }} 种 · 销售 {{ number(item.unitsSold) }} 件 · 库存 {{ number(item.currentInventory) }} 件</small></span><em>{{ money(item.salesRevenue) }}</em></li></ol><p v-else class="system-empty">暂无品牌数据。</p></section>
+          <section v-show="productView === 'categories'" class="system-card product-ranking"><div class="card-title"><div><h3>商品主档品类结构</h3><p>按商品销售额排序</p></div></div><ol v-if="productsBrands.categories.length"><li v-for="(item,index) in productsBrands.categories.slice(0,10)" :key="item.name"><b>{{ index + 1 }}</b><span><strong>{{ item.name }}</strong><small>{{ item.productCount }} 种 · 销售 {{ number(item.unitsSold) }} 件</small></span><em>{{ money(item.salesRevenue) }}</em></li></ol><p v-else class="system-empty">暂无品类数据。</p></section>
         </div>
-        <section class="system-card product-table-card">
+        <section v-show="productView === 'products'" class="system-card product-table-card">
           <div class="card-title"><div><h3>商品销售与库存明细</h3><p>销售来自POS，库存来自正式库存系统；比例不等同于标准库存周转率</p></div><span>{{ productsBrands.products.length }} 种</span></div>
-          <div class="product-table-wrap management-detail-scroll"><table><thead><tr><th>商品</th><th>品牌 / 品类</th><th>销售件数</th><th>销售额</th><th>当前库存</th><th>销售/库存</th><th>库存状态</th></tr></thead><tbody><tr v-for="item in pagedProductDetails" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.sku }}{{ item.barcode ? ` · ${item.barcode}` : ' · 无条码' }}</small></td><td><strong>{{ item.brandName }}</strong><small>{{ item.categoryName }}</small></td><td>{{ number(item.unitsSold) }}</td><td>{{ money(item.salesRevenue) }}</td><td>{{ number(item.currentInventory) }}</td><td>{{ item.salesToStockRatio === null ? '—' : number(item.salesToStockRatio) }}</td><td><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ item.stockStatus === 'IN_STOCK' ? '正常' : item.stockStatus === 'LOW' ? '低库存' : '缺货' }}</b></td></tr></tbody></table><p v-if="!productsBrands.products.length" class="system-empty">当前筛选条件没有商品。</p></div>
+          <div class="product-table-wrap management-detail-scroll"><table><thead><tr><th>商品</th><th>品牌 / 品类</th><th>销售件数</th><th>销售额</th><th>当前库存</th><th title="期间销量除以当前库存，不等于库存周转率">期间销量 / 当前库存</th><th>当前库存状态</th></tr></thead><tbody><tr v-for="item in pagedProductDetails" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.sku }}{{ item.barcode ? ` · ${item.barcode}` : ' · 无条码' }}</small></td><td><strong>{{ item.brandName }}</strong><small>{{ item.categoryName }}</small></td><td>{{ number(item.unitsSold) }}</td><td>{{ money(item.salesRevenue) }}</td><td>{{ number(item.currentInventory) }}</td><td>{{ item.salesToStockRatio === null ? '—' : number(item.salesToStockRatio) }}</td><td><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ item.stockStatus === 'IN_STOCK' ? '正常' : item.stockStatus === 'LOW' ? '低库存' : '缺货' }}</b></td></tr></tbody></table><p v-if="!productsBrands.products.length" class="system-empty">当前筛选条件没有商品。</p></div>
           <div class="inventory-table-pagination"><span>共 {{ productsBrands.products.length }} 种商品</span><label>每页<select v-model.number="productDetailPageSize"><option :value="50">50</option><option :value="100">100</option></select></label><div><button type="button" :disabled="productDetailPage <= 1" @click="productDetailPage--">上一页</button><b>{{ productDetailPage }} / {{ productDetailPageCount }}</b><button type="button" :disabled="productDetailPage >= productDetailPageCount" @click="productDetailPage++">下一页</button></div></div>
         </section>
       </template>
@@ -720,26 +742,29 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
     <section v-else-if="activeSection === 'inventory'" class="inventory-operations-page">
       <form class="inventory-operation-filters" @submit.prevent="loadInventoryOperations">
         <label>销量观察期<select v-model.number="inventoryLookbackDays"><option :value="30">最近30天</option><option :value="60">最近60天</option><option :value="90">最近90天</option><option :value="180">最近180天</option><option :value="365">最近365天</option></select></label>
-        <label>商品搜索<input v-model="inventoryQuery" placeholder="名称、品牌、SKU或条码" /></label>
-        <button type="submit" :disabled="inventoryLoading">{{ inventoryLoading ? '分析中…' : '查询库存' }}</button>
+        <label>查询商品范围<input v-model="inventoryQuery" placeholder="名称、品牌、SKU或条码" /></label>
+        <button type="submit" :disabled="inventoryLoading">{{ inventoryLoading ? '分析中…' : '更新分析' }}</button><button class="secondary-action" type="button" @click="inventoryQuery = ''">清除查询范围</button>
       </form>
-      <p v-if="inventoryOperations" class="management-alert pending"><strong>周转率口径</strong><span>{{ inventoryOperations.turnoverNotice }}</span></p>
+      <p v-if="inventoryLoading" class="inventory-load-status" role="status">正在更新库存分析，请稍候…</p>
+      <p v-else-if="!inventoryOperations && !error" class="system-empty">选择观察期并查询，查看当前门店的库存经营情况。</p>
+      <details v-if="inventoryOperations" class="inventory-method-note"><summary>统计口径与数据来源</summary><p>{{ inventoryOperations.turnoverNotice }}</p><p>库存来自正式库存系统，销量来自已同步的 POS 订单。若销售历史未补齐，无销量不代表实际未售出，覆盖天数和滞销结论仅供关注。</p><p>缺货指启用商品的当前库存为零，不等于必须采购。积压筛选为覆盖超过90天，滞销按既有多条件规则判断，两类可以重叠。</p></details><p v-if="inventoryOperations" class="scope-note">销量基于已同步记录；补货或清库存前请核对销售历史。<button v-if="canSection('system')" type="button" class="text-action" @click="openDataCenter('sync')">查看同步记录 →</button></p>
       <template v-if="inventoryOperations">
         <div class="inventory-operation-kpis">
           <article><span>当前库存</span><strong>{{ number(inventoryOperations.summary.totalInventory) }} 件</strong><small>{{ inventoryOperations.summary.stockedProducts }} 种有库存商品</small></article>
-          <article><span>缺货商品</span><strong>{{ inventoryOperations.summary.outOfStockProducts }}</strong><small>启用但当前库存为0</small></article>
-          <article><span>低库存商品</span><strong>{{ inventoryOperations.summary.lowStockProducts }}</strong><small>达到已配置最低库存</small></article>
-          <article><span>滞销关注</span><strong>{{ inventoryOperations.summary.slowMovingProducts }}</strong><small>有库存且销量不足</small></article>
+          <article><button class="kpi-filter" type="button" @click="inventoryStatusFilter = 'OUT_OF_STOCK'; inventoryPage = 1" aria-label="筛选缺货商品"><span>缺货商品</span><strong>{{ inventoryOperations.summary.outOfStockProducts }}</strong><small>启用但当前库存为0</small></button></article>
+          <article><button class="kpi-filter" type="button" @click="inventoryStatusFilter = 'LOW'; inventoryPage = 1" aria-label="筛选低库存商品"><span>低库存商品</span><strong>{{ inventoryOperations.summary.lowStockProducts }}</strong><small>达到已配置最低库存</small></button></article>
+          <article><button class="kpi-filter" type="button" @click="inventoryStatusFilter = 'SLOW'; inventoryPage = 1" aria-label="筛选滞销关注"><span>滞销关注</span><strong>{{ inventoryOperations.summary.slowMovingProducts }}</strong><small>有库存且销量不足</small></button></article>
           <article><span>观察商品</span><strong>{{ inventoryOperations.summary.productCount }}</strong><small>最近 {{ inventoryOperations.period.lookbackDays }} 天POS销量</small></article>
         </div>
+        <details class="inventory-analysis-disclosure">
+        <summary>库存覆盖结构 <span>查看有库存商品预计可售天数</span></summary>
         <div class="inventory-operation-grid">
           <section class="system-card coverage-card"><div class="card-title"><div><h3>库存覆盖结构</h3><p>{{ inventoryOperations.coverageNotice }}</p></div></div><div class="donut-analysis coverage-donut"><div class="donut-chart" :style="{ background: coverageGradient }"><div><strong>{{ coverageTotal }}</strong><span>商品种数</span></div></div><div class="donut-legend"><div class="expired"><i></i><span>无销售</span><strong>{{ inventoryOperations.coverageBuckets.noSales }}</strong></div><div class="healthy"><i></i><span>不足30天</span><strong>{{ inventoryOperations.coverageBuckets.under30 }}</strong></div><div class="medium"><i></i><span>30–90天</span><strong>{{ inventoryOperations.coverageBuckets.days30To90 }}</strong></div><div class="overstock"><i></i><span>超过90天</span><strong>{{ inventoryOperations.coverageBuckets.over90 }}</strong></div></div></div></section>
-          <section class="system-card inventory-alert-list"><div class="card-title"><div><h3>缺货与低库存</h3><p>优先处理需要补货的商品</p></div><span>{{ inventoryOperations.alerts.length }} 种</span></div><ol v-if="inventoryOperations.alerts.length"><li v-for="item in inventoryOperations.alerts.slice(0,10)" :key="item.productId"><span><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · 最低库存 {{ item.minimumStock ?? '未配置' }}</small></span><em>{{ item.currentInventory }} 件</em></li></ol><p v-else class="system-empty">当前没有缺货或低库存提醒。</p></section>
-          <section class="system-card inventory-alert-list"><div class="card-title"><div><h3>滞销库存</h3><p>有库存但观察期内销量不足</p></div><span>{{ inventoryOperations.slowMoving.length }} 种</span></div><ol v-if="inventoryOperations.slowMoving.length"><li v-for="item in inventoryOperations.slowMoving.slice(0,10)" :key="item.productId"><span><strong>{{ item.productName }}</strong><small>销售 {{ number(item.soldUnits) }} 件 · {{ item.coverageDays === null ? '观察期无销售' : `覆盖 ${number(item.coverageDays)} 天` }}</small></span><em>库存 {{ item.currentInventory }}</em></li></ol><p v-else class="system-empty">当前没有符合规则的滞销商品。</p></section>
         </div>
-        <section class="system-card product-table-card inventory-detail-card">
-          <div class="card-title"><div><h3>销售与库存关联明细</h3><p>按状态、品牌和商品筛选；表格内部滚动，不再拉长整个页面</p></div><span>{{ filteredInventoryProducts.length }} / {{ inventoryOperations.products.length }} 种</span></div>
-          <div class="inventory-status-tabs" aria-label="库存状态快捷筛选">
+        </details>
+        <section class="system-card product-table-card inventory-detail-card" :aria-busy="inventoryLoading">
+          <div class="card-title"><div><h3>销售与库存关联明细</h3><p>{{ inventoryOperations.period.from }} 至 {{ inventoryOperations.period.to }} · 库存为当前余额</p></div><span>{{ filteredInventoryProducts.length }} / {{ inventoryOperations.products.length }} 种</span></div>
+          <p class="scope-note">以下筛选只作用于已查询结果；各状态可能重叠，数量不可相加。</p><div class="inventory-status-tabs" aria-label="库存状态快捷筛选">
             <button type="button" :class="{ active: inventoryStatusFilter === 'ALL' }" @click="inventoryStatusFilter = 'ALL'">全部 <b>{{ inventoryStatusCounts.ALL }}</b></button>
             <button type="button" :class="{ active: inventoryStatusFilter === 'SLOW' }" @click="inventoryStatusFilter = 'SLOW'">滞销 <b>{{ inventoryStatusCounts.SLOW }}</b></button>
             <button type="button" :class="{ active: inventoryStatusFilter === 'OUT_OF_STOCK' }" @click="inventoryStatusFilter = 'OUT_OF_STOCK'">缺货 <b>{{ inventoryStatusCounts.OUT_OF_STOCK }}</b></button>
@@ -748,14 +773,14 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
             <button type="button" :class="{ active: inventoryStatusFilter === 'NO_MINIMUM' }" @click="inventoryStatusFilter = 'NO_MINIMUM'">未设最低库存 <b>{{ inventoryStatusCounts.NO_MINIMUM }}</b></button>
           </div>
           <div class="inventory-detail-filters">
-            <label>商品搜索<input v-model="inventoryTableQuery" type="search" placeholder="名称、品牌、品类或 SKU" /></label>
+            <label>筛选当前结果<input v-model="inventoryTableQuery" type="search" placeholder="在已查询商品内筛选" /></label>
             <label>品牌<select v-model="inventoryBrandFilter"><option value="">全部品牌</option><option v-for="brand in inventoryBrands" :key="brand" :value="brand">{{ brand }}</option></select></label>
             <label>商品分类<select v-model="inventoryCategoryFilter"><option value="">全部分类</option><option v-for="category in inventoryCategories" :key="category" :value="category">{{ category }}</option></select></label>
             <label>排序<select v-model="inventorySort"><option value="INVENTORY_DESC">库存从高到低</option><option value="SALES_DESC">销量从高到低</option><option value="COVERAGE_DESC">覆盖天数从高到低</option><option value="LAST_SALE_ASC">最久未销售优先</option><option value="NAME_ASC">商品名称排序</option></select></label>
           </div>
-          <div class="product-table-wrap inventory-scroll-table"><table><thead><tr><th>商品</th><th>库存</th><th>最低库存</th><th>观察期销量</th><th>日均销量</th><th>覆盖天数</th><th>最后销售</th><th>状态</th></tr></thead><tbody><tr v-for="item in pagedInventoryProducts" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }}</small></td><td>{{ number(item.currentInventory) }}</td><td>{{ item.minimumStock ?? '未配置' }}</td><td>{{ number(item.soldUnits) }}</td><td>{{ number(item.dailyVelocity) }}</td><td>{{ item.coverageDays === null ? '无销量' : `${number(item.coverageDays)} 天` }}</td><td>{{ item.daysSinceLastSale === null ? '无记录' : `${item.daysSinceLastSale} 天前` }}</td><td><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ item.stockStatus === 'IN_STOCK' ? (item.slowMoving ? '滞销关注' : '正常') : item.stockStatus === 'LOW' ? '低库存' : '缺货' }}</b></td></tr></tbody></table><p v-if="!pagedInventoryProducts.length" class="system-empty">当前筛选条件没有商品。</p></div>
+          <button class="text-action clear-table-filter" type="button" @click="clearInventoryFilters">清除表格筛选</button><div class="product-table-wrap inventory-scroll-table"><table><thead><tr><th>商品</th><th>库存</th><th>最低库存</th><th>观察期销量</th><th>日均销量</th><th>覆盖天数</th><th>最后销售</th><th>状态</th></tr></thead><tbody><tr v-for="item in pagedInventoryProducts" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }}</small></td><td>{{ number(item.currentInventory) }}</td><td>{{ item.minimumStock ?? '未配置' }}</td><td>{{ number(item.soldUnits) }}</td><td>{{ number(item.dailyVelocity) }}</td><td>{{ item.coverageDays === null ? '无销量' : `${number(item.coverageDays)} 天` }}</td><td>{{ item.daysSinceLastSale === null ? '无记录' : `${item.daysSinceLastSale} 天前` }}</td><td><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ item.stockStatus === 'IN_STOCK' ? (item.slowMoving ? '滞销关注' : '正常') : item.stockStatus === 'LOW' ? '低库存' : '缺货' }}</b></td></tr></tbody></table><p v-if="!pagedInventoryProducts.length" class="system-empty">当前筛选条件没有商品。</p></div>
           <div class="inventory-table-pagination">
-            <span>共 {{ filteredInventoryProducts.length }} 种商品</span>
+            <span>显示 {{ filteredInventoryProducts.length ? (inventoryPage - 1) * inventoryPageSize + 1 : 0 }}–{{ Math.min(inventoryPage * inventoryPageSize, filteredInventoryProducts.length) }} / 共 {{ filteredInventoryProducts.length }} 种商品</span>
             <label>每页<select v-model.number="inventoryPageSize"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select></label>
             <div><button type="button" :disabled="inventoryPage <= 1" @click="inventoryPage--">上一页</button><b>{{ inventoryPage }} / {{ inventoryPageCount }}</b><button type="button" :disabled="inventoryPage >= inventoryPageCount" @click="inventoryPage++">下一页</button></div>
           </div>
@@ -767,64 +792,91 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
       <p v-if="productInsights" class="management-alert pending"><strong>分析口径</strong><span>{{ productInsights.disclaimer }}</span></p>
       <form class="insight-search" @submit.prevent="loadProductInsights"><label>商品搜索<input v-model="insightQuery" placeholder="商品名称、品牌或SKU" /></label><button type="submit" :disabled="insightLoading">{{ insightLoading ? '查询中…' : '查询商品' }}</button></form>
       <template v-if="productInsights">
-        <div class="insight-kpis"><article><span>商品总数</span><strong>{{ productInsights.coverage.productCount }}</strong><small>当前筛选范围</small></article><article><span>已审核标记</span><strong>{{ productInsights.coverage.approvedProducts }}</strong><small>覆盖率 {{ productInsights.coverage.approvedCoveragePercent }}%</small></article><article><span>待复核</span><strong>{{ productInsights.coverage.pendingProducts }}</strong><small>不得直接用于正式分析</small></article><article><span>尚未标记</span><strong>{{ productInsights.coverage.untaggedProducts }}</strong><small>后续逐步人工补充</small></article></div>
-        <section class="system-card taxonomy-card"><div class="card-title"><div><h3>小程序分类与经营标签</h3><p>小程序分类作为正式标签来源；点击标签可编辑、排序或停用</p></div><span>{{ productInsights.tags.length }} 个</span></div><div class="taxonomy-columns management-detail-scroll"><article v-for="dimension in productInsights.dimensions" :key="dimension.code"><h4>{{ dimension.name }}</h4><div class="taxonomy-list"><div v-for="root in productInsights.tagTree.filter(item => item.dimension === dimension.code)" :key="root.id" :class="{ inactive: root.status === 'INACTIVE' }"><button type="button" :disabled="!managementAccess?.capabilities.permissionsManage" @click="editInsightTag(root)"><strong>{{ root.name }}</strong><small>{{ root.source === 'MINIPROGRAM' ? `小程序分类 #${root.externalId}` : '人工标签' }} · {{ root.status === 'ACTIVE' ? '启用' : '已停用' }}</small></button><ul v-if="root.children.length"><li v-for="child in root.children" :key="child.id" :class="{ inactive: child.status === 'INACTIVE' }"><button type="button" :disabled="!managementAccess?.capabilities.permissionsManage" @click="editInsightTag(child)">{{ child.name }}</button></li></ul></div><p v-if="!productInsights.tagTree.some(item => item.dimension === dimension.code)">暂无标签</p></div></article></div><p class="detail-scroll-hint">分类区域固定高度；可在区域内滚动查看全部 {{ productInsights.tags.length }} 个标签。</p></section>
-        <section v-if="managementAccess?.capabilities.permissionsManage" class="system-card tag-definition-editor"><div class="card-title"><div><h3>{{ editingTagId ? '编辑标签' : '新增标签' }}</h3><p>由你定义名称、类型、上级、排序和启停状态，不需要填写技术代码</p></div><button v-if="editingTagId" type="button" class="editor-reset" @click="resetInsightTagEditor">取消编辑</button></div><div class="tag-definition-form"><label>标签名称<input v-model="newTagName" maxlength="120" placeholder="例如：中老年营养" /></label><label>标签类型<select v-model="newTagDimension"><option v-for="dimension in productInsights.dimensions" :key="dimension.code" :value="dimension.code">{{ dimension.name }}</option></select></label><label>上级分类<select v-model="newTagParentId"><option value="">无上级（一级标签）</option><option v-for="tag in productInsights.tags.filter(item => !item.parentId && item.id !== editingTagId)" :key="tag.id" :value="tag.id">{{ tag.name }}</option></select></label><label>说明<input v-model="newTagDescription" maxlength="255" placeholder="选填：这个标签的使用口径" /></label><label>排序<input v-model.number="newTagSortOrder" type="number" /></label><label>状态<select v-model="newTagStatus"><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option></select></label><button type="button" :disabled="insightLoading || !newTagName.trim()" @click="saveInsightTag">{{ editingTagId ? '保存修改' : '新增标签' }}</button></div></section>
-        <section v-if="managementAccess?.capabilities.permissionsManage" class="system-card insight-editor"><div class="card-title"><div><h3>人工标记商品倾向</h3><p>选择正式商品与启用标签，并填写判断依据</p></div></div><div class="insight-editor-form"><label>商品<select v-model="insightProductId"><option value="">请选择商品</option><option v-for="item in productInsights.products" :key="item.productId" :value="item.productId">{{ item.productName }}</option></select></label><label>标签<select v-model="insightTagCode"><option value="">请选择标签</option><optgroup v-for="dimension in productInsights.dimensions" :key="dimension.code" :label="dimension.name"><option v-for="tag in productInsights.tags.filter(item => item.dimension === dimension.code && item.status === 'ACTIVE')" :key="tag.code" :value="tag.code">{{ tag.parentId ? `${productInsights.tags.find(parent => parent.id === tag.parentId)?.name} / ` : '' }}{{ tag.name }}</option></optgroup></select></label><label>置信度<select v-model="insightConfidence"><option value="LOW">低</option><option value="MEDIUM">中</option><option value="HIGH">高</option></select></label><label class="evidence-field">判断依据<input v-model="insightEvidence" maxlength="255" placeholder="例如：商品明确标注儿童配方；鱼油主要对应心血管需求" /></label><button type="button" :disabled="insightLoading || !insightProductId || !insightTagCode" @click="assignInsightTag">保存标签</button></div><p v-if="insightMessage" class="insight-success">{{ insightMessage }}</p></section>
-        <section class="system-card insight-product-list"><div class="card-title"><div><h3>商品标签覆盖</h3><p>仅已审核标签进入后续消费需求分析</p></div><span>{{ productInsights.products.length }} 种</span></div><div class="insight-products management-detail-scroll"><article v-for="item in pagedInsightProducts" :key="item.productId"><div><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }} · {{ item.sku }}</small></div><div class="insight-tags"><span v-for="assignment in item.assignments" :key="assignment.id" :class="assignment.reviewStatus.toLowerCase()"><b>{{ assignment.tag.name }}</b><small>{{ assignment.confidence === 'HIGH' ? '高' : assignment.confidence === 'MEDIUM' ? '中' : '低' }}置信度 · {{ assignment.reviewStatus === 'APPROVED' ? '已审核' : '待复核' }}</small></span><em v-if="!item.assignments.length">尚未标记</em></div></article></div><div class="inventory-table-pagination"><span>共 {{ productInsights.products.length }} 种商品</span><label>每页<select v-model.number="insightDetailPageSize"><option :value="50">50</option><option :value="100">100</option></select></label><div><button type="button" :disabled="insightDetailPage <= 1" @click="insightDetailPage--">上一页</button><b>{{ insightDetailPage }} / {{ insightDetailPageCount }}</b><button type="button" :disabled="insightDetailPage >= insightDetailPageCount" @click="insightDetailPage++">下一页</button></div></div></section>
+        <p class="inline-notice">当前查询最多返回 200 种商品，以下分页和覆盖统计仅针对已返回商品，并非全店总数。已审核与待复核可能重叠，“未标记”接口统计暂待核对。</p>
+        <div class="view-switcher" role="group" aria-label="分类与标签视图"><button type="button" :aria-pressed="tagView === 'products'" @click="tagView = 'products'">商品标记</button><button type="button" :aria-pressed="tagView === 'dictionary'" @click="tagView = 'dictionary'">标签字典</button></div>
+        <div v-show="tagView === 'products'" class="insight-kpis"><article><span>已返回商品</span><strong>{{ productInsights.coverage.productCount }}</strong><small>当前筛选范围</small></article><article><span>已审核标记</span><strong>{{ productInsights.coverage.approvedProducts }}</strong><small>覆盖率 {{ productInsights.coverage.approvedCoveragePercent }}%</small></article><article><span>待复核</span><strong>{{ productInsights.coverage.pendingProducts }}</strong><small>不得直接用于正式分析</small></article><article><span>未标记（待核对）</span><strong>{{ productInsights.coverage.untaggedProducts }}</strong><small>后续逐步人工补充</small></article></div>
+        <section v-show="tagView === 'dictionary'" class="system-card taxonomy-card"><div class="card-title"><div><h3>小程序分类与经营标签</h3><p>小程序分类作为正式标签来源；点击标签可编辑、排序或停用</p></div><span>{{ productInsights.tags.length }} 个</span></div><div class="taxonomy-columns management-detail-scroll"><article v-for="dimension in productInsights.dimensions" :key="dimension.code"><h4>{{ dimension.name }}</h4><div class="taxonomy-list"><div v-for="root in productInsights.tagTree.filter(item => item.dimension === dimension.code)" :key="root.id" :class="{ inactive: root.status === 'INACTIVE' }"><button type="button" :disabled="!managementAccess?.capabilities.permissionsManage" @click="editInsightTag(root)"><strong>{{ root.name }}</strong><small>{{ root.source === 'MINIPROGRAM' ? `小程序分类 #${root.externalId}` : '人工标签' }} · {{ root.status === 'ACTIVE' ? '启用' : '已停用' }}</small></button><ul v-if="root.children.length"><li v-for="child in root.children" :key="child.id" :class="{ inactive: child.status === 'INACTIVE' }"><button type="button" :disabled="!managementAccess?.capabilities.permissionsManage" @click="editInsightTag(child)">{{ child.name }}</button></li></ul></div><p v-if="!productInsights.tagTree.some(item => item.dimension === dimension.code)">暂无标签</p></div></article></div><p class="detail-scroll-hint">分类区域固定高度；可在区域内滚动查看全部 {{ productInsights.tags.length }} 个标签。</p></section>
+        <div v-if="managementAccess?.capabilities.permissionsManage && tagView === 'dictionary'" class="dictionary-actions"><button class="secondary-action" type="button" @click="resetInsightTagEditor(); tagEditorOpen = true">新增标签</button><span class="scope-note">标签仅用于商品经营描述，不会自动改写商品主档品类。</span></div>
+        <section v-if="managementAccess?.capabilities.permissionsManage && tagView === 'dictionary' && tagEditorOpen" class="system-card tag-definition-editor"><div class="card-title"><div><h3>{{ editingTagId ? '编辑标签' : '新增标签' }}</h3><p>由你定义名称、类型、上级、排序和启停状态，不需要填写技术代码</p></div><button type="button" class="editor-reset" @click="resetInsightTagEditor">关闭编辑</button></div><div class="tag-definition-form"><label>标签名称<input v-model="newTagName" maxlength="120" placeholder="例如：中老年营养" /></label><label>标签类型<select v-model="newTagDimension"><option v-for="dimension in productInsights.dimensions" :key="dimension.code" :value="dimension.code">{{ dimension.name }}</option></select></label><label>上级分类<select v-model="newTagParentId"><option value="">无上级（一级标签）</option><option v-for="tag in productInsights.tags.filter(item => !item.parentId && item.id !== editingTagId)" :key="tag.id" :value="tag.id">{{ tag.name }}</option></select></label><label>说明<input v-model="newTagDescription" maxlength="255" placeholder="选填：这个标签的使用口径" /></label><label>排序<input v-model.number="newTagSortOrder" type="number" /></label><label>状态<select v-model="newTagStatus"><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option></select></label><button type="button" :disabled="insightLoading || !newTagName.trim()" @click="saveInsightTag">{{ editingTagId ? '保存修改' : '新增标签' }}</button></div></section>
+        <details v-if="managementAccess?.capabilities.permissionsManage && tagView === 'products'" class="system-card insight-editor"><summary>给商品添加经营标签</summary><div class="card-title"><div><h3>标记商品需求与适用人群</h3><p>选择正式商品与启用标签，并填写判断依据</p></div></div><div class="insight-editor-form"><label>商品<select v-model="insightProductId"><option value="">请选择商品</option><option v-for="item in productInsights.products" :key="item.productId" :value="item.productId">{{ item.productName }}</option></select></label><label>标签<select v-model="insightTagCode"><option value="">请选择标签</option><optgroup v-for="dimension in productInsights.dimensions" :key="dimension.code" :label="dimension.name"><option v-for="tag in productInsights.tags.filter(item => item.dimension === dimension.code && item.status === 'ACTIVE')" :key="tag.code" :value="tag.code">{{ tag.parentId ? `${productInsights.tags.find(parent => parent.id === tag.parentId)?.name} / ` : '' }}{{ tag.name }}</option></optgroup></select></label><label>置信度<select v-model="insightConfidence"><option value="LOW">低</option><option value="MEDIUM">中</option><option value="HIGH">高</option></select></label><label class="evidence-field">判断依据<input v-model="insightEvidence" maxlength="255" placeholder="例如：商品明确标注儿童配方；鱼油主要对应心血管需求" /></label><button type="button" :disabled="insightLoading || !insightProductId || !insightTagCode" @click="assignInsightTag">保存标签</button></div></details><p v-if="insightMessage" class="insight-success" role="status">{{ insightMessage }}</p>
+        <section v-show="tagView === 'products'" class="system-card insight-product-list"><div class="card-title"><div><h3>商品标签覆盖</h3><p>仅已审核标签进入后续消费需求分析</p></div><span>{{ productInsights.products.length }} 种</span></div><div class="insight-products management-detail-scroll"><article v-for="item in pagedInsightProducts" :key="item.productId"><div><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }} · {{ item.sku }}</small></div><div class="insight-tags"><span v-for="assignment in item.assignments" :key="assignment.id" :class="assignment.reviewStatus.toLowerCase()"><b>{{ assignment.tag.name }}</b><small>{{ assignment.confidence === 'HIGH' ? '高' : assignment.confidence === 'MEDIUM' ? '中' : '低' }}置信度 · {{ assignment.reviewStatus === 'APPROVED' ? '已审核' : '待复核' }}</small></span><em v-if="!item.assignments.length">尚未标记</em></div></article></div><div class="inventory-table-pagination"><span>共 {{ productInsights.products.length }} 种商品</span><label>每页<select v-model.number="insightDetailPageSize"><option :value="50">50</option><option :value="100">100</option></select></label><div><button type="button" :disabled="insightDetailPage <= 1" @click="insightDetailPage--">上一页</button><b>{{ insightDetailPage }} / {{ insightDetailPageCount }}</b><button type="button" :disabled="insightDetailPage >= insightDetailPageCount" @click="insightDetailPage++">下一页</button></div></div></section>
       </template>
     </section>
 
     <section v-else-if="activeSection === 'stores'" class="store-comparison-page">
-      <form class="store-comparison-filters" @submit.prevent="loadStoreComparison"><label>开始日期<input v-model="storeFrom" type="date" @click="openNativePicker" /></label><label>结束日期<input v-model="storeTo" type="date" @click="openNativePicker" /></label><button type="submit" :disabled="storeLoading">{{ storeLoading ? '查询中…' : '查询门店' }}</button></form>
+      <div class="period-shortcuts" role="group" aria-label="快捷日期"><span>快捷日期</span><button type="button" @click="setDateRange('stores', 'today')">今天</button><button type="button" @click="setDateRange('stores', 'week')">近7天</button><button type="button" @click="setDateRange('stores', 'month')">本月</button><small>修改条件后点击更新分析</small></div>
+      <form class="store-comparison-filters" @submit.prevent="loadStoreComparison"><label>开始日期<input v-model="storeFrom" type="date" @click="openNativePicker" /></label><label>结束日期<input v-model="storeTo" type="date" @click="openNativePicker" /></label><button type="submit" :disabled="storeLoading">{{ storeLoading ? '查询中…' : '更新分析' }}</button></form>
       <p v-if="storeComparison?.comparisonNotice" class="management-alert pending"><strong>单店模式</strong><span>{{ storeComparison.comparisonNotice }}</span></p>
       <template v-if="storeComparison">
-        <div class="store-kpis"><article><span>启用门店</span><strong>{{ storeComparison.storeCount }}</strong><small>{{ storeComparison.comparisonAvailable ? '已启用多店比较' : '当前为单店经营基线' }}</small></article><article><span>销售额</span><strong>{{ money(storeComparison.stores.reduce((sum,item) => sum + item.sales.netRevenue, 0)) }}</strong><small>{{ storeFrom }} 至 {{ storeTo }}</small></article><article><span>订单</span><strong>{{ storeComparison.stores.reduce((sum,item) => sum + item.sales.orderCount, 0) }}</strong><small>全部正式门店</small></article><article><span>库存</span><strong>{{ number(storeComparison.stores.reduce((sum,item) => sum + item.inventory.totalQuantity, 0)) }} 件</strong><small>正式库存余额</small></article></div>
-        <div class="store-card-grid"><article v-for="item in storeComparison.stores" :key="item.store.id" class="system-card store-result-card" :class="{ selected: item.selected }"><div class="card-title"><div><h3>{{ item.store.name }}</h3><p>{{ item.store.code }}</p></div><span v-if="item.selected">当前门店</span></div><dl><div><dt>净销售额</dt><dd>{{ money(item.sales.netRevenue) }}</dd></div><div><dt>订单数</dt><dd>{{ item.sales.orderCount }}</dd></div><div><dt>平均客单价</dt><dd>{{ money(item.sales.averageOrderValue) }}</dd></div><div><dt>销售件数</dt><dd>{{ number(item.sales.unitsSold) }}</dd></div><div><dt>库存</dt><dd>{{ number(item.inventory.totalQuantity) }}</dd></div><div><dt>缺货 / 低库存</dt><dd>{{ item.inventory.outOfStockProducts }} / {{ item.inventory.lowStockProducts }}</dd></div></dl></article></div>
-        <section class="system-card store-ranking-card"><div class="card-title"><div><h3>门店经营排行</h3><p>多门店时自动形成正式排行；单店时作为后续比较基线</p></div></div><div class="store-rankings"><div><h4>按净销售额</h4><ol><li v-for="(item,index) in storeComparison.ranking.byRevenue" :key="item.storeId"><b>{{ index + 1 }}</b><span>{{ item.storeName }}</span><em>{{ money(item.value) }}</em></li></ol></div><div><h4>按订单数</h4><ol><li v-for="(item,index) in storeComparison.ranking.byOrders" :key="item.storeId"><b>{{ index + 1 }}</b><span>{{ item.storeName }}</span><em>{{ number(item.value) }}</em></li></ol></div><div><h4>按库存量</h4><ol><li v-for="(item,index) in storeComparison.ranking.byInventory" :key="item.storeId"><b>{{ index + 1 }}</b><span>{{ item.storeName }}</span><em>{{ number(item.value) }} 件</em></li></ol></div></div></section>
+        <div class="store-kpis"><article><span>启用门店</span><strong>{{ storeComparison.storeCount }}</strong><small>{{ storeComparison.comparisonAvailable ? '已启用多店比较' : '当前为单店经营基线' }}</small></article><article><span>销售额</span><strong>{{ money(storeComparison.stores.reduce((sum,item) => sum + item.sales.netRevenue, 0)) }}</strong><small>{{ storeComparison.period.from }} 至 {{ storeComparison.period.to }}</small></article><article><span>订单</span><strong>{{ storeComparison.stores.reduce((sum,item) => sum + item.sales.orderCount, 0) }}</strong><small>全部正式门店</small></article><article><span>库存</span><strong>{{ number(storeComparison.stores.reduce((sum,item) => sum + item.inventory.totalQuantity, 0)) }} 件</strong><small>正式库存余额</small></article></div>
+        <div v-if="!storeComparison.comparisonAvailable" class="store-card-grid"><article v-for="item in storeComparison.stores" :key="item.store.id" class="system-card store-result-card" :class="{ selected: item.selected }"><div class="card-title"><div><h3>{{ item.store.name }}</h3><p>{{ item.store.code }}</p></div><span v-if="item.selected">当前门店</span></div><dl><div><dt>净销售额</dt><dd>{{ money(item.sales.netRevenue) }}</dd></div><div><dt>订单数</dt><dd>{{ item.sales.orderCount }}</dd></div><div><dt>平均客单价</dt><dd>{{ money(item.sales.averageOrderValue) }}</dd></div><div><dt>销售件数</dt><dd>{{ number(item.sales.unitsSold) }}</dd></div><div><dt>库存</dt><dd>{{ number(item.inventory.totalQuantity) }}</dd></div><div><dt>缺货 / 低库存</dt><dd>{{ item.inventory.outOfStockProducts }} / {{ item.inventory.lowStockProducts }}</dd></div></dl></article></div>
+        <section v-if="storeComparison.comparisonAvailable" class="system-card store-comparison-table"><div class="card-title"><div><h3>门店经营比较</h3><p>销售按所选期间统计；库存为当前余额，库存高低不代表经营优劣</p></div></div><div class="product-table-wrap management-detail-scroll"><table><thead><tr><th>门店</th><th>净销售额</th><th>订单</th><th>客单价</th><th>销售件数</th><th>当前库存</th><th>缺货 / 低库存</th></tr></thead><tbody><tr v-for="item in storeComparison.stores" :key="item.store.id"><td><strong>{{ item.store.name }}</strong><small>{{ item.store.code }}{{ item.selected ? ' · 当前门店' : '' }}</small></td><td>{{ money(item.sales.netRevenue) }}</td><td>{{ item.sales.orderCount }}</td><td>{{ money(item.sales.averageOrderValue) }}</td><td>{{ number(item.sales.unitsSold) }}</td><td>{{ number(item.inventory.totalQuantity) }}</td><td>{{ item.inventory.outOfStockProducts }} / {{ item.inventory.lowStockProducts }}</td></tr></tbody></table></div></section>
+        <details v-if="storeComparison.comparisonAvailable" class="system-card store-ranking-card"><summary>查看分项排行</summary><div class="card-title"><div><h3>门店经营排行</h3><p>多门店时自动形成正式排行；单店时作为后续比较基线</p></div></div><div class="store-rankings"><div><h4>按净销售额</h4><ol><li v-for="(item,index) in storeComparison.ranking.byRevenue" :key="item.storeId"><b>{{ index + 1 }}</b><span>{{ item.storeName }}</span><em>{{ money(item.value) }}</em></li></ol></div><div><h4>按订单数</h4><ol><li v-for="(item,index) in storeComparison.ranking.byOrders" :key="item.storeId"><b>{{ index + 1 }}</b><span>{{ item.storeName }}</span><em>{{ number(item.value) }}</em></li></ol></div><div><h4>库存分布（按数量）</h4><ol><li v-for="(item,index) in storeComparison.ranking.byInventory" :key="item.storeId"><b>{{ index + 1 }}</b><span>{{ item.storeName }}</span><em>{{ number(item.value) }} 件</em></li></ol></div></div></details>
       </template>
     </section>
 
     <section v-else-if="activeSection === 'system'" class="pos-management">
+      <div class="view-switcher" role="group" aria-label="数据中心视图"><button type="button" :aria-pressed="systemView === 'sync'" @click="systemView = 'sync'">POS 同步</button><button type="button" :aria-pressed="systemView === 'quality'" @click="systemView = 'quality'">数据检查</button><button v-if="managementAccess?.capabilities.posIssues" type="button" :aria-pressed="systemView === 'issues'" @click="systemView = 'issues'">异常记录</button></div>
+      <p class="scope-note">“刷新状态”只查询现有数据；只有“开始同步”会读取 POS 订单。</p>
       <p v-if="posMessage" class="management-alert inventory-source"><strong>同步完成</strong><span>{{ posMessage }}</span></p>
       <p class="management-alert pending"><strong>观察模式</strong><span>手动同步只读取POS订单并写入观察区，不会直接扣减正式库存，也不需要操作POS收银机。</span></p>
 
-      <section v-if="managementAccess" class="system-card access-summary-card"><div class="card-title"><div><h3>当前账号经营权限</h3><p>{{ managementAccess.administrator ? '管理员自动拥有全部经营权限' : `角色：${managementAccess.roleCodes.join('、')}` }}</p></div><span>{{ managementAccess.grantedPermissionCodes.length }} 项</span></div><div class="access-capabilities"><b :class="{ granted: managementAccess.capabilities.overviewView }">经营总览</b><b :class="{ granted: managementAccess.capabilities.salesView }">销售与商品</b><b :class="{ granted: managementAccess.capabilities.inventoryView }">库存经营</b><b :class="{ granted: managementAccess.capabilities.posSync }">POS同步</b><b :class="{ granted: managementAccess.capabilities.posIssues }">异常记录</b><b :class="{ granted: managementAccess.capabilities.permissionsManage }">权限管理</b></div></section>
 
-      <section v-if="managementAccess?.capabilities.posSync" class="system-card manual-sync-card primary-sync-card">
+
+      <section v-if="managementAccess?.capabilities.posSync" v-show="systemView === 'sync'" class="system-card manual-sync-card primary-sync-card">
         <div class="card-title"><div><h3>同步 POS 销售订单</h3><p>选择营业日期，由当前服务器主动读取 POS 接口</p></div><span>不扣减正式库存</span></div>
         <div class="primary-sync-controls"><label>营业日期<input v-model="syncDate" type="date" :disabled="posRunning || posStatus?.running" @click="openNativePicker" /></label><button type="button" :disabled="posRunning || posStatus?.running || !syncDate" @click="runManualSync">{{ posRunning ? '正在同步…' : '开始同步' }}</button></div>
         <label class="reconcile-option"><input v-model="reconcile" type="checkbox" :disabled="posRunning || posStatus?.running" /><span><strong>重新核对当天订单</strong><small>只在退款、取消或订单状态发生变化时勾选；日常同步不需勾选。</small></span></label>
       </section>
 
-      <div class="pos-status-grid">
-        <article><span>同步状态</span><strong :class="posStatus?.running ? 'status-running' : 'status-ok'">{{ posStatus?.running ? '正在同步' : '空闲' }}</strong><small>最近成功或失败结果见下方记录</small></article>
-        <article><span>POS订单</span><strong>{{ posCheck?.orders.total ?? 0 }}</strong><small>最近订单：{{ dateTime(posCheck?.orders.lastOrderedAt ?? null) }}</small></article>
-        <article><span>商品映射率</span><strong>{{ posCheck?.items.mappingCoveragePercent ?? 0 }}%</strong><small>{{ posCheck?.items.mapped ?? 0 }} / {{ posCheck?.items.total ?? 0 }} 条销售明细已关联</small></article>
-        <article><span>待处理异常</span><strong class="status-warning">{{ posCheck?.issues.total ?? 0 }}</strong><small>商品、退款和人工复核事项</small></article>
+      <div v-show="systemView === 'sync'" class="pos-status-grid">
+        <article><span>同步状态</span><strong :class="posLoadError || posStatus?.latestRun?.status === 'FAILED' ? 'status-warning' : posStatus?.running ? 'status-running' : ''">{{ posLoading ? '加载中' : posLoadError ? '加载失败' : !posStatus ? '未获取' : posStatus.running ? '正在同步' : posStatus.latestRun?.status === 'FAILED' ? '最近失败' : '空闲' }}</strong><small>最近成功或失败结果见下方记录</small></article>
+        <article><span>POS订单</span><strong>{{ posLoading || posLoadError ? '—' : (posCheck?.orders.total ?? '—') }}</strong><small>最近订单：{{ dateTime(posCheck?.orders.lastOrderedAt ?? null) }}</small></article>
+        <article><span>商品映射率</span><strong>{{ posLoading || posLoadError || !posCheck ? '—' : `${posCheck.items.mappingCoveragePercent}%` }}</strong><small>{{ posCheck?.items.mapped ?? '—' }} / {{ posCheck?.items.total ?? '—' }} 条销售明细已关联</small></article>
+        <article><span>待处理异常</span><strong class="status-warning">{{ posLoading || posLoadError ? '—' : (posCheck?.issues.total ?? '—') }}</strong><small>商品、退款和人工复核事项</small></article>
       </div>
 
-      <div class="pos-system-grid">
+      <section v-if="systemView === 'quality'" class="system-card foundation-check">
+        <div class="card-title"><div><h3>正式资料与数据可用情况</h3><p>从经营总览集中到此处；统计基于正式资料，不将名称识别当成已维护资料</p></div><button v-if="canSection('overview')" type="button" class="secondary-action" :disabled="loading" @click="loadOverview">{{ loading ? '检查中…' : '更新资料检查' }}</button></div>
+        <template v-if="foundation && canSection('overview')">
+          <p class="scope-note">检查快照：{{ dateTime(foundation.generatedAt) }} · 当前库存更新：{{ dateTime(foundation.quality.inventory.latestUpdatedAt) }}</p>
+          <div class="quality-metrics">
+            <article><span>有正库存 / 启用商品</span><strong>{{ foundation.quality.inventory.productCount }} / {{ foundation.quality.catalog.productCount }} 种</strong></article>
+            <article><span>正式品牌字段完整率</span><strong>{{ foundation.quality.catalog.brandCoveragePercent }}%</strong></article>
+            <article><span>商品主档品类完整率</span><strong>{{ foundation.quality.catalog.categoryCoveragePercent }}%</strong></article>
+            <article><span>售价完整率</span><strong>{{ foundation.quality.catalog.sellingPriceCoveragePercent }}%</strong></article>
+            <article><span>条码覆盖（可选）</span><strong>{{ foundation.quality.catalog.barcodeCoveragePercent }}%</strong></article>
+            <article><span>最低库存配置覆盖</span><strong>{{ foundation.quality.catalog.minimumStockCoveragePercent }}%</strong></article>
+            <article><span>POS 商品关联率</span><strong>{{ foundation.quality.sales.mappingCoveragePercent }}%</strong><small>{{ foundation.quality.sales.mappedOrderItemCount }} / {{ foundation.quality.sales.orderItemCount }} 条销售明细</small></article>
+          </div>
+          <div class="readiness-list"><div v-for="domain in foundation.domains.filter(item => ['OVERVIEW', 'INVENTORY_OPERATIONS', 'SALES'].includes(item.code))" :key="domain.code"><span>{{ domainLabel(domain.code) }}</span><b :class="domain.status.toLowerCase()">{{ readinessLabel(domain.status) }}</b><small>{{ domain.gaps.join('；') || '当前基础指标可以使用' }}</small></div></div>
+          <p class="scope-note">条码不是库存商品的必填条件；无条码商品正常计入库存。品牌榜可以使用名称识别结果，但这里的完整率和品牌筛选依据正式字段。健康需求、人群等标签不自动写入商品主档品类。</p>
+        </template>
+        <p v-else class="system-empty">{{ canSection('overview') ? '尚未取得资料检查快照，请点击更新资料检查。' : '当前账号没有全店资料检查权限。' }}</p>
+      </section>
+
+      <div v-show="systemView === 'quality'" class="pos-system-grid">
         <section v-if="managementAccess?.capabilities.posIssues" class="system-card health-check-card">
-          <div class="card-title"><div><h3>数据检查</h3><p>检查时间：{{ dateTime(posCheck?.checkedAt ?? null) }}</p></div><span>{{ posCheck?.readiness === 'READY' ? '可用于分析' : posCheck?.readiness === 'NEEDS_REVIEW' ? '需要处理' : '等待数据' }}</span></div>
+          <div class="card-title"><div><h3>数据检查</h3><p>检查时间：{{ dateTime(posCheck?.checkedAt ?? null) }}</p></div><span>{{ posLoading ? '加载中' : posLoadError ? '加载失败' : !posCheck ? '未获取' : posCheck.readiness === 'READY' ? '可用于分析' : posCheck.readiness === 'NEEDS_REVIEW' ? '需要处理' : '等待数据' }}</span></div>
           <ul><li v-for="check in posCheck?.checks ?? []" :key="check.code"><b :class="check.passed ? 'pass' : 'fail'">{{ check.passed ? '✓' : '!' }}</b><span>{{ check.message }}</span></li></ul>
         </section>
       </div>
 
-      <section v-if="managementAccess?.capabilities.posIssues" class="system-card issue-card">
+      <section v-if="managementAccess?.capabilities.posIssues" v-show="systemView === 'issues'" class="system-card issue-card"><p class="scope-note">当前显示接口返回的前 20 条异常；不是全部异常列表。此处仅查看，关联和退款处理仍需按既有流程完成。</p>
         <div class="card-title"><div><h3>异常记录</h3><p>未映射商品、需复核商品与待处理退款</p></div><span>{{ posIssues?.summary.itemIssues ?? 0 }} 项商品 · {{ posIssues?.summary.pendingRefunds ?? 0 }} 笔退款</span></div>
         <div class="issue-table-wrap management-detail-scroll">
           <table v-if="posIssues?.itemIssues.items.length"><thead><tr><th>订单</th><th>时间</th><th>POS商品</th><th>数量</th><th>类型</th><th>原因</th></tr></thead><tbody><tr v-for="item in posIssues.itemIssues.items" :key="item.id"><td>{{ item.orderNo }}</td><td>{{ dateTime(item.orderedAt) }}</td><td><strong>{{ item.productName || '未命名商品' }}</strong><small>{{ item.externalProductId }}{{ item.barcode ? ` · ${item.barcode}` : '' }}</small></td><td>{{ item.quantity }}</td><td>{{ item.disposition === 'UNMAPPED' ? '未映射' : '需复核' }}</td><td>{{ item.reason || '—' }}</td></tr></tbody></table>
-          <p v-else class="system-empty">当前没有未映射或需复核的销售商品。</p>
+          <p v-else class="system-empty">{{ posLoading ? '正在加载异常记录…' : posLoadError || !posIssues ? '尚未取得异常记录，不能判断是否存在异常。' : '当前没有未映射或需复核的销售商品。' }}</p>
         </div>
         <div v-if="posIssues?.pendingRefunds.items.length" class="refund-list management-detail-scroll"><article v-for="refund in posIssues.pendingRefunds.items" :key="refund.id"><strong>订单 {{ refund.orderNo }}</strong><span>退款 {{ money(Number(refund.amount)) }}</span><small>{{ refund.reason }}</small></article></div>
       </section>
 
-      <section v-if="managementAccess?.capabilities.posSync" class="system-card history-card">
-        <div class="card-title"><div><h3>最近同步历史</h3><p>保留最近20次运行结果</p></div><span>游标：{{ dateTime(posStatus?.cursor?.lastSourceTimestamp ?? null) }}</span></div>
+      <section v-if="managementAccess?.capabilities.posSync" v-show="systemView === 'sync'" class="system-card history-card">
+        <div class="card-title"><div><h3>最近同步历史</h3><p>保留最近20次运行结果</p></div><span title="同步游标对应的来源订单时间，不代表该期间数据已全部同步">最近来源时间：{{ dateTime(posStatus?.cursor?.lastSourceTimestamp ?? null) }}</span></div>
         <div class="sync-history management-detail-scroll" v-if="posStatus?.history.length"><article v-for="run in posStatus.history" :key="run.id"><b :class="run.status.toLowerCase()">{{ run.status === 'SUCCEEDED' ? '成功' : run.status === 'FAILED' ? '失败' : '运行中' }}</b><span><strong>{{ run.requestedFrom || '未指定日期' }}</strong><small>{{ dateTime(run.startedAt) }} · 订单 {{ run.ordersObserved }} · 明细 {{ run.itemsObserved }} · 异常 {{ run.exceptionsCount }}</small></span><em>{{ run.errorMessage || `新增 ${run.ordersInserted}，更新 ${run.ordersUpdated}，跳过 ${run.ordersSkipped}` }}</em></article></div>
-        <p v-else class="system-empty">尚无POS同步运行记录。</p>
+        <p v-else class="system-empty">{{ posLoading ? '正在加载同步记录…' : posLoadError || !posStatus ? '同步记录未获取，请重试。' : '尚无POS同步运行记录。' }}</p>
       </section>
+      <details v-if="managementAccess" class="system-card access-summary-card"><summary>当前账号权限（仅展示）</summary><div class="card-title"><div><h3>当前账号经营权限</h3><p>{{ managementAccess.administrator ? '管理员自动拥有全部经营权限' : `角色：${managementAccess.roleCodes.join('、')}` }}</p></div><span>{{ managementAccess.grantedPermissionCodes.length }} 项</span></div><div class="access-capabilities"><b :class="{ granted: managementAccess.capabilities.overviewView }">经营总览</b><b :class="{ granted: managementAccess.capabilities.salesView }">销售与商品</b><b :class="{ granted: managementAccess.capabilities.inventoryView }">库存经营</b><b :class="{ granted: managementAccess.capabilities.posSync }">POS同步</b><b :class="{ granted: managementAccess.capabilities.posIssues }">异常记录</b><b :class="{ granted: managementAccess.capabilities.permissionsManage }">权限管理</b></div></details>
     </section>
 
     <section v-else class="planned-section">
@@ -836,23 +888,25 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
     </main>
 
     <nav class="management-mobile-nav" aria-label="手机经营管理导航">
-      <button :class="{ active: activeSection === 'overview' }" @click="selectSection('overview')"><span>⌂</span>总览</button>
-      <button :class="{ active: activeSection === 'sales' }" @click="selectSection('sales')"><span>↗</span>销售</button>
-      <button :class="{ active: activeSection === 'inventory' }" @click="selectSection('inventory')"><span>▦</span>库存</button>
-      <button :class="{ active: activeSection === 'customers' }" @click="selectSection('customers')"><span>◇</span>人群</button>
-      <button :class="{ active: ['products', 'stores', 'system'].includes(activeSection) }" :aria-expanded="showMobileMore" @click="showMobileMore = true"><span>•••</span>更多</button>
+      <button :class="{ active: activeSection === 'overview' }" :disabled="!canSection('overview')" @click="selectSection('overview')"><span>⌂</span>总览</button>
+      <button :class="{ active: activeSection === 'sales' }" :disabled="!canSection('sales')" @click="selectSection('sales')"><span>↗</span>销售</button>
+      <button :class="{ active: activeSection === 'products' }" :disabled="!canSection('products')" @click="selectSection('products')"><span>◇</span>商品</button>
+      <button :class="{ active: activeSection === 'inventory' }" :disabled="!canSection('inventory')" @click="selectSection('inventory')"><span>▦</span>库存</button>
+      <button :class="{ active: ['customers', 'stores', 'system'].includes(activeSection) }" :aria-expanded="showMobileMore" @click="showMobileMore = true"><span>•••</span>更多</button>
     </nav>
 
     <div v-if="showMobileMore" class="management-more-overlay" role="presentation" @click.self="showMobileMore = false">
       <section class="management-more-sheet" role="dialog" aria-modal="true" aria-label="更多经营模块">
         <header><div><small>MORE MODULES</small><h2>更多经营模块</h2></div><button type="button" aria-label="关闭更多模块" @click="showMobileMore = false">×</button></header>
         <div>
-          <button v-for="section in sections.filter((item) => ['products', 'stores', 'system'].includes(item.id))" :key="section.id" type="button" :disabled="!canSection(section.id)" @click="selectSection(section.id)"><span>{{ section.id === 'products' ? '◫' : section.id === 'stores' ? '⌘' : '⚙' }}</span><strong>{{ section.label }}</strong><small>{{ canSection(section.id) ? section.description : '当前账号无权限' }}</small></button>
+          <button v-for="section in sections.filter((item) => ['customers', 'stores', 'system'].includes(item.id))" :key="section.id" type="button" :disabled="!canSection(section.id)" @click="selectSection(section.id)"><span>{{ section.id === 'customers' ? '◫' : section.id === 'stores' ? '⌘' : '⚙' }}</span><strong>{{ section.label }}</strong><small>{{ canSection(section.id) ? section.description : '当前账号无权限' }}</small></button>
         </div>
       </section>
     </div>
   </section>
 </template>
+
+<style scoped src="./inventory-master.css"></style>
 
 <style scoped>
 /* finesse · product-ui · evidence-first management cockpit */
@@ -866,6 +920,11 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
 .sidebar-heading strong{font-size:18px}
 .sidebar-heading small{color:#8298b9;white-space:nowrap}
 .management-content{grid-template-rows:auto minmax(0,1fr);min-height:100%}
+/* Overview has multiple direct grid rows; notices must retain their content height. */
+.management-content.overview-content{grid-template-rows:none;grid-auto-rows:max-content}
+.overview-content>.management-alert{margin:0;align-items:center;flex-wrap:wrap;min-width:0}
+.overview-content>.management-alert>strong{flex-shrink:0}
+.overview-content>.management-alert>span{flex:1 1 240px;min-width:0;overflow-wrap:anywhere}
 .planned-section{height:100%}
 .management-alert.inventory-source{border:1px solid #a7dfd0;color:#176d5d;background:#effbf7}.inventory-truth-panel{display:grid;gap:18px;padding:22px;border:1px solid #d7e7f5;border-radius:22px;background:linear-gradient(145deg,#fff,#f2f9ff 62%,#effbf7);box-shadow:0 14px 35px rgb(39 73 116 / 8%)}.inventory-truth-panel>.card-title>span{color:#21876f}.inventory-truth-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.inventory-truth-grid article{display:grid;align-content:start;gap:9px;min-height:128px;padding:17px;border:1px solid #dce8f4;border-radius:17px;background:rgb(255 255 255 / 88%)}.inventory-truth-grid article>span{color:#63748b;font-size:13px;font-weight:850}.inventory-truth-grid article>strong{font-size:23px}.inventory-truth-grid article>small{color:#7b899c;line-height:1.5}.coverage-row{display:grid;grid-template-columns:32px minmax(40px,1fr) 42px;align-items:center;gap:7px}.coverage-row small{color:#728198}.coverage-row b{display:block;height:7px;overflow:hidden;border-radius:999px;background:#e6edf6}.coverage-row i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#21b9e9,#3d6cf1)}.coverage-row em{color:#506078;font-size:11px;font-style:normal;text-align:right}.readiness-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.readiness-list>div{display:grid;grid-template-columns:1fr auto;gap:5px 10px;padding:13px 15px;border-radius:14px;background:#f7faff}.readiness-list span{font-weight:850}.readiness-list b{padding:3px 7px;border-radius:999px;font-size:10px}.readiness-list b.ready{color:#167a5e;background:#dcf6ec}.readiness-list b.partial{color:#2871c8;background:#e6f1ff}.readiness-list b.waiting_for_data{color:#9a6b16;background:#fff2cc}.readiness-list b.blocked{color:#a3444d;background:#ffe6e8}.readiness-list small{grid-column:1/-1;color:#7a889b;line-height:1.45}.inventory-note{margin:0;padding-top:2px;color:#67788e;font-size:12px}
 .pos-management{display:grid;align-content:start;gap:16px}.pos-status-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.pos-status-grid article,.system-card{border:1px solid #dce8f5;border-radius:20px;background:rgb(255 255 255 / 94%);box-shadow:0 12px 30px rgb(39 73 116 / 8%)}.pos-status-grid article{display:grid;gap:8px;min-height:116px;padding:18px}.pos-status-grid span{color:#69788d;font-size:13px;font-weight:800}.pos-status-grid strong{font-size:25px}.pos-status-grid small{color:#7e8b9d}.status-ok{color:#168264}.status-running{color:#2875d7}.status-warning{color:#bd6a22}.pos-system-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}.system-card{padding:21px}.manual-sync-card{display:grid;align-content:start;gap:14px}.manual-sync-card>label:not(.reconcile-option){display:grid;gap:7px;color:#617187;font-size:12px;font-weight:850}.manual-sync-card input[type=date]{min-height:44px;padding:0 12px;border:1px solid #d4e0ef;border-radius:12px;background:#f9fbfe;font:inherit}.manual-sync-card>button{min-height:46px;border:0;border-radius:13px;color:#fff;background:linear-gradient(135deg,#18b6ef,#3769f3);font-weight:850}.manual-sync-card>button:disabled{opacity:.55}.manual-sync-card>p{margin:0;color:#78879a;font-size:12px;line-height:1.55}.reconcile-option{display:flex;align-items:flex-start;gap:10px;padding:12px;border-radius:13px;background:#f4f8fd}.reconcile-option input{margin-top:3px}.reconcile-option span{display:grid;gap:3px}.reconcile-option small{color:#7b899d;line-height:1.45}.health-check-card ul{display:grid;gap:9px;margin:18px 0 0;padding:0;list-style:none}.health-check-card li{display:flex;align-items:center;gap:10px;padding:10px;border-radius:12px;background:#f7faff}.health-check-card li b{display:grid;flex:0 0 auto;width:25px;height:25px;place-items:center;border-radius:8px}.health-check-card li b.pass{color:#197a61;background:#dcf6ec}.health-check-card li b.fail{color:#a6641e;background:#fff0d6}.issue-card,.history-card{display:grid;gap:15px}.issue-table-wrap{max-width:100%;overflow-x:auto}.issue-table-wrap table{width:100%;min-width:820px;border-collapse:collapse}.issue-table-wrap th,.issue-table-wrap td{padding:11px 10px;border-bottom:1px solid #e9eff6;text-align:left}.issue-table-wrap td>strong,.issue-table-wrap td>small{display:block}.issue-table-wrap td>small{margin-top:3px;color:#8290a2}.system-empty{display:grid;min-height:100px;place-items:center;margin:0;color:#8491a3}.refund-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.refund-list article{display:grid;gap:5px;padding:12px;border-radius:13px;background:#fff2f3}.refund-list span{color:#bd4b55;font-weight:850}.refund-list small{color:#7d899a}.sync-history{display:grid;gap:8px}.sync-history article{display:grid;grid-template-columns:68px minmax(200px,1fr) minmax(180px,.8fr);align-items:center;gap:12px;padding:12px;border-radius:13px;background:#f7faff}.sync-history article>b{padding:6px 8px;border-radius:9px;font-size:11px;text-align:center}.sync-history b.succeeded{color:#14795c;background:#dcf6ec}.sync-history b.failed{color:#a44049;background:#ffe7e9}.sync-history b.running{color:#276fc5;background:#e6f1ff}.sync-history article>span{display:grid;gap:3px}.sync-history small,.sync-history em{color:#7d899b;font-size:11px;font-style:normal}.sync-history em{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -984,3 +1043,5 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
   .management-heading,.management-alert,.management-card,.system-card{scroll-margin-top:12px}.management-kpis strong,.sales-kpis strong,.product-kpis strong,.inventory-operation-kpis strong,.store-kpis strong,.insight-kpis strong,td{font-variant-numeric:tabular-nums}
 }
 </style>
+
+<style scoped src="./management-decision.css"></style>

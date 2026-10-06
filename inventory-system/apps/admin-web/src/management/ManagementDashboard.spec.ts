@@ -47,8 +47,10 @@ describe('ManagementDashboard', () => {
     expect(wrapper.text()).toContain('5,615 件');
     expect(wrapper.text()).toContain('155 种商品');
     expect(wrapper.text()).toContain('不会使用演示数据');
-    expect(wrapper.text()).toContain('真实库存基础');
+    expect(wrapper.text()).toContain('经营关注与待办');
     expect(wrapper.text()).toContain('82 笔流水');
-    expect(wrapper.text()).toContain('条码不是库存商品的必填条件');
+    expect(wrapper.text()).not.toContain('真实库存基础');
+    expect(wrapper.text()).not.toContain('条码不是库存商品的必填条件');
+    expect(wrapper.find('.data-freshness').text()).toContain('库存更新');
   });
 });
