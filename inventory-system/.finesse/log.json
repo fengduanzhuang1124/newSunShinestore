@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-05",
+  "direction": "Operations-grade dark management cockpit with a calm inventory workspace",
+  "decisions": [
+    "Management uses its own persisted theme preference and defaults to dark.",
+    "Mobile inventory navigation exposes Workbench, Receive, Issue, Inventory, and More.",
+    "Mobile management navigation exposes Overview, Sales, Inventory, Audience, and More.",
+    "Secondary modules live in bottom sheets so navigation remains readable at phone widths.",
+    "Motion remains feedback-only; POS, permission, inventory, and data contracts are unchanged.",
+    "The supplied Sunshine Health horizontal mark is used as a transparent, frameless brand asset across login, inventory, and management surfaces.",
+    "Desktop management uses a 100dvh application shell; navigation stays stable and long analytical content owns its internal overflow.",
+    "Motion is feedback-led: section context transitions, chart drawing, bar growth, loading indicators, restrained hover elevation, and mobile bottom-sheet transitions.",
+    "All motion honors prefers-reduced-motion and does not alter business state or delay operator actions."
+  ]
+}

@@ -1,0 +1,166 @@
+/* Sunshine inventory master: presentation-only, scoped to the inventory section. */
+.management-workspace.inventory-master {
+  --master-surface: #101a25;
+  --master-raised: #15212e;
+  --master-border: #2b3948;
+  --master-text: #e6edf3;
+  --master-muted: #a2b0bf;
+  --master-accent: #70cfa6;
+  --master-selected: #19382f;
+  background: #0d151f;
+  color: var(--master-text);
+  box-shadow: none;
+  font-size: 13px;
+}
+.inventory-master .management-sidebar {
+  background: var(--master-surface);
+  border-color: var(--master-border);
+  border-radius: 10px;
+  box-shadow: none;
+}
+.inventory-master .sidebar-heading p,
+.inventory-master .management-heading > div > p { display: none; }
+.inventory-master .sidebar-heading strong { font-size: 15px; font-weight: 600; }
+.inventory-master .management-sidebar button { border-radius: 6px; }
+.inventory-master .management-sidebar button span { font-weight: 600; }
+.inventory-master .management-sidebar button.active,
+.inventory-master .management-sidebar button.active:hover {
+  color: #b7efd4;
+  background: var(--master-selected);
+  box-shadow: none;
+}
+.inventory-master .management-sidebar button:not(:disabled):hover { transform: none; }
+.inventory-master .management-heading {
+  min-height: 68px;
+  padding: 12px 16px;
+  align-items: center;
+  background: #0d151f;
+  border: 0;
+  border-bottom: 1px solid var(--master-border);
+  border-radius: 0;
+  box-shadow: none;
+}
+.inventory-master .management-heading::after { content: none; }
+.inventory-master .management-heading h2 { font-size: 24px; font-weight: 700; }
+.inventory-master .management-heading span { font-size: 12px; color: var(--master-muted); }
+.inventory-master .inventory-operations-page { display: flex; flex-direction: column; gap: 12px; animation: none; }
+.inventory-master .inventory-operation-filters {
+  grid-template-columns: 170px minmax(180px, 1fr) auto;
+  padding: 12px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.inventory-master label { font-weight: 500; font-size: 12px; }
+.inventory-master .inventory-operation-filters label,
+.inventory-master .inventory-detail-filters label { color: var(--master-muted); }
+.inventory-master input:not([type=checkbox]),
+.inventory-master select {
+  min-height: 38px;
+  border-radius: 6px;
+  font-size: 13px;
+  box-shadow: none;
+}
+.inventory-master button { font-size: 13px; font-weight: 600; }
+.inventory-master .management-filters button,
+.inventory-master .inventory-operation-filters button,
+.inventory-master .inventory-table-pagination button {
+  min-height: 38px;
+  padding: 0 14px;
+  color: var(--master-text);
+  background: var(--master-raised);
+  border: 1px solid var(--master-border);
+  border-radius: 6px;
+  box-shadow: none;
+  transform: none;
+  filter: none;
+}
+.inventory-master .inventory-operation-filters button {
+  color: #10251c;
+  background: var(--master-accent);
+  border-color: var(--master-accent);
+}
+.inventory-master button:not(:disabled):hover { box-shadow: none; transform: none; filter: brightness(1.08); }
+.inventory-master button:focus-visible,
+.inventory-master summary:focus-visible { outline: 2px solid var(--master-accent); outline-offset: 3px; }
+.inventory-master .inventory-method-note { color: var(--master-muted); font-size: 12px; }
+.inventory-master summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
+.inventory-master .inventory-method-note p { margin: 4px 0 8px; line-height: 1.6; }
+.inventory-master .inventory-operation-kpis {
+  gap: 0;
+  border: 1px solid var(--master-border);
+  border-radius: 8px;
+  background: var(--master-surface);
+}
+.inventory-master .inventory-operation-kpis article {
+  min-height: 92px;
+  padding: 14px 16px;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--master-border);
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+  transform: none;
+}
+.inventory-master .inventory-operation-kpis article:last-child { border-right: 0; }
+.inventory-master .inventory-operation-kpis span { font-size: 12px; font-weight: 500; }
+.inventory-master .inventory-operation-kpis strong { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.inventory-master .inventory-operation-kpis small { font-size: 12px; color: var(--master-muted); }
+.inventory-master .inventory-analysis-disclosure { border-bottom: 1px solid var(--master-border); }
+.inventory-master .inventory-analysis-disclosure summary span { margin-left: 12px; color: var(--master-muted); font-weight: 400; font-size: 12px; }
+.inventory-master .inventory-operation-grid { padding: 8px 0 16px; gap: 12px; }
+.inventory-master .system-card,
+.inventory-master .system-card:hover {
+  padding: 16px;
+  border: 1px solid var(--master-border);
+  border-radius: 8px;
+  background: var(--master-surface);
+  box-shadow: none;
+  animation: none;
+}
+.inventory-master .card-title h3 { font-size: 16px; font-weight: 600; }
+.inventory-master .card-title p { font-size: 12px; line-height: 1.5; color: var(--master-muted); }
+.inventory-master .card-title > span { color: var(--master-muted); font-size: 12px; white-space: nowrap; }
+.inventory-master .inventory-detail-card { display: flex; flex-direction: column; gap: 12px; }
+.inventory-master .inventory-status-tabs { gap: 4px; margin: 0; padding-bottom: 8px; border-bottom: 1px solid var(--master-border); }
+.inventory-master .inventory-status-tabs button { min-height: 36px; border: 0; border-radius: 6px; background: transparent; color: var(--master-muted); white-space: nowrap; }
+.inventory-master .inventory-status-tabs button.active { background: var(--master-selected); color: #b7efd4; }
+.inventory-master .inventory-status-tabs b { background: transparent; color: inherit; font-variant-numeric: tabular-nums; }
+.inventory-master .inventory-detail-filters { padding: 0; border: 0; border-radius: 0; background: transparent; gap: 12px; }
+.inventory-master .inventory-scroll-table { max-height: 52dvh; min-height: 160px; border: 1px solid var(--master-border); border-radius: 6px; }
+.inventory-master .inventory-scroll-table table { width: 100%; min-width: 860px; font-size: 13px; }
+.inventory-master .inventory-scroll-table th { height: 38px; font-size: 12px; font-weight: 500; color: var(--master-muted); }
+.inventory-master .inventory-scroll-table td { height: 52px; padding: 8px 12px; font-variant-numeric: tabular-nums; }
+.inventory-master .inventory-scroll-table th:first-child { width: 32%; }
+.inventory-master .inventory-scroll-table th:not(:first-child):not(:last-child),
+.inventory-master .inventory-scroll-table td:not(:first-child):not(:last-child) { text-align: right; white-space: nowrap; }
+.inventory-master .inventory-scroll-table td strong { font-weight: 500; }
+.inventory-master .inventory-scroll-table td small { font-size: 12px; color: var(--master-muted); }
+.inventory-master .stock-badge { padding: 4px 7px; border-radius: 4px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.inventory-master .inventory-table-pagination { margin: 0; font-size: 12px; gap: 12px; color: var(--master-muted); }
+.inventory-master .inventory-table-pagination button:disabled { opacity: .45; cursor: not-allowed; }
+.inventory-master .inventory-load-status { margin: 0; padding: 10px 12px; border: 1px solid var(--master-border); border-radius: 6px; color: var(--master-accent); }
+.inventory-master .management-alert.error { min-height: auto; padding: 12px 16px; border-radius: 6px; line-height: 1.5; }
+.inventory-master .donut-chart { animation: none; box-shadow: none; }
+@media (max-width: 1200px) {
+  .inventory-master .inventory-operation-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .inventory-master .inventory-operation-kpis article { border-bottom: 1px solid var(--master-border); }
+}
+@media (max-width: 720px) {
+  .inventory-master .management-heading { padding: 8px 0 12px; gap: 12px; }
+  .inventory-master .management-heading h2 { font-size: 22px; }
+  .inventory-master .inventory-operation-filters { grid-template-columns: 1fr; gap: 12px; }
+  .inventory-master .inventory-operation-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .inventory-master .inventory-operation-kpis article { padding: 12px; }
+  .inventory-master .inventory-operation-kpis strong { font-size: 22px; }
+  .inventory-master .inventory-operation-kpis article:last-child { grid-column: 1 / -1; }
+  .inventory-master .inventory-analysis-disclosure summary span { display: block; margin: 6px 0 0; }
+  .inventory-master .inventory-detail-filters { grid-template-columns: 1fr; }
+  .inventory-master .inventory-detail-card { padding: 12px; }
+  .inventory-master input:not([type=checkbox]), .inventory-master select,
+  .inventory-master button { min-height: 44px; }
+  .inventory-master .inventory-scroll-table { max-height: 60dvh; }
+  .inventory-master .management-mobile-nav button.active { color: #b7efd4; background: var(--master-selected); box-shadow: none; }
+}
