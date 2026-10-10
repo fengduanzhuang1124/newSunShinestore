@@ -17,8 +17,8 @@ const fixtures: Record<string, unknown> = {
   'overview': overview,
   'data-foundation': foundation,
   'products-brands': { period: { from: '2026-10-01', to: '2026-10-06' }, summary: { productCount: 1, soldProductCount: 1, unitsSold: 2, salesRevenue: 100, currentInventory: 20, lowStockProducts: 0 }, products: [product], brands: [{ name: '品牌A', productCount: 1, unitsSold: 2, salesRevenue: 100, currentInventory: 20 }], categories: [{ name: '奶粉', productCount: 1, unitsSold: 2, salesRevenue: 100, currentInventory: 20 }], marginAvailable: false, marginNotice: '无确认成本' },
-  'sales-analysis': { period: { from: '2026-09-01', to: '2026-09-30', previousFrom: '2026-08-02', previousTo: '2026-08-31' }, dataAvailable: true, metrics: { netRevenue: 100, grossRevenue: 100, refunds: 0, orderCount: 2, unitsSold: 2, averageOrderValue: 50 }, comparison: overview.sales.comparison, trend: [{ period: '2026-09-01', revenue: 100 }], hourlySales: [], topProducts: [], topBrands: [], sourceQuality: { orders: 2, activeItems: 2, mappedItems: 1, reviewRequiredItems: 1 } },
-  'inventory-operations': { period: { lookbackDays: 90, from: '2026-07-01', to: '2026-10-01' }, summary: { totalInventory: 20, stockedProducts: 1, outOfStockProducts: 0, lowStockProducts: 0, slowMovingProducts: 1, productCount: 1 }, products: [inventoryProduct], coverageBuckets: { noSales: 0, under30: 0, days30To90: 0, over90: 1 }, alerts: [], slowMoving: [inventoryProduct], turnoverNotice: '不可计算周转率', coverageNotice: '仅按已同步订单估算' },
+  'sales-analysis': { period: { from: '2026-09-01', to: '2026-09-30', previousFrom: '2026-08-02', previousTo: '2026-08-31' }, dataAvailable: true, metrics: { netRevenue: 100, grossRevenue: 100, refunds: 0, orderCount: 2, unitsSold: 2, averageOrderValue: 50 }, comparison: overview.sales.comparison, trend: [{ period: '2026-09-01', revenue: 100 }], hourlySales: [], topProducts: salesSummary.topProducts, topBrands: [], sourceQuality: { orders: 2, activeItems: 2, mappedItems: 1, reviewRequiredItems: 1 } },
+  'inventory-operations': { period: { lookbackDays: 90, from: '2026-07-01', to: '2026-10-01' }, salesCoverage: { observedDays: 90, reliable: true, firstObservedSaleAt: '2026-07-01T00:00:00Z', lastObservedSaleAt: '2026-10-01T00:00:00Z', minimumReliableDays: 30 }, summary: { totalInventory: 20, stockedProducts: 1, outOfStockProducts: 0, lowStockProducts: 0, slowMovingProducts: 1, productCount: 1 }, products: [inventoryProduct], coverageBuckets: { noSales: 0, under30: 0, days30To90: 0, over90: 1 }, alerts: [], slowMoving: [inventoryProduct], turnoverNotice: '不可计算周转率', coverageNotice: '仅按已同步订单估算' },
   'product-insight-tags': { disclaimer: '不代表购买者真实身份', coverage: { productCount: 1, approvedProducts: 0, pendingProducts: 0, untaggedProducts: 1, approvedCoveragePercent: 0 }, tags: [{ id: 't1', code: 'milk', name: '奶粉', dimension: 'BUSINESS_CATEGORY', parentId: null, status: 'ACTIVE', sortOrder: 1 }], tagTree: [{ id: 't1', code: 'milk', name: '奶粉', dimension: 'BUSINESS_CATEGORY', children: [], status: 'ACTIVE', sortOrder: 1 }], dimensions: [{ code: 'BUSINESS_CATEGORY', name: '商品分类' }], products: [{ ...product, assignments: [] }] },
   'pos-sync/check': { checkedAt: null, readiness: 'NEEDS_REVIEW', orders: { total: 2, lastOrderedAt: null }, items: { mappingCoveragePercent: 50, mapped: 1, total: 2 }, issues: { total: 1 }, checks: [] },
   'pos-sync/status': { running: false, latestRun: null, cursor: null, history: [] },
@@ -55,13 +55,26 @@ describe('经营管理页面组织', () => {
     const { wrapper, fetchSpy } = setup(); await flushPromises();
     expect(wrapper.findAll('.navigation-group h3').map(item => item.text())).toEqual(['经营分析', '资料维护', '系统支持']);
     expect(wrapper.findAll('.management-mobile-nav button').map(item => item.text().replace(/^[^\u4e00-\u9fff]+/, ''))).toEqual(['总览', '销售', '商品', '库存', '更多']);
-    expect(wrapper.findAll('.ranking li')).toHaveLength(5);
+    expect(wrapper.findAll('.hot-product-table-wrap tbody tr')).toHaveLength(8);
     expect(wrapper.find('.foundation-check').exists()).toBe(false);
     expect(wrapper.text()).toContain('只有 1 个有记录的日期');
     await click(wrapper, '查看数据检查');
     expect(wrapper.find('.foundation-check').text()).toContain('正式品牌字段完整率');
     expect(wrapper.find('.foundation-check').text()).toContain('条码不是库存商品的必填条件');
     expect(fetchSpy.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+  });
+
+  it('introduces the purpose and contents of every management page', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    const expected: Record<string, string> = {
+      '经营总览': '销售与上期比较', '销售分析': '商品及品牌排行', '商品分析': '品牌结构',
+      '库存经营': '覆盖天数', '分类与标签': '人工判断依据', '门店对比': '单店销售基线', '数据中心': '异常与同步历史',
+    };
+    for (const [section, content] of Object.entries(expected)) {
+      await go(wrapper, section);
+      expect(wrapper.find('.page-guide').text()).toContain('本页包含什么');
+      expect(wrapper.find('.page-guide').text()).toContain(content);
+    }
   });
 
   it('links to existing inventory reports without writing data', async () => {
@@ -101,7 +114,7 @@ describe('经营管理页面组织', () => {
 
   it('separates tag dictionary from assignments and opens editors only on demand', async () => {
     const { wrapper } = setup(); await flushPromises(); await go(wrapper, '分类与标签');
-    expect(wrapper.text()).toContain('最多返回 200');
+    expect(wrapper.text()).toContain('展示全部启用商品');
     expect(wrapper.find('.tag-definition-editor').exists()).toBe(false);
     await click(wrapper, '标签字典');
     expect(wrapper.find('.insight-product-list').isVisible()).toBe(false);

@@ -343,16 +343,29 @@ async function apiRequest(path: string, options: RequestInit = {}) {
   } catch {
     throw new Error('无法连接库存 API，请先在 Cursor 终端运行 npm run dev');
   }
-  const body = await response.json();
+  const responseText = await response.text();
+  let body: { message?: string | string[]; data?: any } = {};
+  if (responseText.trim()) {
+    try {
+      body = JSON.parse(responseText);
+    } catch {
+      throw new Error(response.ok
+        ? '库存 API 返回了无法识别的数据，请重启前后端服务'
+        : `库存 API 暂时不可用（HTTP ${response.status}），请检查后端和数据库是否已启动`);
+    }
+  }
   if (response.status === 401 && token.value) logout();
   if (!response.ok) {
     const details = Array.isArray(body.message) ? body.message.join('，') : body.message;
-    const text = String(details ?? '操作失败');
+    const text = String(details ?? (response.status >= 500
+      ? '库存服务内部错误，请确认 MySQL 已启动后重试'
+      : `请求失败（HTTP ${response.status}）`));
     if (text.includes('expiryMonth') || text.includes('expiryDate')) {
       throw new Error('到期日期格式不正确，请重新选择年月和日期');
     }
     throw new Error(text);
   }
+  if (!responseText.trim()) throw new Error('库存 API 返回空响应，请检查后端和数据库是否已启动');
   return body.data;
 }
 

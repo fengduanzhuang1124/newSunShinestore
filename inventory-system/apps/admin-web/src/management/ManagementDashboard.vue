@@ -84,6 +84,7 @@ type ProductsBrands = {
 };
 type InventoryOperations = {
   period: { lookbackDays: number; from: string; to: string };
+  salesCoverage: { observedDays: number; reliable: boolean; firstObservedSaleAt: string | null; lastObservedSaleAt: string | null; minimumReliableDays: number };
   summary: { productCount: number; stockedProducts: number; totalInventory: number; outOfStockProducts: number; lowStockProducts: number; slowMovingProducts: number };
   coverageBuckets: { noSales: number; under30: number; days30To90: number; over90: number };
   alerts: InventoryOperationRow[]; slowMoving: InventoryOperationRow[]; products: InventoryOperationRow[];
@@ -139,6 +140,16 @@ const salesBrand = ref('');
 const salesCategory = ref('');
 const salesAnalysis = ref<SalesAnalysis | null>(null);
 const salesLoading = ref(false);
+type OverviewTrendPeriod = 'WEEK' | 'MONTH' | 'YEAR';
+type OverviewHotPeriod = 'DAY' | 'MONTH' | 'QUARTER' | 'YEAR';
+const overviewTrendPeriods: { key: OverviewTrendPeriod; label: string }[] = [{ key: 'WEEK', label: '本周' }, { key: 'MONTH', label: '当月' }, { key: 'YEAR', label: '当年' }];
+const overviewHotPeriods: { key: OverviewHotPeriod; label: string }[] = [{ key: 'DAY', label: '当日' }, { key: 'MONTH', label: '当月' }, { key: 'QUARTER', label: '季度' }, { key: 'YEAR', label: '年度' }];
+const overviewTrendPeriod = ref<OverviewTrendPeriod>('MONTH');
+const overviewHotPeriod = ref<OverviewHotPeriod>('MONTH');
+const overviewTrendAnalysis = ref<SalesAnalysis | null>(null);
+const overviewHotAnalysis = ref<SalesAnalysis | null>(null);
+const overviewWidgetsLoading = ref(false);
+const overviewWidgetError = ref('');
 const productFrom = ref(`${today.slice(0, 7)}-01`);
 const productTo = ref(today);
 const productQuery = ref('');
@@ -210,6 +221,16 @@ const canSection = (id: ManagementSection) => {
 };
 const sections = computed(() => allSections);
 const currentSection = computed(() => allSections.find((item) => item.id === activeSection.value) ?? allSections[0]);
+const pageGuides: Record<ManagementSection, { purpose: string; includes: string[]; decision: string }> = {
+  overview: { purpose: '快速判断本月经营状态与需要优先处理的事项。', includes: ['销售与上期比较', '当前库存与临期', '库存作业待办', '热销商品'], decision: '适合作为每日入口；详细原因继续进入销售、商品或库存页面。' },
+  sales: { purpose: '回答卖了多少、何时卖、哪些商品贡献销售。', includes: ['销售趋势', '订单与客单价', '时段分布', '商品及品牌排行'], decision: '适合复盘销售变化；毛利和商品级退款在成本与退款数据完整前不作结论。' },
+  products: { purpose: '从商品、品牌和品类角度查看销售与当前库存结构。', includes: ['商品明细', '品牌结构', '品类结构', '资料与映射质量'], decision: '适合调整商品结构；售价、条码和商品主档仍在商品维护流程处理。' },
+  inventory: { purpose: '识别缺货、低库存、积压和库存覆盖风险。', includes: ['库存状态', '销售速度', '覆盖天数', '最后销售与库存更新时间'], decision: '适合制定补货和清货顺序；POS数据不足时不生成滞销结论。' },
+  customers: { purpose: '维护商品经营分类、需求、人群倾向和营销标签。', includes: ['标签字典', '商品标签覆盖', '审核状态', '人工判断依据'], decision: '这是商品经营画像，不代表顾客真实身份，也不替代商品主档品类。' },
+  stores: { purpose: '当前先保存单店经营基线，未来增加门店后再横向比较。', includes: ['单店销售基线', '订单与客单价', '库存与缺货', '后续多店排行'], decision: '目前只有一家门店，本页暂不作为重点开发模块。' },
+  system: { purpose: '确认经营分析所依赖的数据是否已同步且足够可信。', includes: ['POS同步', '资料完整度', '商品映射', '异常与同步历史'], decision: '适合排查数据问题；同步保持观察模式，不直接修改正式库存。' },
+};
+const currentGuide = computed(() => pageGuides[activeSection.value]);
 function selectSection(section: ManagementSection) {
   if (!canSection(section)) return;
   activeSection.value = section;
@@ -246,7 +267,10 @@ function retryCurrentPage() {
   const loaders = { overview: loadOverview, sales: loadSalesAnalysis, products: loadProductsBrands, inventory: loadInventoryOperations, customers: loadProductInsights, stores: loadStoreComparison, system: loadSystemManagement };
   void loaders[activeSection.value]();
 }
-const maxDailyRevenue = computed(() => Math.max(1, ...(overview.value?.sales.current.dailySales.map((item) => item.revenue) ?? [1])));
+const overviewTrendSeries = computed(() => overviewTrendAnalysis.value?.trend
+  ?? overview.value?.sales.current.dailySales.map((item) => ({ period: item.date, revenue: item.revenue, orders: item.orders, units: 0 }))
+  ?? []);
+const maxDailyRevenue = computed(() => Math.max(1, ...overviewTrendSeries.value.map((item) => item.revenue)));
 const salesTimeBuckets = computed(() => Array.from({ length: 8 }, (_, index) => {
   const start = index * 3;
   const rows = (salesAnalysis.value?.hourlySales ?? []).filter((item) => item.hour >= start && item.hour <= start + 2);
@@ -268,7 +292,7 @@ const chartPoints = (values: number[], max: number) => values.map((value, index)
   const y = 210 - value / Math.max(1, max) * 170;
   return { x: Number(x.toFixed(2)), y: Number(y.toFixed(2)), value };
 });
-const overviewTrendPoints = computed(() => chartPoints(overview.value?.sales.current.dailySales.map((item) => item.revenue) ?? [], maxDailyRevenue.value));
+const overviewTrendPoints = computed(() => chartPoints(overviewTrendSeries.value.map((item) => item.revenue), maxDailyRevenue.value));
 const salesTrendPoints = computed(() => chartPoints(salesTrendSeries.value.map((item) => item.revenue), maxSalesTrend.value));
 const linePath = (points: { x: number; y: number }[]) => points.map((point) => `${point.x},${point.y}`).join(' ');
 const areaPath = (points: { x: number; y: number }[]) => points.length ? `M ${points[0].x} 210 L ${points.map((point) => `${point.x} ${point.y}`).join(' L ')} L ${points[points.length - 1].x} 210 Z` : '';
@@ -373,16 +397,13 @@ async function loadOverview() {
   loading.value = true;
   error.value = '';
   try {
-    const headers = { Authorization: `Bearer ${props.token}` };
-    const [overviewResponse, foundationResponse] = await Promise.all([
-      fetch(`${props.apiBaseUrl}/management/overview?storeId=${encodeURIComponent(props.storeId)}&month=${month.value}`, { headers }),
-      fetch(`${props.apiBaseUrl}/management/data-foundation?storeId=${encodeURIComponent(props.storeId)}`, { headers }),
+    const [overviewData, foundationData] = await Promise.all([
+      managementRequest<Overview>(`/management/overview?storeId=${encodeURIComponent(props.storeId)}&month=${month.value}`),
+      managementRequest<DataFoundation>(`/management/data-foundation?storeId=${encodeURIComponent(props.storeId)}`),
     ]);
-    const [overviewBody, foundationBody] = await Promise.all([overviewResponse.json(), foundationResponse.json()]);
-    if (!overviewResponse.ok) throw new Error(Array.isArray(overviewBody.message) ? overviewBody.message.join('，') : overviewBody.message || '经营数据加载失败');
-    if (!foundationResponse.ok) throw new Error(Array.isArray(foundationBody.message) ? foundationBody.message.join('，') : foundationBody.message || '数据基础检查失败');
-    overview.value = overviewBody.data;
-    foundation.value = foundationBody.data;
+    overview.value = overviewData;
+    foundation.value = foundationData;
+    if (canSection('sales')) void Promise.all([loadOverviewTrend(), loadOverviewHotProducts()]);
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '经营数据加载失败';
   } finally {
@@ -390,13 +411,62 @@ async function loadOverview() {
   }
 }
 
+function isoDate(date: Date) { return date.toISOString().slice(0, 10); }
+function overviewRange(period: OverviewTrendPeriod | OverviewHotPeriod) {
+  const end = new Date(`${today}T00:00:00Z`);
+  const start = new Date(end);
+  if (period === 'DAY') return { from: today, to: today, dimension: 'DAY' as const };
+  if (period === 'WEEK') start.setUTCDate(start.getUTCDate() - 6);
+  if (period === 'MONTH') start.setUTCDate(1);
+  if (period === 'QUARTER') { start.setUTCMonth(Math.floor(start.getUTCMonth() / 3) * 3, 1); }
+  if (period === 'YEAR') start.setUTCMonth(0, 1);
+  return { from: isoDate(start), to: today, dimension: period === 'YEAR' ? 'MONTH' as const : 'DAY' as const };
+}
+async function loadOverviewTrend() {
+  if (!props.storeId || !canSection('sales')) return;
+  overviewWidgetsLoading.value = true; overviewWidgetError.value = '';
+  try {
+    const range = overviewRange(overviewTrendPeriod.value);
+    const params = new URLSearchParams({ storeId: props.storeId, ...range });
+    const result = await managementRequest<SalesAnalysis>(`/management/sales-analysis?${params.toString()}`);
+    if (!result?.metrics || !Array.isArray(result.trend)) throw new Error('销售趋势数据格式不完整');
+    overviewTrendAnalysis.value = result;
+  } catch (reason) { overviewWidgetError.value = reason instanceof Error ? reason.message : '销售趋势加载失败'; }
+  finally { overviewWidgetsLoading.value = false; }
+}
+async function loadOverviewHotProducts() {
+  if (!props.storeId || !canSection('sales')) return;
+  overviewWidgetsLoading.value = true; overviewWidgetError.value = '';
+  try {
+    const range = overviewRange(overviewHotPeriod.value);
+    const params = new URLSearchParams({ storeId: props.storeId, ...range });
+    const result = await managementRequest<SalesAnalysis>(`/management/sales-analysis?${params.toString()}`);
+    if (!Array.isArray(result?.topProducts)) throw new Error('热销商品数据格式不完整');
+    overviewHotAnalysis.value = result;
+  } catch (reason) { overviewWidgetError.value = reason instanceof Error ? reason.message : '热销商品加载失败'; }
+  finally { overviewWidgetsLoading.value = false; }
+}
+function selectOverviewTrend(period: OverviewTrendPeriod) { overviewTrendPeriod.value = period; void loadOverviewTrend(); }
+function selectOverviewHot(period: OverviewHotPeriod) { overviewHotPeriod.value = period; void loadOverviewHotProducts(); }
+
 async function managementRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${props.apiBaseUrl}${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${props.token}`, ...(init?.headers ?? {}) },
   });
-  const body = await response.json();
+  const responseText = await response.text();
+  let body: { message?: string | string[]; data?: T } = {};
+  if (responseText.trim()) {
+    try {
+      body = JSON.parse(responseText);
+    } catch {
+      throw new Error(response.ok
+        ? '经营 API 返回了无法识别的数据，请重启前后端服务'
+        : `经营 API 暂时不可用（HTTP ${response.status}），请检查后端和数据库是否已启动`);
+    }
+  }
   if (!response.ok) throw new Error(Array.isArray(body.message) ? body.message.join('，') : body.message || '请求失败');
+  if (!responseText.trim()) throw new Error('经营 API 返回空响应，请检查后端和数据库是否已启动');
   return body.data as T;
 }
 
@@ -610,6 +680,11 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
       <div v-else-if="activeSection === 'system'" class="management-filters"><button type="button" :disabled="posLoading || posRunning" @click="loadSystemManagement">{{ posLoading ? '加载中…' : '刷新状态' }}</button></div>
     </header>
 
+    <details class="page-guide" :open="activeSection !== 'overview'">
+      <summary>本页包含什么</summary>
+      <div><p>{{ currentGuide.purpose }}</p><ul><li v-for="item in currentGuide.includes" :key="item">{{ item }}</li></ul><strong>{{ currentGuide.decision }}</strong></div>
+    </details>
+
     <div v-if="error" class="management-alert error" role="alert"><span>{{ error }}。本次数据未能更新，已显示的内容可能不是最新结果。</span><button class="text-action" type="button" :disabled="pageBusy" @click="retryCurrentPage">重新加载</button></div>
     <p v-if="pageBusy" class="page-load-status" role="status">正在更新{{ currentSection.label }}…</p>
     <template v-if="activeSection === 'overview'">
@@ -617,58 +692,45 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
     <div class="data-freshness" aria-label="数据更新时间"><span>库存更新：{{ dateTime(foundation?.quality.inventory.latestUpdatedAt ?? null) }}</span><span>POS 最近成功同步：{{ dateTime(overview?.lastPosSyncAt ?? null) }}</span><button v-if="canSection('system')" class="text-action" type="button" @click="openDataCenter()">查看数据检查</button></div>
 
     <template v-if="overview">
-      <div class="management-kpis">
-        <article><span>本月净销售额</span><strong>{{ money(overview.sales.current.netRevenue) }}</strong><small :class="comparisonClass(overview.sales.comparison.netRevenuePercent)">较上月 {{ percent(overview.sales.comparison.netRevenuePercent) }}</small></article>
-        <article><span>本月订单</span><strong>{{ overview.sales.current.orderCount }}</strong><small :class="comparisonClass(overview.sales.comparison.orderCountPercent)">较上月 {{ percent(overview.sales.comparison.orderCountPercent) }}</small></article>
-        <article><span>销售件数</span><strong>{{ number(overview.sales.current.unitsSold) }}</strong><small :class="comparisonClass(overview.sales.comparison.unitsSoldPercent)">较上月 {{ percent(overview.sales.comparison.unitsSoldPercent) }}</small></article>
-        <article><span>平均客单价</span><strong>{{ money(overview.sales.current.averageOrderValue) }}</strong><small :class="comparisonClass(overview.sales.comparison.averageOrderValuePercent)">较上月 {{ percent(overview.sales.comparison.averageOrderValuePercent) }}</small></article>
-        <article class="inventory-kpi"><span>当前库存</span><strong>{{ number(overview.inventory.totalQuantity) }} 件</strong><small>{{ overview.inventory.productCount }} 种商品 · {{ overview.inventory.batchCount }} 个批次</small></article>
-        <article class="expiry-kpi"><span>到期关注</span><strong>{{ number(overview.inventory.expiryAttentionQuantity) }} 件</strong><small>已过期、紧急、预警及提前关注</small></article>
+      <div class="overview-metric-strip" aria-label="经营核心指标">
+        <article><i class="metric-symbol sales">$</i><span>本月净销售额<strong>{{ money(overview.sales.current.netRevenue) }}</strong><small :class="comparisonClass(overview.sales.comparison.netRevenuePercent)">较上月 {{ percent(overview.sales.comparison.netRevenuePercent) }}</small></span></article>
+        <article><i class="metric-symbol orders">#</i><span>本月订单<strong>{{ overview.sales.current.orderCount }} 单</strong><small :class="comparisonClass(overview.sales.comparison.orderCountPercent)">较上月 {{ percent(overview.sales.comparison.orderCountPercent) }}</small></span></article>
+        <article><i class="metric-symbol units">∑</i><span>销售件数<strong>{{ number(overview.sales.current.unitsSold) }} 件</strong><small :class="comparisonClass(overview.sales.comparison.unitsSoldPercent)">较上月 {{ percent(overview.sales.comparison.unitsSoldPercent) }}</small></span></article>
+        <article><i class="metric-symbol average">Ø</i><span>平均客单价<strong>{{ money(overview.sales.current.averageOrderValue) }}</strong><small :class="comparisonClass(overview.sales.comparison.averageOrderValuePercent)">较上月 {{ percent(overview.sales.comparison.averageOrderValuePercent) }}</small></span></article>
+        <article><i class="metric-symbol stock">▦</i><span>当前库存<strong>{{ number(overview.inventory.totalQuantity) }} 件</strong><small>{{ overview.inventory.productCount }} 种商品</small></span></article>
+        <article><i class="metric-symbol expiry">!</i><span>到期关注<strong>{{ number(overview.inventory.expiryAttentionQuantity) }} 件</strong><small>{{ overview.inventory.batchCount }} 个库存批次</small></span></article>
       </div>
 
-      <section class="management-card overview-actions">
-        <div class="card-title"><div><h3>经营关注与待办</h3><p>查看分析，或进入库存系统处理</p></div></div>
-        <div class="action-list">
-          <button type="button" @click="emit('open-report', 'receipts')"><span>待提交入库单</span><strong>{{ overview.inventory.activity.openReceiptCount }} 单</strong><small>查看入库单 →</small></button>
-          <button type="button" @click="emit('open-report', 'expiry')"><span>到期关注</span><strong>{{ number(overview.inventory.expiryAttentionQuantity) }} 件</strong><small>查看批次明细 →</small></button>
-          <button type="button" @click="emit('open-report', 'movements')"><span>本月库存作业</span><strong>{{ overview.inventory.activity.movementCountThisMonth }} 笔流水</strong><small>盘点修正 {{ overview.inventory.activity.stocktakeAdjustmentsThisMonth }} 笔 · 查看流水 →</small></button>
-        </div>
-        <p class="scope-note">最近库存流水：{{ dateTime(overview.inventory.activity.latestMovement?.createdAt ?? null) }}</p>
+      <p v-if="overviewWidgetError" class="inline-notice">{{ overviewWidgetError }}，仍显示最近一次成功结果。</p>
+      <div class="overview-command-grid">
+        <section class="management-card overview-sales-card">
+          <header class="overview-card-header"><div><small>NET SALES</small><h3>销售趋势</h3><p>{{ overviewTrendAnalysis?.period.from ?? `${overview.period.month}-01` }} 至 {{ overviewTrendAnalysis?.period.to ?? today }}</p></div><div class="overview-header-actions"><div class="period-tabs" role="group" aria-label="销售趋势周期"><button v-for="item in overviewTrendPeriods" :key="item.key" type="button" :aria-pressed="overviewTrendPeriod === item.key" :disabled="overviewWidgetsLoading" @click="selectOverviewTrend(item.key)">{{ item.label }}</button></div><button v-if="canSection('sales')" class="text-action" type="button" @click="openSalesFromOverview">销售详情 →</button></div></header>
+          <div class="trend-primary"><strong>{{ money(overviewTrendAnalysis?.metrics.netRevenue ?? overview.sales.current.netRevenue) }}</strong><span>{{ overviewTrendAnalysis?.metrics.orderCount ?? overview.sales.current.orderCount }} 单 · {{ number(overviewTrendAnalysis?.metrics.unitsSold ?? overview.sales.current.unitsSold) }} 件</span></div>
+          <p v-if="overviewTrendSeries.length === 1" class="scope-note">当前只有 1 个有记录的日期，尚不足以形成完整趋势。</p><div v-if="overviewTrendSeries.length" :key="overviewTrendPeriod" class="trend-line-chart overview-line-chart">
+            <svg viewBox="-150 0 1160 230" role="img" aria-label="销售趋势折线图"><defs><linearGradient id="overview-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#24d6e5" stop-opacity=".4"/><stop offset="100%" stop-color="#24d6e5" stop-opacity="0"/></linearGradient></defs><g class="chart-grid"><line v-for="y in [40,82,124,166,210]" :key="y" x1="0" :y1="y" x2="1000" :y2="y" /></g><g class="chart-values"><text v-for="y in [40,124,210]" :key="y" x="-12" :y="y + 5" text-anchor="end">{{ money(maxDailyRevenue * (210 - y) / 170) }}</text></g><path :d="areaPath(overviewTrendPoints)" fill="url(#overview-area)"/><polyline :points="linePath(overviewTrendPoints)"/><circle v-for="(point,index) in overviewTrendPoints" :key="index" :cx="point.x" :cy="point.y" r="4"><title>{{ overviewTrendSeries[index].period }} · {{ money(point.value) }}</title></circle></svg>
+            <div class="trend-axis"><span v-for="item in overviewTrendSeries.filter((_,index,rows) => index === 0 || index === rows.length - 1 || index % Math.max(1, Math.ceil(rows.length / 5)) === 0)" :key="item.period">{{ item.period.length > 7 ? item.period.slice(5) : item.period }}</span></div>
+          </div><p v-else class="management-empty">所选周期暂无已同步销售记录。</p>
+        </section>
+
+        <section class="management-card expiry-earnings-card">
+          <header class="overview-card-header"><div><small>EXPIRY WATCH</small><h3>库存临期预警</h3><p>按批次风险分层</p></div><button class="text-action" type="button" @click="emit('open-report', 'expiry')">查看明细 →</button></header>
+          <button class="expiry-earning-row expired" type="button" @click="emit('open-report', 'expiry')"><span>已过期<small>立即隔离处理</small></span><strong>{{ overview.inventory.expiry.expired }}</strong><i><b></b><b></b><b></b></i></button>
+          <button class="expiry-earning-row urgent" type="button" @click="emit('open-report', 'expiry')"><span>紧急临期<small>优先检查与销售</small></span><strong>{{ overview.inventory.expiry.urgent }}</strong><i><b></b><b></b><b></b></i></button>
+          <button class="expiry-earning-row warning" type="button" @click="emit('open-report', 'expiry')"><span>临期预警<small>进入近期处理清单</small></span><strong>{{ overview.inventory.expiry.warning }}</strong><i><b></b><b></b><b></b></i></button>
+          <button class="expiry-earning-row early" type="button" @click="emit('open-report', 'expiry')"><span>提前关注<small>持续观察周转</small></span><strong>{{ overview.inventory.expiry.early }}</strong><i><b></b><b></b><b></b></i></button>
+        </section>
+      </div>
+
+      <section class="overview-action-rail action-list" aria-label="经营关注与待办"><h3 class="visually-hidden">经营关注与待办</h3>
+        <button type="button" @click="emit('open-report', 'receipts')"><i>↧</i><span>待提交入库单<small>查看未完成的入库作业</small></span><strong>{{ overview.inventory.activity.openReceiptCount }} 单</strong></button>
+        <button type="button" @click="emit('open-report', 'expiry')"><i>⌛</i><span>到期关注<small>处理临期与过期批次</small></span><strong>{{ number(overview.inventory.expiryAttentionQuantity) }} 件</strong></button>
+        <button type="button" @click="emit('open-report', 'movements')"><i>⇄</i><span>本月库存作业<small>含盘点修正 {{ overview.inventory.activity.stocktakeAdjustmentsThisMonth }} 笔</small></span><strong>{{ overview.inventory.activity.movementCountThisMonth }} 笔流水</strong></button>
       </section>
 
-      <div class="management-grid">
-        <section class="management-card sales-trend">
-          <div class="card-title"><div><h3>本月销售走势</h3><p>{{ overview.period.month }} 每日净销售概览 · 退款 {{ money(overview.sales.current.refunds) }}</p></div><button v-if="canSection('sales')" class="text-action" type="button" @click="openSalesFromOverview">销售详情 →</button></div>
-          <p v-if="overview.sales.current.dailySales.length === 1" class="scope-note">当前只有 1 个有记录的日期；尚不足以形成多日趋势。</p>
-          <div v-if="overview.sales.current.dailySales.length" class="trend-line-chart">
-            <svg viewBox="-150 0 1160 230" role="img" aria-label="本月每日净销售趋势">
-              <defs><linearGradient id="overview-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#24d6e5" stop-opacity=".38"/><stop offset="100%" stop-color="#24d6e5" stop-opacity="0"/></linearGradient></defs>
-              <g class="chart-grid"><line v-for="y in [40,82,124,166,210]" :key="y" x1="0" :y1="y" x2="1000" :y2="y" /></g><g class="chart-values"><text v-for="y in [40,124,210]" :key="y" x="-12" :y="y + 5" text-anchor="end">{{ money(maxDailyRevenue * (210 - y) / 170) }}</text></g>
-              <path :d="areaPath(overviewTrendPoints)" fill="url(#overview-area)" />
-              <polyline :points="linePath(overviewTrendPoints)" />
-              <circle v-for="(point,index) in overviewTrendPoints" :key="index" :cx="point.x" :cy="point.y" r="4"><title>{{ overview.sales.current.dailySales[index].date }} · {{ money(point.value) }}</title></circle>
-            </svg>
-            <div class="trend-axis"><span v-for="day in overview.sales.current.dailySales.filter((_,index,rows) => index === 0 || index === rows.length - 1 || index % Math.max(1, Math.ceil(rows.length / 5)) === 0)" :key="day.date">{{ day.date.slice(5) }}</span></div>
-          </div>
-          <p v-else class="management-empty">本月暂无已同步销售记录。</p><details v-if="overview.sales.current.dailySales.length" class="trend-data"><summary>查看趋势数值</summary><p class="scope-note">仅列出接口返回日期；缺少记录不自动补零。</p><dl><div v-for="day in overview.sales.current.dailySales" :key="day.date"><dt>{{ day.date }}</dt><dd>{{ money(day.revenue) }}</dd></div></dl></details>
-        </section>
-
-        <section class="management-card expiry-panel">
-          <div class="card-title"><div><h3>库存临期预警</h3><p>按现有预警规则统计件数</p></div></div>
-          <div class="donut-analysis">
-            <div class="donut-chart" :style="{ background: expiryGradient }"><div><strong>{{ number(expiryTotal) }}</strong><span>关注件数</span></div></div>
-            <div class="donut-legend"><div class="expired"><i></i><span>已过期</span><strong>{{ overview.inventory.expiry.expired }}</strong></div><div class="urgent"><i></i><span>紧急临期</span><strong>{{ overview.inventory.expiry.urgent }}</strong></div><div class="warning"><i></i><span>临期预警</span><strong>{{ overview.inventory.expiry.warning }}</strong></div><div class="early"><i></i><span>提前关注</span><strong>{{ overview.inventory.expiry.early }}</strong></div></div>
-          </div>
-        </section>
-
-        <section class="management-card ranking">
-          <div class="card-title"><div><h3>热销商品 · 前 5 名</h3><p>{{ overview.period.month }} · 按商品销售金额排序</p></div><button v-if="canSection('sales')" class="text-action" type="button" @click="openSalesFromOverview">查看完整排行 →</button></div>
-          <ol v-if="overview.sales.current.topProducts.length"><li v-for="(item, index) in overview.sales.current.topProducts.slice(0,5)" :key="item.productName"><b>{{ index + 1 }}</b><span><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ number(item.quantity) }} 件</small></span><em>{{ money(item.revenue) }}</em></li></ol>
-          <p v-else class="management-empty">POS 同步后将在这里显示商品排行。</p>
-        </section>
-
-        <section class="management-card analysis-shortcuts"><div class="card-title"><div><h3>继续分析</h3><p>按经营问题进入明细</p></div></div><button v-if="canSection('products')" class="text-action" type="button" @click="productView = 'brands'; selectSection('products')">品牌销售与库存结构 →</button><button v-if="canSection('inventory')" class="text-action" type="button" @click="selectSection('inventory')">缺货、滞销与库存覆盖 →</button></section>
-      </div>
+      <section class="management-card hot-products-card">
+        <header class="overview-card-header"><div><small>TOP PRODUCTS</small><h3>热销商品 Top 10</h3><p>按销售金额排序，快速识别主力商品</p></div><div class="period-tabs" role="group" aria-label="热销商品周期"><button v-for="item in overviewHotPeriods" :key="item.key" type="button" :aria-pressed="overviewHotPeriod === item.key" :disabled="overviewWidgetsLoading" @click="selectOverviewHot(item.key)">{{ item.label }}</button></div></header>
+        <div v-if="(overviewHotAnalysis?.topProducts ?? overview.sales.current.topProducts).length" :key="overviewHotPeriod" class="hot-product-table-wrap"><table><thead><tr><th>排名</th><th>商品</th><th>品牌</th><th>销售件数</th><th>销售金额</th></tr></thead><tbody><tr v-for="(item,index) in (overviewHotAnalysis?.topProducts ?? overview.sales.current.topProducts).slice(0,10)" :key="`${item.productName}-${index}`"><td><b class="rank-badge" :class="{ podium: index < 3 }">{{ String(index + 1).padStart(2, '0') }}</b></td><td><strong>{{ item.productName }}</strong><span class="sales-share"><i :style="{ width: `${Math.max(8, item.revenue / Math.max(1, (overviewHotAnalysis?.topProducts ?? overview.sales.current.topProducts)[0]?.revenue ?? 1) * 100)}%` }"></i></span></td><td>{{ item.brandName || '未设置品牌' }}</td><td>{{ number(item.quantity) }} 件</td><td><strong>{{ money(item.revenue) }}</strong></td></tr></tbody></table></div><p v-else class="management-empty">所选周期暂无商品销售排行。</p>
+      </section>
     </template>
     </template>
 
@@ -747,6 +809,7 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
       </form>
       <p v-if="inventoryLoading" class="inventory-load-status" role="status">正在更新库存分析，请稍候…</p>
       <p v-else-if="!inventoryOperations && !error" class="system-empty">选择观察期并查询，查看当前门店的库存经营情况。</p>
+      <p v-if="inventoryOperations && !inventoryOperations.salesCoverage.reliable" class="management-alert pending"><strong>销售历史不足</strong><span>{{ inventoryOperations.coverageNotice }} 缺货与低库存仍可使用，但积压和滞销需要等待更多销售历史。</span></p>
       <details v-if="inventoryOperations" class="inventory-method-note"><summary>统计口径与数据来源</summary><p>{{ inventoryOperations.turnoverNotice }}</p><p>库存来自正式库存系统，销量来自已同步的 POS 订单。若销售历史未补齐，无销量不代表实际未售出，覆盖天数和滞销结论仅供关注。</p><p>缺货指启用商品的当前库存为零，不等于必须采购。积压筛选为覆盖超过90天，滞销按既有多条件规则判断，两类可以重叠。</p></details><p v-if="inventoryOperations" class="scope-note">销量基于已同步记录；补货或清库存前请核对销售历史。<button v-if="canSection('system')" type="button" class="text-action" @click="openDataCenter('sync')">查看同步记录 →</button></p>
       <template v-if="inventoryOperations">
         <div class="inventory-operation-kpis">
@@ -754,7 +817,7 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
           <article><button class="kpi-filter" type="button" @click="inventoryStatusFilter = 'OUT_OF_STOCK'; inventoryPage = 1" aria-label="筛选缺货商品"><span>缺货商品</span><strong>{{ inventoryOperations.summary.outOfStockProducts }}</strong><small>启用但当前库存为0</small></button></article>
           <article><button class="kpi-filter" type="button" @click="inventoryStatusFilter = 'LOW'; inventoryPage = 1" aria-label="筛选低库存商品"><span>低库存商品</span><strong>{{ inventoryOperations.summary.lowStockProducts }}</strong><small>达到已配置最低库存</small></button></article>
           <article><button class="kpi-filter" type="button" @click="inventoryStatusFilter = 'SLOW'; inventoryPage = 1" aria-label="筛选滞销关注"><span>滞销关注</span><strong>{{ inventoryOperations.summary.slowMovingProducts }}</strong><small>有库存且销量不足</small></button></article>
-          <article><span>观察商品</span><strong>{{ inventoryOperations.summary.productCount }}</strong><small>最近 {{ inventoryOperations.period.lookbackDays }} 天POS销量</small></article>
+          <article><span>观察商品</span><strong>{{ inventoryOperations.summary.productCount }}</strong><small>已观察 {{ inventoryOperations.salesCoverage.observedDays }} 天POS销售跨度</small></article>
         </div>
         <details class="inventory-analysis-disclosure">
         <summary>库存覆盖结构 <span>查看有库存商品预计可售天数</span></summary>
@@ -778,7 +841,7 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
             <label>商品分类<select v-model="inventoryCategoryFilter"><option value="">全部分类</option><option v-for="category in inventoryCategories" :key="category" :value="category">{{ category }}</option></select></label>
             <label>排序<select v-model="inventorySort"><option value="INVENTORY_DESC">库存从高到低</option><option value="SALES_DESC">销量从高到低</option><option value="COVERAGE_DESC">覆盖天数从高到低</option><option value="LAST_SALE_ASC">最久未销售优先</option><option value="NAME_ASC">商品名称排序</option></select></label>
           </div>
-          <button class="text-action clear-table-filter" type="button" @click="clearInventoryFilters">清除表格筛选</button><div class="product-table-wrap inventory-scroll-table"><table><thead><tr><th>商品</th><th>库存</th><th>最低库存</th><th>观察期销量</th><th>日均销量</th><th>覆盖天数</th><th>最后销售</th><th>状态</th></tr></thead><tbody><tr v-for="item in pagedInventoryProducts" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }}</small></td><td>{{ number(item.currentInventory) }}</td><td>{{ item.minimumStock ?? '未配置' }}</td><td>{{ number(item.soldUnits) }}</td><td>{{ number(item.dailyVelocity) }}</td><td>{{ item.coverageDays === null ? '无销量' : `${number(item.coverageDays)} 天` }}</td><td>{{ item.daysSinceLastSale === null ? '无记录' : `${item.daysSinceLastSale} 天前` }}</td><td><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ item.stockStatus === 'IN_STOCK' ? (item.slowMoving ? '滞销关注' : '正常') : item.stockStatus === 'LOW' ? '低库存' : '缺货' }}</b></td></tr></tbody></table><p v-if="!pagedInventoryProducts.length" class="system-empty">当前筛选条件没有商品。</p></div>
+          <button class="text-action clear-table-filter" type="button" @click="clearInventoryFilters">清除表格筛选</button><div class="product-table-wrap inventory-scroll-table"><table><thead><tr><th>商品</th><th>库存</th><th>最低库存</th><th>观察期销量</th><th>日均销量</th><th>覆盖天数</th><th>最后销售</th><th>状态</th></tr></thead><tbody><tr v-for="item in pagedInventoryProducts" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }}</small></td><td>{{ number(item.currentInventory) }}</td><td>{{ item.minimumStock ?? '未配置' }}</td><td>{{ number(item.soldUnits) }}</td><td>{{ number(item.dailyVelocity) }}</td><td>{{ item.coverageDays === null ? (inventoryOperations.salesCoverage.reliable ? '无销量' : '数据不足') : `${number(item.coverageDays)} 天` }}</td><td>{{ item.daysSinceLastSale === null ? '无记录' : `${item.daysSinceLastSale} 天前` }}</td><td><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ item.stockStatus === 'IN_STOCK' ? (item.slowMoving ? '滞销关注' : '正常') : item.stockStatus === 'LOW' ? '低库存' : '缺货' }}</b></td></tr></tbody></table><p v-if="!pagedInventoryProducts.length" class="system-empty">当前筛选条件没有商品。</p></div>
           <div class="inventory-table-pagination">
             <span>显示 {{ filteredInventoryProducts.length ? (inventoryPage - 1) * inventoryPageSize + 1 : 0 }}–{{ Math.min(inventoryPage * inventoryPageSize, filteredInventoryProducts.length) }} / 共 {{ filteredInventoryProducts.length }} 种商品</span>
             <label>每页<select v-model.number="inventoryPageSize"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select></label>
@@ -799,7 +862,7 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
         <div v-if="managementAccess?.capabilities.permissionsManage && tagView === 'dictionary'" class="dictionary-actions"><button class="secondary-action" type="button" @click="resetInsightTagEditor(); tagEditorOpen = true">新增标签</button><span class="scope-note">标签仅用于商品经营描述，不会自动改写商品主档品类。</span></div>
         <section v-if="managementAccess?.capabilities.permissionsManage && tagView === 'dictionary' && tagEditorOpen" class="system-card tag-definition-editor"><div class="card-title"><div><h3>{{ editingTagId ? '编辑标签' : '新增标签' }}</h3><p>由你定义名称、类型、上级、排序和启停状态，不需要填写技术代码</p></div><button type="button" class="editor-reset" @click="resetInsightTagEditor">关闭编辑</button></div><div class="tag-definition-form"><label>标签名称<input v-model="newTagName" maxlength="120" placeholder="例如：中老年营养" /></label><label>标签类型<select v-model="newTagDimension"><option v-for="dimension in productInsights.dimensions" :key="dimension.code" :value="dimension.code">{{ dimension.name }}</option></select></label><label>上级分类<select v-model="newTagParentId"><option value="">无上级（一级标签）</option><option v-for="tag in productInsights.tags.filter(item => !item.parentId && item.id !== editingTagId)" :key="tag.id" :value="tag.id">{{ tag.name }}</option></select></label><label>说明<input v-model="newTagDescription" maxlength="255" placeholder="选填：这个标签的使用口径" /></label><label>排序<input v-model.number="newTagSortOrder" type="number" /></label><label>状态<select v-model="newTagStatus"><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option></select></label><button type="button" :disabled="insightLoading || !newTagName.trim()" @click="saveInsightTag">{{ editingTagId ? '保存修改' : '新增标签' }}</button></div></section>
         <details v-if="managementAccess?.capabilities.permissionsManage && tagView === 'products'" class="system-card insight-editor"><summary>给商品添加经营标签</summary><div class="card-title"><div><h3>标记商品需求与适用人群</h3><p>选择正式商品与启用标签，并填写判断依据</p></div></div><div class="insight-editor-form"><label>商品<select v-model="insightProductId"><option value="">请选择商品</option><option v-for="item in productInsights.products" :key="item.productId" :value="item.productId">{{ item.productName }}</option></select></label><label>标签<select v-model="insightTagCode"><option value="">请选择标签</option><optgroup v-for="dimension in productInsights.dimensions" :key="dimension.code" :label="dimension.name"><option v-for="tag in productInsights.tags.filter(item => item.dimension === dimension.code && item.status === 'ACTIVE')" :key="tag.code" :value="tag.code">{{ tag.parentId ? `${productInsights.tags.find(parent => parent.id === tag.parentId)?.name} / ` : '' }}{{ tag.name }}</option></optgroup></select></label><label>置信度<select v-model="insightConfidence"><option value="LOW">低</option><option value="MEDIUM">中</option><option value="HIGH">高</option></select></label><label class="evidence-field">判断依据<input v-model="insightEvidence" maxlength="255" placeholder="例如：商品明确标注儿童配方；鱼油主要对应心血管需求" /></label><button type="button" :disabled="insightLoading || !insightProductId || !insightTagCode" @click="assignInsightTag">保存标签</button></div></details><p v-if="insightMessage" class="insight-success" role="status">{{ insightMessage }}</p>
-        <section v-show="tagView === 'products'" class="system-card insight-product-list"><div class="card-title"><div><h3>商品标签覆盖</h3><p>仅已审核标签进入后续消费需求分析</p></div><span>{{ productInsights.products.length }} 种</span></div><div class="insight-products management-detail-scroll"><article v-for="item in pagedInsightProducts" :key="item.productId"><div><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }} · {{ item.sku }}</small></div><div class="insight-tags"><span v-for="assignment in item.assignments" :key="assignment.id" :class="assignment.reviewStatus.toLowerCase()"><b>{{ assignment.tag.name }}</b><small>{{ assignment.confidence === 'HIGH' ? '高' : assignment.confidence === 'MEDIUM' ? '中' : '低' }}置信度 · {{ assignment.reviewStatus === 'APPROVED' ? '已审核' : '待复核' }}</small></span><em v-if="!item.assignments.length">尚未标记</em></div></article></div><div class="inventory-table-pagination"><span>共 {{ productInsights.products.length }} 种商品</span><label>每页<select v-model.number="insightDetailPageSize"><option :value="50">50</option><option :value="100">100</option></select></label><div><button type="button" :disabled="insightDetailPage <= 1" @click="insightDetailPage--">上一页</button><b>{{ insightDetailPage }} / {{ insightDetailPageCount }}</b><button type="button" :disabled="insightDetailPage >= insightDetailPageCount" @click="insightDetailPage++">下一页</button></div></div></section>
+        <section v-show="tagView === 'products'" class="system-card insight-product-list"><div class="card-title"><div><h3>商品标签覆盖</h3><p>展示全部启用商品；仅已审核标签进入后续消费需求分析</p></div><span>{{ productInsights.products.length }} 种</span></div><div class="insight-products management-detail-scroll"><article v-for="item in pagedInsightProducts" :key="item.productId"><div><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }} · {{ item.sku }}</small></div><div class="insight-tags"><span v-for="assignment in item.assignments" :key="assignment.id" :class="assignment.reviewStatus.toLowerCase()"><b>{{ assignment.tag.name }}</b><small>{{ assignment.confidence === 'HIGH' ? '高' : assignment.confidence === 'MEDIUM' ? '中' : '低' }}置信度 · {{ assignment.reviewStatus === 'APPROVED' ? '已审核' : '待复核' }}</small></span><em v-if="!item.assignments.length">尚未标记</em></div></article></div><div class="inventory-table-pagination"><span>共 {{ productInsights.products.length }} 种商品</span><label>每页<select v-model.number="insightDetailPageSize"><option :value="50">50</option><option :value="100">100</option></select></label><div><button type="button" :disabled="insightDetailPage <= 1" @click="insightDetailPage--">上一页</button><b>{{ insightDetailPage }} / {{ insightDetailPageCount }}</b><button type="button" :disabled="insightDetailPage >= insightDetailPageCount" @click="insightDetailPage++">下一页</button></div></div></section>
       </template>
     </section>
 
@@ -909,6 +972,7 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
 <style scoped src="./inventory-master.css"></style>
 
 <style scoped>
+/* finesse-ui · operations cockpit · compact command strip / responsive navigation / feedback motion */
 /* finesse · product-ui · evidence-first management cockpit */
 .management-workspace{display:grid;grid-template-columns:230px minmax(0,1fr);gap:18px;color:#17243a}.management-sidebar{display:flex;flex-direction:column;min-height:720px;padding:18px 12px;border:1px solid #dce8f7;border-radius:22px;background:linear-gradient(180deg,#13243f,#0d1a30);box-shadow:0 18px 45px rgb(28 52 89 / 15%)}.sidebar-heading{display:grid;gap:5px;padding:8px 10px 18px;color:#fff}.sidebar-heading strong{font-size:20px}.sidebar-heading small{overflow:hidden;color:#9eb2d0;text-overflow:ellipsis;white-space:nowrap}.management-sidebar nav{display:grid;gap:5px}.management-sidebar button{position:relative;display:grid;gap:3px;width:100%;padding:12px;border:0;border-radius:13px;color:#dbe8fa;background:transparent;text-align:left}.management-sidebar button span{font-weight:850}.management-sidebar button small{color:#8fa4c2;font-size:11px}.management-sidebar button em{position:absolute;top:10px;right:9px;padding:2px 5px;border-radius:7px;color:#93a7c5;background:rgb(255 255 255 / 8%);font-size:9px;font-style:normal}.management-sidebar button.locked{opacity:.48;cursor:not-allowed}.management-sidebar button.locked em{color:#ffd8a8;background:rgb(255 174 66 / 12%)}.management-sidebar button.active{color:#fff;background:linear-gradient(135deg,#1eb6ed,#3868f4);box-shadow:0 10px 22px rgb(26 103 226 / 28%)}.management-sidebar button.active small,.management-sidebar button.active em{color:#eaf6ff}.management-sidebar>p{margin:auto 8px 4px;color:#7187a8;font-size:10px;line-height:1.7}.management-content{display:grid;align-content:start;gap:18px;min-width:0}.management-heading{display:flex;align-items:end;justify-content:space-between;gap:24px;padding:24px 26px;border:1px solid #dce8f7;border-radius:24px;background:linear-gradient(135deg,#f8fcff,#eef5ff 55%,#eefbf8);box-shadow:0 18px 45px rgb(46 88 145 / 10%)}.management-heading p{margin:0 0 5px;color:#2188f3;font-size:12px;font-weight:900;letter-spacing:.15em}.management-heading h2{margin:0;font-size:30px}.management-heading span{display:block;margin-top:6px;color:#6d7b91}.management-filters{display:flex;align-items:end;gap:10px}.management-filters label{display:grid;gap:6px;color:#69778d;font-size:12px;font-weight:800}.management-filters input,.management-filters button{min-height:42px;border:1px solid #cfddf0;border-radius:12px;background:#fff;padding:0 14px;font:inherit}.management-filters button{color:#fff;border:0;background:linear-gradient(135deg,#17b8f4,#3567f4);font-weight:850}.management-alert{display:flex;gap:8px;padding:15px 18px;border-radius:16px}.management-alert span{color:#59677b}.management-alert.pending{background:#fff8df;border:1px solid #f4d982}.management-alert.error{color:#9c2f38;background:#fff0f1;border:1px solid #f2bcc1}.management-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}.management-kpis article{display:grid;gap:8px;min-height:120px;padding:18px;border:1px solid #dfebf8;border-radius:19px;background:linear-gradient(145deg,#fff,#f4f8ff);box-shadow:0 12px 28px rgb(43 75 120 / 8%)}.management-kpis span{color:#68778d;font-size:13px;font-weight:800}.management-kpis strong{font-size:25px}.management-kpis small{color:#728097}.management-kpis .up{color:#159766}.management-kpis .down{color:#d3535a}.management-kpis .inventory-kpi{background:linear-gradient(145deg,#ecf6ff,#eaf2ff)}.management-kpis .expiry-kpi{background:linear-gradient(145deg,#fff7ec,#fff0f1)}.management-grid{display:grid;grid-template-columns:1.35fr .65fr;gap:16px}.management-card{min-height:280px;padding:22px;border:1px solid #dfe9f6;border-radius:22px;background:rgb(255 255 255 / 92%);box-shadow:0 14px 35px rgb(39 73 116 / 9%)}.card-title{display:flex;justify-content:space-between;gap:12px}.card-title h3{margin:0;font-size:19px}.card-title p{margin:5px 0 0;color:#8290a3;font-size:13px}.card-title>span{color:#d05b68;font-weight:750}.bar-chart{display:flex;align-items:end;gap:8px;height:210px;margin-top:20px;padding:20px 8px 0;border-bottom:1px solid #dce5f1;overflow-x:auto}.bar-column{display:grid;align-items:end;gap:7px;min-width:28px;height:100%;text-align:center}.bar-column b{position:relative;display:block;min-height:5px;border-radius:7px 7px 2px 2px;background:linear-gradient(180deg,#24b9ef,#4264f0)}.bar-column i{display:none;position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);padding:4px 6px;border-radius:6px;color:#fff;background:#17243a;font-size:10px;font-style:normal;white-space:nowrap}.bar-column:hover i{display:block}.bar-column small{font-size:10px;color:#8390a2}.expiry-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:24px}.expiry-grid div{display:grid;gap:8px;padding:18px;border-radius:16px}.expiry-grid strong{font-size:27px}.expired{color:#a8444e;background:#fff0f1}.urgent{color:#b46623;background:#fff3e5}.warning{color:#947112;background:#fff9dc}.early{color:#277493;background:#eaf8ff}.ranking ol{display:grid;gap:5px;margin:16px 0 0;padding:0;list-style:none}.ranking li{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #edf1f6}.ranking li>b{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;color:#2878ec;background:#e8f2ff}.ranking li span{display:grid;gap:3px;min-width:0}.ranking li span strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ranking li small{color:#8490a0}.ranking li em{color:#25334a;font-style:normal;font-weight:850}.management-empty{display:grid;place-items:center;min-height:190px;color:#8995a6}.sync-note{margin:0;color:#8490a0;font-size:12px;text-align:right}.planned-section{display:grid;place-items:center;min-height:520px;padding:50px;border:1px dashed #bfd0e8;border-radius:24px;background:linear-gradient(145deg,#fbfdff,#f2f7ff);text-align:center}.planned-icon{display:grid;width:62px;height:62px;place-items:center;border-radius:18px;color:#fff;background:linear-gradient(135deg,#17b8f4,#3567f4);font-size:28px}.planned-section>p{margin:18px 0 5px;color:#3381e5;font-size:11px;font-weight:900;letter-spacing:.14em}.planned-section h3{margin:0;font-size:28px}.planned-section>span{max-width:650px;margin:12px 0 25px;color:#6b7b91;line-height:1.7}.planned-modules{display:flex;justify-content:center;flex-wrap:wrap;gap:9px}.planned-modules b{padding:9px 13px;border:1px solid #d6e3f4;border-radius:999px;color:#53667f;background:#fff;font-size:12px}
 .management-workspace{align-items:stretch;min-height:calc(100dvh - 112px)}
@@ -976,6 +1040,8 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
 @media(max-width:390px){.store-comparison-filters,.store-kpis,.store-card-grid,.store-rankings,.store-result-card dl{grid-template-columns:1fr}.store-comparison-filters button,.store-rankings>div:last-child{grid-column:auto}}
 @media(max-width:390px){.insight-search,.insight-kpis,.tag-definition-form,.insight-editor-form{grid-template-columns:1fr}.insight-editor-form .evidence-field{grid-column:auto}}
 .management-mobile-nav,.management-more-overlay{display:none}
+.page-guide{padding:14px 16px;border:1px solid var(--dash-line);border-radius:18px;background:linear-gradient(145deg,#101b2b,#0b1422)}.page-guide summary{cursor:pointer;color:var(--dash-cyan);font-weight:850}.page-guide>div{display:grid;grid-template-columns:minmax(180px,.9fr) minmax(280px,1.4fr);gap:10px 24px;margin-top:12px}.page-guide p,.page-guide strong{margin:0;color:var(--dash-muted);font-size:13px}.page-guide strong{color:#b7c7dd}.page-guide ul{display:flex;flex-wrap:wrap;gap:7px;margin:0;padding:0;list-style:none}.page-guide li{padding:5px 9px;border:1px solid #26364d;border-radius:999px;color:#b9c8dc;background:#101d30;font-size:12px}
+@media(max-width:720px){.page-guide>div{grid-template-columns:1fr}.page-guide ul{gap:5px}}
 .management-workspace .store-result-card.selected{color:var(--dash-text)!important;border-color:#287a91!important;background:linear-gradient(145deg,#102737,#101b2c)!important;box-shadow:inset 0 1px 0 rgb(86 222 228 / 9%),0 14px 34px rgb(0 0 0 / 24%)!important}
 .management-workspace .store-result-card.selected .card-title h3{color:#edf7ff}.management-workspace .store-result-card.selected .card-title p{color:#7f91aa}.management-workspace .store-result-card.selected .card-title>span{color:#45d5df}
 .management-workspace .store-result-card.selected dl>div{border:1px solid #1e3046!important;background:#0d1828!important}.management-workspace .store-result-card.selected dt{color:#7e8fa7!important}.management-workspace .store-result-card.selected dd{color:#edf4ff!important}
@@ -1042,6 +1108,30 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
   .management-more-sheet>div>button>span{grid-row:1/3;align-self:center;color:#35d2e1;font-size:24px;text-align:center}.management-more-sheet>div>button strong{align-self:end}.management-more-sheet>div>button small{align-self:start;overflow:hidden;color:#8190a6;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.management-more-sheet>div>button:disabled{opacity:.45}
   .management-heading,.management-alert,.management-card,.system-card{scroll-margin-top:12px}.management-kpis strong,.sales-kpis strong,.product-kpis strong,.inventory-operation-kpis strong,.store-kpis strong,.insight-kpis strong,td{font-variant-numeric:tabular-nums}
 }
+
+/* Overview composition mirrors the supplied dashboard reference while preserving the existing data contract. */
+.overview-metric-strip{display:grid;grid-template-columns:repeat(6,minmax(148px,1fr));gap:8px;overflow-x:auto;padding:2px 0 5px;scrollbar-width:thin;scroll-snap-type:x proximity}
+.overview-metric-strip article{position:relative;display:grid;grid-template-columns:38px minmax(0,1fr);align-items:center;gap:10px;min-width:0;min-height:76px;padding:11px 12px;border:1px solid #1f2d42;border-radius:13px;background:linear-gradient(150deg,#111b2b,#0a121f);box-shadow:inset 0 1px 0 rgb(255 255 255 / 4%);scroll-snap-align:start;animation:management-card-enter .35s cubic-bezier(.22,1,.36,1) both;transition:border-color .2s ease,transform .2s ease,background .2s ease}
+.overview-metric-strip article:hover{transform:translateY(-2px);border-color:#35516f;background:#122037}.overview-metric-strip article:nth-child(2){animation-delay:.035s}.overview-metric-strip article:nth-child(3){animation-delay:.07s}.overview-metric-strip article:nth-child(4){animation-delay:.105s}.overview-metric-strip article:nth-child(5){animation-delay:.14s}.overview-metric-strip article:nth-child(6){animation-delay:.175s}
+.metric-symbol{display:grid;width:36px;height:36px;place-items:center;border:1px solid rgb(255 255 255 / 10%);border-radius:50%;color:#fff;background:#315ed0;box-shadow:0 0 18px rgb(49 94 208 / 24%);font-size:16px;font-style:normal;font-weight:900}.metric-symbol.orders{background:#12a8c8}.metric-symbol.units{background:#6f5ce2}.metric-symbol.average{background:#d89d22}.metric-symbol.stock{background:#249c75}.metric-symbol.expiry{background:#d04c68}
+.overview-metric-strip article>span{display:grid;min-width:0;gap:2px;color:#8391a6;font-size:10px;font-weight:750;white-space:nowrap}.overview-metric-strip strong{overflow:hidden;color:#f2f7ff;font-size:15px;font-variant-numeric:tabular-nums;text-overflow:ellipsis}.overview-metric-strip small{overflow:hidden;color:#69798f;font-size:9px;text-overflow:ellipsis}.overview-metric-strip .up{color:#43d8a2}.overview-metric-strip .down{color:#ff7b88}
+.overview-command-grid{display:grid;grid-template-columns:minmax(0,1.72fr) minmax(260px,.68fr);gap:12px}.overview-command-grid>.management-card{min-height:0;padding:17px;border-radius:16px}.overview-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.overview-card-header small{color:#41cedc;font-size:9px;font-weight:900;letter-spacing:.15em}.overview-card-header h3{margin:4px 0 2px;color:#f2f7ff;font-size:17px}.overview-card-header p{margin:0;color:#738299;font-size:11px}
+.overview-header-actions{display:flex;align-items:center;gap:10px}.visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
+.period-tabs{display:flex;flex-wrap:wrap;gap:4px;padding:3px;border:1px solid #202f44;border-radius:10px;background:#09111d}.period-tabs button{min-height:30px;padding:5px 10px;border:0;border-radius:7px;color:#75849a;background:transparent;font:inherit;font-size:11px;font-weight:800;cursor:pointer;transition:color .18s ease,background .18s ease,transform .16s ease}.period-tabs button:hover{color:#d8e7fa}.period-tabs button:active{transform:scale(.96)}.period-tabs button[aria-pressed=true]{color:#f5fbff;background:linear-gradient(135deg,#176c8b,#475bc8);box-shadow:0 5px 14px rgb(27 116 169 / 24%)}.period-tabs button:disabled{cursor:wait}
+.trend-primary{display:flex;align-items:baseline;gap:12px;margin-top:14px}.trend-primary strong{color:#38d4df;font-size:clamp(25px,3vw,40px);font-variant-numeric:tabular-nums;letter-spacing:-.035em}.trend-primary span{color:#78889e;font-size:11px}.overview-line-chart{min-height:190px;margin-top:2px}.overview-line-chart svg{height:190px}.overview-line-chart polyline{stroke-width:4}.overview-line-chart circle{animation-delay:.72s}
+.expiry-earnings-card{display:grid;align-content:start;gap:0}.expiry-earning-row{display:grid;grid-template-columns:minmax(0,1fr) auto 56px;align-items:center;gap:9px;min-height:66px;padding:10px 2px;color:inherit;border:0;border-bottom:1px solid #1c293c;background:transparent;text-align:left;cursor:pointer;transition:background .18s ease,padding .18s ease}.expiry-earning-row:last-child{border-bottom:0}.expiry-earning-row:hover{padding-inline:8px;background:rgb(255 255 255 / 2%)}.expiry-earning-row span{display:grid;gap:3px;color:#dce6f4;font-size:12px;font-weight:800}.expiry-earning-row small{color:#69798f;font-size:9px;font-weight:500}.expiry-earning-row>strong{font-size:22px;font-variant-numeric:tabular-nums}.expiry-earning-row>i{display:flex;height:30px;align-items:end;justify-content:flex-end;gap:3px}.expiry-earning-row>i b{width:10px;border-radius:3px 3px 1px 1px;background:currentColor;opacity:.55;transform-origin:bottom;animation:management-bar-grow .5s cubic-bezier(.22,1,.36,1) both}.expiry-earning-row>i b:nth-child(1){height:35%}.expiry-earning-row>i b:nth-child(2){height:72%;animation-delay:.08s}.expiry-earning-row>i b:nth-child(3){height:48%;animation-delay:.16s}.expiry-earning-row.expired{color:#ff7080}.expiry-earning-row.urgent{color:#f4a969}.expiry-earning-row.warning{color:#efd56a}.expiry-earning-row.early{color:#69cde8}
+.overview-action-rail{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.overview-action-rail button{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;min-width:0;padding:12px 13px;color:#edf4ff;border:1px solid #202f44;border-radius:13px;background:linear-gradient(145deg,#111b2b,#0c1523);font:inherit;text-align:left;cursor:pointer;transition:transform .18s ease,border-color .18s ease}.overview-action-rail button:hover{transform:translateY(-2px);border-color:#35516f}.overview-action-rail i{display:grid;width:32px;height:32px;place-items:center;border-radius:9px;color:#43d9e5;background:#12313d;font-size:17px;font-style:normal}.overview-action-rail span{display:grid;min-width:0;gap:3px;font-size:12px;font-weight:800}.overview-action-rail small{overflow:hidden;color:#718198;font-size:9px;font-weight:500;text-overflow:ellipsis;white-space:nowrap}.overview-action-rail strong{color:#dbe7f7;font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.hot-products-card{min-height:0!important;padding:17px!important;border-radius:16px!important}.hot-product-table-wrap{margin-top:12px;overflow-x:auto;border:1px solid #1d2a3e;border-radius:11px}.hot-product-table-wrap table{width:100%;min-width:670px;border-collapse:collapse}.hot-product-table-wrap th{padding:9px 12px;color:#718198;background:#0b1422!important;font-size:9px;font-weight:800;letter-spacing:.06em;text-align:left}.hot-product-table-wrap td{padding:9px 12px;color:#93a2b6;border-top:1px solid #1b283a;font-size:11px}.hot-product-table-wrap tr{transition:background .16s ease}.hot-product-table-wrap tbody tr:hover{background:#111e31}.hot-product-table-wrap td:nth-child(2){min-width:230px;color:#e5edf8}.hot-product-table-wrap td:nth-last-child(-n+2),.hot-product-table-wrap th:nth-last-child(-n+2){text-align:right;white-space:nowrap}.rank-badge{display:grid;width:28px;height:24px;place-items:center;border-radius:7px;color:#6d829e;background:#142033;font-size:10px}.rank-badge.podium{color:#78e8f1;background:#123340}.sales-share{display:block;width:100%;height:2px;margin-top:6px;border-radius:99px;background:#172338;overflow:hidden}.sales-share i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#2cd5df,#6975f4);animation:overview-share-in .55s cubic-bezier(.22,1,.36,1) both;transform-origin:left}.hot-product-table-wrap td:last-child strong{color:#51d7c1}.hot-product-table-wrap tbody{animation:management-section-enter .25s ease both}@keyframes overview-share-in{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+
+@media(max-width:1280px) and (min-width:721px){
+  .management-workspace{grid-template-columns:minmax(0,1fr)!important;grid-template-rows:auto minmax(0,1fr)!important;height:100%!important;gap:10px!important;overflow:hidden!important}
+  .management-sidebar{position:static!important;display:grid!important;grid-template-columns:auto minmax(0,1fr);align-items:center;height:auto!important;max-height:none!important;padding:8px 10px!important;border-radius:14px!important;overflow:hidden!important}.sidebar-heading{margin:0!important;padding:5px 12px!important;border-right:1px solid #223149}.sidebar-heading strong{font-size:14px}.sidebar-heading small,.management-sidebar>p,.navigation-group h3{display:none}.management-sidebar nav{display:flex!important;gap:5px;min-width:0;overflow-x:auto!important;scrollbar-width:none}.management-sidebar nav::-webkit-scrollbar{display:none}.navigation-group{display:contents!important}.management-sidebar button{flex:0 0 auto!important;width:auto!important;min-width:auto!important;padding:9px 12px!important;white-space:nowrap}.management-sidebar button span{font-size:12px}.management-sidebar button small,.management-sidebar button em{display:none}.management-content{height:100%!important;overflow-y:auto!important}.management-heading{position:static!important}
+  .overview-metric-strip{grid-template-columns:repeat(6,minmax(154px,1fr))}.overview-command-grid{grid-template-columns:minmax(0,1.4fr) minmax(250px,.7fr)}
+}
+@media(max-width:900px){.overview-command-grid{grid-template-columns:minmax(0,1fr)}.expiry-earnings-card{grid-template-columns:repeat(2,minmax(0,1fr))}.expiry-earnings-card .overview-card-header{grid-column:1/-1}.expiry-earning-row:nth-of-type(2n){border-left:1px solid #1c293c}.overview-action-rail{grid-template-columns:1fr}}
+@media(max-width:720px){.overview-metric-strip{margin-inline:-1px;grid-template-columns:repeat(6,minmax(152px,1fr))}.overview-command-grid>.management-card,.hot-products-card{padding:14px!important}.overview-card-header{display:grid}.period-tabs{width:max-content;max-width:100%;overflow-x:auto;flex-wrap:nowrap}.expiry-earnings-card{grid-template-columns:1fr}.expiry-earnings-card .overview-card-header{grid-column:auto}.expiry-earning-row:nth-of-type(2n){border-left:0}.overview-action-rail button{min-height:68px}.trend-primary{align-items:flex-start;flex-direction:column;gap:2px}.overview-line-chart,.overview-line-chart svg{min-height:170px;height:170px}.hot-products-card .overview-card-header{gap:10px}}
+@media(max-width:420px){.overview-metric-strip{grid-template-columns:repeat(6,minmax(144px,1fr))}.overview-action-rail button{grid-template-columns:32px minmax(0,1fr)}.overview-action-rail strong{grid-column:2}.overview-card-header h3{font-size:16px}}
+@media(prefers-reduced-motion:reduce){.overview-metric-strip article,.expiry-earning-row>i b,.sales-share i,.hot-product-table-wrap tbody{animation:none!important}.overview-line-chart polyline{stroke-dashoffset:0}}
 </style>
 
 <style scoped src="./management-decision.css"></style>

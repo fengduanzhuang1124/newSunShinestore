@@ -343,7 +343,7 @@ export class ManagementService {
     const productWhere = {
       organizationId, status: 'ACTIVE' as const, storeProducts: { some: { storeId, enabled: true } }, ...textFilter,
     };
-    const [products, balances, salesItems, movements] = await Promise.all([
+    const [products, balances, salesItems, movements, salesRange] = await Promise.all([
       this.prisma.client.product.findMany({
         where: productWhere, orderBy: { name: 'asc' },
         select: {
@@ -363,7 +363,18 @@ export class ManagementService {
         where: { organizationId, storeId, product: productWhere }, orderBy: { createdAt: 'desc' },
         select: { productId: true, createdAt: true },
       }),
+      this.prisma.client.posOrder.aggregate({
+        where: { organizationId, storeId, orderedAt: { gte: start, lte: now } },
+        _min: { orderedAt: true }, _max: { orderedAt: true },
+      }),
     ]);
+    const firstObservedSaleAt = salesRange._min.orderedAt;
+    const lastObservedSaleAt = salesRange._max.orderedAt;
+    const observedDays = firstObservedSaleAt
+      ? Math.max(1, Math.min(lookbackDays, Math.ceil((now.getTime() - firstObservedSaleAt.getTime()) / 86_400_000) + 1))
+      : 0;
+    const minimumReliableDays = Math.min(30, lookbackDays);
+    const salesCoverageReliable = observedDays >= minimumReliableDays;
     const inventory = new Map<string, { quantity: number; updatedAt: Date | null }>();
     for (const balance of balances) {
       const key = balance.productId.toString();
@@ -393,11 +404,11 @@ export class ManagementService {
       const currentInventory = inventory.get(key)?.quantity ?? 0;
       const minimumStock = product.storeProducts[0]?.minimumStock ?? null;
       const soldUnits = this.money(sales.get(key)?.units ?? 0);
-      const dailyVelocity = soldUnits > 0 ? soldUnits / lookbackDays : 0;
-      const coverageDays = dailyVelocity > 0 ? this.money(currentInventory / dailyVelocity) : null;
+      const dailyVelocity = soldUnits > 0 && observedDays > 0 ? soldUnits / observedDays : 0;
+      const coverageDays = salesCoverageReliable && dailyVelocity > 0 ? this.money(currentInventory / dailyVelocity) : null;
       const daysSinceLastSale = sales.get(key)?.lastSoldAt ? Math.floor((now.getTime() - sales.get(key)!.lastSoldAt!.getTime()) / 86_400_000) : null;
       const stockStatus = currentInventory <= 0 ? 'OUT_OF_STOCK' : minimumStock !== null && currentInventory <= minimumStock ? 'LOW' : 'IN_STOCK';
-      const slowMoving = currentInventory > 0 && (soldUnits <= 0 || (daysSinceLastSale !== null && daysSinceLastSale >= Math.min(lookbackDays, 60)) || (coverageDays !== null && coverageDays > 180));
+      const slowMoving = salesCoverageReliable && currentInventory > 0 && (soldUnits <= 0 || (daysSinceLastSale !== null && daysSinceLastSale >= Math.min(observedDays, 60)) || (coverageDays !== null && coverageDays > 180));
       return {
         productId: key, sku: product.sku, productName: product.chineseName || product.name || product.englishName || '未命名商品',
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName), categoryName: product.categoryName || '未标注品类',
@@ -417,6 +428,12 @@ export class ManagementService {
     return {
       generatedAt: now.toISOString(), store: { id: store.id.toString(), name: store.name },
       period: { lookbackDays, from: this.dateInZone(start, organization.timezone), to: this.dateInZone(now, organization.timezone) },
+      salesCoverage: {
+        observedDays, reliable: salesCoverageReliable,
+        firstObservedSaleAt: firstObservedSaleAt?.toISOString() ?? null,
+        lastObservedSaleAt: lastObservedSaleAt?.toISOString() ?? null,
+        minimumReliableDays,
+      },
       summary: {
         productCount: rows.length, stockedProducts: stocked.length,
         totalInventory: rows.reduce((sum, row) => sum + row.currentInventory, 0),
@@ -430,7 +447,9 @@ export class ManagementService {
       products: rows.sort((a, b) => b.currentInventory - a.currentInventory),
       turnoverAvailable: false,
       turnoverNotice: '当前数据库没有连续历史库存快照，不能用当前库存代替平均库存，因此暂不计算标准库存周转率。',
-      coverageNotice: `库存覆盖天数按最近${lookbackDays}天POS销量与当前库存估算；无销量商品不生成虚假天数。`,
+      coverageNotice: salesCoverageReliable
+        ? `库存覆盖天数按实际已有的${observedDays}天POS销售跨度与当前库存估算；无销量商品不生成虚假天数。`
+        : `当前只有${observedDays}天POS销售跨度，少于${minimumReliableDays}天；暂不生成库存覆盖天数或滞销结论。`,
     };
   }
 
@@ -518,7 +537,7 @@ export class ManagementService {
       }),
       this.prisma.client.product.findMany({
         where: { organizationId, status: 'ACTIVE', storeProducts: { some: { storeId, enabled: true } }, ...textFilter },
-        orderBy: { name: 'asc' }, take: 200,
+        orderBy: { name: 'asc' },
         select: {
           id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
           insightAssignments: {
@@ -530,7 +549,8 @@ export class ManagementService {
       }),
     ]);
     const withApproved = products.filter((product) => product.insightAssignments.some((assignment) => assignment.reviewStatus === 'APPROVED')).length;
-    const withPending = products.filter((product) => product.insightAssignments.some((assignment) => assignment.reviewStatus === 'PENDING')).length;
+    const withPending = products.filter((product) => !product.insightAssignments.some((assignment) => assignment.reviewStatus === 'APPROVED')
+      && product.insightAssignments.some((assignment) => assignment.reviewStatus === 'PENDING')).length;
     return {
       generatedAt: new Date().toISOString(), store: { id: store.id.toString(), name: store.name },
       disclaimer: '标签描述商品的消费需求与人群倾向，不代表购买者真实年龄、性别或身份。',
@@ -756,11 +776,11 @@ export class ManagementService {
       apiCapabilities: {
         overview: { endpoint: '/management/overview', status: 'AVAILABLE' },
         dataFoundation: { endpoint: '/management/data-foundation', status: 'AVAILABLE' },
-        salesAnalysis: { endpoint: '/management/sales-analysis', status: 'PLANNED' },
-        productsBrands: { endpoint: '/management/products-brands', status: 'PLANNED' },
-        inventoryOperations: { endpoint: '/management/inventory-operations', status: 'PLANNED' },
+        salesAnalysis: { endpoint: '/management/sales-analysis', status: 'AVAILABLE' },
+        productsBrands: { endpoint: '/management/products-brands', status: 'AVAILABLE' },
+        inventoryOperations: { endpoint: '/management/inventory-operations', status: 'AVAILABLE' },
         customerAnalysis: { endpoint: '/management/customer-analysis', status: 'BLOCKED_BY_CUSTOMER_IDENTITY' },
-        storeComparison: { endpoint: '/management/store-comparison', status: activeStoreCount > 1 ? 'PLANNED' : 'WAITING_FOR_SECOND_STORE' },
+        storeComparison: { endpoint: '/management/store-comparison', status: activeStoreCount > 1 ? 'AVAILABLE' : 'WAITING_FOR_SECOND_STORE' },
         dataPermissions: { endpoint: '/management/data-permissions', status: 'PLANNED' },
       },
     };
@@ -975,7 +995,7 @@ export class ManagementService {
         items: {
           where: itemWhere,
           select: {
-            productId: true, sourceName: true, quantity: true, unitPrice: true, isMinus: true, disposition: true,
+            productId: true, externalProductId: true, sourceName: true, quantity: true, unitPrice: true, isMinus: true, disposition: true,
             product: { select: { name: true, chineseName: true, brandName: true, categoryName: true } },
           },
         },
@@ -1006,8 +1026,9 @@ export class ManagementService {
         const productName = item.product?.chineseName || item.product?.name || item.sourceName || '未命名商品';
         const brandName = this.displayBrand(item.product?.brandName, item.sourceName, item.product?.chineseName, item.product?.name);
         const categoryName = item.product?.categoryName || '未标注品类';
-        const product = products.get(productName) ?? { productName, brandName, categoryName, quantity: 0, revenue: 0 };
-        product.quantity += quantity; product.revenue += revenue; products.set(productName, product);
+        const productKey = item.productId ? `product:${item.productId.toString()}` : `pos:${item.externalProductId}`;
+        const product = products.get(productKey) ?? { productName, brandName, categoryName, quantity: 0, revenue: 0 };
+        product.quantity += quantity; product.revenue += revenue; products.set(productKey, product);
         const brand = brands.get(brandName) ?? { brandName, quantity: 0, revenue: 0 };
         brand.quantity += quantity; brand.revenue += revenue; brands.set(brandName, brand);
         const category = categories.get(categoryName) ?? { categoryName, quantity: 0, revenue: 0 };
