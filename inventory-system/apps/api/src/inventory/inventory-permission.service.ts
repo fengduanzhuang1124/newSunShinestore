@@ -45,7 +45,6 @@ export class InventoryPermissionService {
       },
       select: { userId: true },
     });
-    if (!role) throw new ForbiddenException('只有门店管理员可以撤销库存流水');
+    if (!role) throw new ForbiddenException('只有门店管理员可以执行此操作');
   }
 }
-

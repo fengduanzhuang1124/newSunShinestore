@@ -8,16 +8,16 @@ describe('ManagementDashboard', () => {
   it('shows real inventory while clearly identifying unavailable POS sales', async () => {
     const overview = { data: {
       store: { id: '3', name: '汉密尔顿店' }, currency: 'NZD',
-      period: { month: '2026-09', previousMonth: '2026-08' }, salesAvailable: false, lastPosSyncAt: null,
+      period: { date: '2026-09-28', previousDate: '2026-09-27' }, salesAvailable: false, lastPosSyncAt: null,
       sales: {
-        current: { month: '2026-09', revenue: 0, refunds: 0, netRevenue: 0, orderCount: 0, unitsSold: 0, averageOrderValue: 0, dailySales: [], topProducts: [], topBrands: [] },
-        previous: { month: '2026-08', revenue: 0, refunds: 0, netRevenue: 0, orderCount: 0, unitsSold: 0, averageOrderValue: 0, dailySales: [], topProducts: [], topBrands: [] },
+        current: { period: '2026-09-28', revenue: 0, refunds: 0, netRevenue: 0, orderCount: 0, unitsSold: 0, averageOrderValue: 0, dailySales: [], topProducts: [], topBrands: [] },
+        previous: { period: '2026-09-27', revenue: 0, refunds: 0, netRevenue: 0, orderCount: 0, unitsSold: 0, averageOrderValue: 0, dailySales: [], topProducts: [], topBrands: [] },
         comparison: { netRevenuePercent: null, orderCountPercent: null, unitsSoldPercent: null, averageOrderValuePercent: null },
       },
       inventory: {
         productCount: 155, batchCount: 180, totalQuantity: 5615, expiryAttentionQuantity: 26,
         expiry: { expired: 1, urgent: 5, warning: 8, early: 12 },
-        activity: { openReceiptCount: 2, stocktakeAdjustmentsThisMonth: 16, movementCountThisMonth: 82, latestMovement: { createdAt: '2026-09-28T01:00:00.000Z', movementType: 'RECEIPT', quantityDelta: 4 } },
+        activity: { openReceiptCount: 2, stocktakeAdjustmentsToday: 16, movementCountToday: 82, latestMovement: { createdAt: '2026-09-28T01:00:00.000Z', movementType: 'RECEIPT', quantityDelta: 4 } },
       },
     } };
     const foundation = { data: {
@@ -52,5 +52,10 @@ describe('ManagementDashboard', () => {
     expect(wrapper.text()).not.toContain('真实库存基础');
     expect(wrapper.text()).not.toContain('条码不是库存商品的必填条件');
     expect(wrapper.find('.data-freshness').text()).toContain('库存更新');
+    expect(wrapper.text()).toContain('今日净销售额');
+    expect(wrapper.text()).toContain('今日订单');
+    expect(wrapper.text()).toContain('较昨日');
+    expect(wrapper.text()).toContain('今日库存作业');
+    expect(wrapper.text()).not.toContain('本月净销售额');
   });
 });

@@ -55,6 +55,7 @@ export class MoniAuthService {
 
     const data = await this.http.post<MoniLoginData>('Weblogin/tokenLogin', {
       login_token: accountLogin.login_token,
+      ...(this.config.shopId ? { shop_id: this.config.shopId } : {}),
     });
 
     if (typeof data.login_token !== 'string' || !data.login_token.trim()) {
@@ -66,7 +67,9 @@ export class MoniAuthService {
     }
 
     const shop = data.shop as MoniLoginShop;
-    if (shop.shop_id === undefined) {
+    const loginShopId = String(shop.shop_id ?? '').trim();
+    const shopId = loginShopId || this.config.shopId;
+    if (!shopId) {
       throw new MoniApiError('Moni login shop ID is missing');
     }
 
@@ -90,7 +93,7 @@ export class MoniAuthService {
 
     const result: MoniLoginResult = {
       loginToken: data.login_token,
-      shopId: String(shop.shop_id),
+      shopId,
       shopName: typeof shop.shop_name === 'string' ? shop.shop_name : null,
       stores,
     };

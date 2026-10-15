@@ -23,6 +23,7 @@
     "pos:check:daily-orders": "tsx scripts/check-moni-daily-orders.ts",
     "pos:check:order-lifecycle": "tsx scripts/check-moni-order-lifecycle.ts",
     "pos:import:observation:test": "tsx scripts/import-moni-observation-test.ts",
+    "pos:backfill:sales": "tsx scripts/backfill-moni-sales.ts",
     "pos:simulate": "tsx scripts/run-moni-pos-simulation.ts",
     "pos:simulate:inventory:test": "tsx scripts/simulate-pos-inventory-test.ts",
     "pos:check:stores": "tsx scripts/check-moni-stores.ts",

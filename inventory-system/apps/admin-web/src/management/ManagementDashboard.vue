@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 type SalesSummary = {
-  month: string; revenue: number; refunds: number; netRevenue: number; orderCount: number;
+  period: string; revenue: number; refunds: number; netRevenue: number; orderCount: number;
   unitsSold: number; averageOrderValue: number;
   dailySales: { date: string; revenue: number; orders: number }[];
-  topProducts: { productName: string; brandName: string; quantity: number; revenue: number }[];
+  topProducts: { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number }[];
   topBrands: { brandName: string; quantity: number; revenue: number }[];
 };
 type Overview = {
   store: { id: string; name: string }; currency: string;
-  period: { month: string; previousMonth: string }; salesAvailable: boolean; lastPosSyncAt: string | null;
+  period: { date: string; previousDate: string }; salesAvailable: boolean; lastPosSyncAt: string | null;
   sales: {
     current: SalesSummary; previous: SalesSummary;
     comparison: { netRevenuePercent: number | null; orderCountPercent: number | null; unitsSoldPercent: number | null; averageOrderValuePercent: number | null };
@@ -19,7 +19,7 @@ type Overview = {
     productCount: number; batchCount: number; totalQuantity: number; expiryAttentionQuantity: number;
     expiry: { expired: number; urgent: number; warning: number; early: number };
     activity: {
-      openReceiptCount: number; stocktakeAdjustmentsThisMonth: number; movementCountThisMonth: number;
+      openReceiptCount: number; stocktakeAdjustmentsToday: number; movementCountToday: number;
       latestMovement: { createdAt: string; movementType: string; quantityDelta: number } | null;
     };
   };
@@ -41,7 +41,7 @@ type DataFoundation = {
 type PosDataCheck = {
   checkedAt: string; readiness: 'WAITING_FOR_DATA' | 'NEEDS_REVIEW' | 'READY'; observationOnly: boolean; inventoryChanged: boolean;
   orders: { total: number; firstOrderedAt: string | null; lastOrderedAt: string | null };
-  items: { total: number; mapped: number; unmapped: number; reviewRequired: number; inactive: number; mappingCoveragePercent: number };
+  items: { total: number; mappable?: number; nonInventory?: number; mapped: number; unmapped: number; reviewRequired: number; inactive: number; mappingCoveragePercent: number };
   issues: { total: number; pendingRefundReviews: number; failedSyncRuns: number };
   checks: { code: string; passed: boolean; message: string }[];
 };
@@ -67,14 +67,14 @@ type SalesAnalysis = {
   trend: { period: string; revenue: number; orders: number; units: number }[];
   hourlySales: { hour: number; revenue: number; orders: number }[];
   weekdaySales: { weekday: number; revenue: number; orders: number }[];
-  topProducts: { productName: string; brandName: string; categoryName: string; quantity: number; revenue: number }[];
+  topProducts: { productId: string | null; productName: string; brandName: string; categoryName: string; quantity: number; revenue: number }[];
   topBrands: { brandName: string; quantity: number; revenue: number }[];
   topCategories: { categoryName: string; quantity: number; revenue: number }[];
   sourceQuality: { orders: number; activeItems: number; mappedItems: number; reviewRequiredItems: number };
 };
 type ProductsBrands = {
   currency: string; period: { from: string; to: string };
-  summary: { productCount: number; soldProductCount: number; unitsSold: number; salesRevenue: number; currentInventory: number; lowStockProducts: number };
+  summary: { productCount: number; soldProductCount: number; unitsSold: number; salesRevenue: number; currentInventory: number; inStockProducts: number; outOfStockProducts: number; lowStockProducts: number; minimumStockConfiguredProducts: number };
   products: { productId: string; sku: string; productName: string; brandName: string; categoryName: string; barcode: string | null; unitsSold: number; salesRevenue: number; currentInventory: number; minimumStock: number | null; sellingPriceCents: number | null; stockStatus: 'OUT_OF_STOCK' | 'LOW' | 'IN_STOCK'; salesToStockRatio: number | null }[];
   brands: { name: string; productCount: number; unitsSold: number; salesRevenue: number; currentInventory: number }[];
   categories: { name: string; productCount: number; unitsSold: number; salesRevenue: number; currentInventory: number }[];
@@ -89,13 +89,21 @@ type InventoryOperations = {
   coverageBuckets: { noSales: number; under30: number; days30To90: number; over90: number };
   alerts: InventoryOperationRow[]; slowMoving: InventoryOperationRow[]; products: InventoryOperationRow[];
   turnoverAvailable: boolean; turnoverNotice: string; coverageNotice: string;
+  defaultMinimumStock: number; shortageNotice: string;
 };
 type InventoryOperationRow = {
   productId: string; sku: string; productName: string; brandName: string; categoryName: string;
-  currentInventory: number; minimumStock: number | null; soldUnits: number; dailyVelocity: number; coverageDays: number | null;
+  currentInventory: number; minimumStock: number; configuredMinimumStock: number | null; minimumStockSource: 'DEFAULT' | 'MANUAL'; soldUnits: number; dailyVelocity: number; coverageDays: number | null; shortageVisible: boolean;
   lastSoldAt: string | null; daysSinceLastSale: number | null; lastMovementAt: string | null; inventoryUpdatedAt: string | null;
   stockStatus: 'OUT_OF_STOCK' | 'LOW' | 'IN_STOCK'; slowMoving: boolean;
+  replenishmentHidden: boolean; replenishmentHiddenUntil: string | null; directShipExcluded: boolean;
 };
+type PurchaseSource = 'MANUAL' | 'OUT_OF_STOCK' | 'LOW_STOCK' | 'HOT_SALES' | 'WEEKLY_FORECAST';
+type PurchaseSuggestion = { productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; currentInventory: number; minimumStock: number | null; recent28DayQty: number; weeklyVelocity: number; coverageWeeks: number | null; targetWeeks: number | null; targetInventory: number; suggestedQuantity: number; source: PurchaseSource; alreadyIncluded: boolean; ignored: boolean; ignoredReason: string | null; ignoredAt: string | null };
+type PurchaseSuggestions = { period: { from: string; to: string }; calculation: string; summary: { products: number; suggestedUnits: number; alreadyIncluded: number; ignored: number }; suggestions: PurchaseSuggestion[]; ignoredSuggestions: PurchaseSuggestion[] };
+type PurchaseOrderItem = { id: string; productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; source: PurchaseSource; currentInventory: number; recentSevenDayQty: number; suggestedQuantity: number; orderedQuantity: number; receivedQuantity: number; supplierName: string | null; unitCostCents: number | null; caseSize: number | null; notes: string | null };
+type PurchaseOrder = { id: string; orderNo: string; weekStart: string; status: 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'; createdAt: string; updatedAt: string; confirmedAt: string | null; orderedAt: string | null; summary: { productCount: number; suggestedUnits: number; orderedUnits: number; receivedUnits: number; totalCostCents: number }; items: PurchaseOrderItem[] };
+type CurrentPurchaseOrder = { currency: string; order: PurchaseOrder | null };
 type StoreComparison = {
   currency: string; period: { from: string; to: string }; storeCount: number; comparisonAvailable: boolean; comparisonNotice: string | null;
   stores: { store: { id: string; code: string; name: string }; selected: boolean; sales: { grossRevenue: number; refunds: number; netRevenue: number; orderCount: number; unitsSold: number; averageOrderValue: number }; inventory: { totalQuantity: number; productCount: number; lowStockProducts: number; outOfStockProducts: number } }[];
@@ -119,7 +127,6 @@ const tagView = ref<'products' | 'dictionary'>('products');
 const tagEditorOpen = ref(false);
 const systemView = ref<'sync' | 'quality' | 'issues'>('sync');
 const posLoadError = ref('');
-const month = ref(new Intl.DateTimeFormat('en-CA', { timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit' }).format(new Date()));
 const overview = ref<Overview | null>(null);
 const foundation = ref<DataFoundation | null>(null);
 const loading = ref(false);
@@ -133,7 +140,7 @@ const posMessage = ref('');
 const syncDate = ref(new Intl.DateTimeFormat('en-CA', { timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()));
 const reconcile = ref(false);
 const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-const salesFrom = ref(`${today.slice(0, 7)}-01`);
+const salesFrom = ref(today);
 const salesTo = ref(today);
 const salesDimension = ref<'DAY' | 'WEEK' | 'MONTH'>('DAY');
 const salesBrand = ref('');
@@ -169,7 +176,20 @@ const inventoryCategoryFilter = ref('');
 const inventoryStatusFilter = ref<'ALL' | 'SLOW' | 'OUT_OF_STOCK' | 'LOW' | 'OVERSTOCK' | 'NO_MINIMUM'>('ALL');
 const inventorySort = ref<'INVENTORY_DESC' | 'SALES_DESC' | 'COVERAGE_DESC' | 'LAST_SALE_ASC' | 'NAME_ASC'>('INVENTORY_DESC');
 const inventoryPage = ref(1);
-const inventoryPageSize = ref(50);
+const inventoryPageSize = ref(54);
+const pageGuideOpen = ref(false);
+const minimumStockDialog = ref<{ product: InventoryOperationRow | null; value: string } | null>(null);
+const minimumStockSaving = ref(false);
+const inventoryActionProductId = ref('');
+const purchaseSuggestions = ref<PurchaseSuggestions | null>(null);
+const currentPurchaseOrder = ref<CurrentPurchaseOrder | null>(null);
+const purchaseLoading = ref(false);
+const purchaseMessage = ref('');
+let purchaseMessageTimer: ReturnType<typeof setTimeout> | undefined;
+const purchaseView = ref<'suggestions' | 'order'>('suggestions');
+const purchaseConfirm = ref<null | { title: string; description: string; confirmLabel: string; tone: 'primary' | 'danger'; action: () => Promise<void> }>(null);
+const purchaseConfirmBusy = ref(false);
+const showIgnoredSuggestions = ref(false);
 const storeFrom = ref(`${today.slice(0, 7)}-01`);
 const storeTo = ref(today);
 const storeComparison = ref<StoreComparison | null>(null);
@@ -192,7 +212,7 @@ const newTagDescription = ref('');
 const editingTagId = ref('');
 const newTagSortOrder = ref(0);
 const newTagStatus = ref<'ACTIVE' | 'INACTIVE'>('ACTIVE');
-type ManagementSection = 'overview' | 'sales' | 'products' | 'inventory' | 'customers' | 'stores' | 'system';
+type ManagementSection = 'overview' | 'sales' | 'products' | 'inventory' | 'procurement' | 'customers' | 'stores' | 'system';
 const activeSection = ref<ManagementSection>('overview');
 const showMobileMore = ref(false);
 const allSections: { id: ManagementSection; label: string; description: string; ready: boolean }[] = [
@@ -200,12 +220,13 @@ const allSections: { id: ManagementSection; label: string; description: string; 
   { id: 'sales', label: '销售分析', description: '销售趋势、时段与上期比较', ready: true },
   { id: 'products', label: '商品分析', description: '商品、品牌与品类表现', ready: true },
   { id: 'inventory', label: '库存经营', description: '覆盖、滞销与低库存', ready: true },
+  { id: 'procurement', label: '本周进货', description: '进货建议、草稿与订货状态', ready: true },
   { id: 'customers', label: '分类与标签', description: '商品标记与标签字典', ready: true },
   { id: 'stores', label: '门店对比', description: '门店经营基线与比较', ready: true },
   { id: 'system', label: '数据中心', description: 'POS 同步、检查与异常', ready: true },
 ];
 const navigationGroups = [
-  { label: '经营分析', ids: ['overview', 'sales', 'products', 'inventory', 'stores'] },
+  { label: '经营分析', ids: ['overview', 'sales', 'products', 'inventory', 'procurement', 'stores'] },
   { label: '资料维护', ids: ['customers'] },
   { label: '系统支持', ids: ['system'] },
 ];
@@ -215,17 +236,18 @@ const canSection = (id: ManagementSection) => {
   const capability = managementAccess.value.capabilities;
   if (id === 'overview' || id === 'stores') return capability.overviewView;
   if (id === 'sales' || id === 'products') return capability.salesView;
-  if (id === 'inventory') return capability.inventoryView;
+  if (id === 'inventory' || id === 'procurement') return capability.inventoryView;
   if (id === 'system') return capability.posSync || capability.posIssues || capability.permissionsManage;
   return capability.salesView;
 };
 const sections = computed(() => allSections);
 const currentSection = computed(() => allSections.find((item) => item.id === activeSection.value) ?? allSections[0]);
-const pageGuides: Record<ManagementSection, { purpose: string; includes: string[]; decision: string }> = {
-  overview: { purpose: '快速判断本月经营状态与需要优先处理的事项。', includes: ['销售与上期比较', '当前库存与临期', '库存作业待办', '热销商品'], decision: '适合作为每日入口；详细原因继续进入销售、商品或库存页面。' },
+const pageGuides: Record<ManagementSection, { purpose: string; includes: string[]; decision: string; details?: string[] }> = {
+  overview: { purpose: '快速判断今日经营状态与需要优先处理的事项。', includes: ['今日销售与昨日比较', '当前库存与临期', '今日库存作业待办', '可切换周期的销售趋势与热销商品'], decision: '适合作为每日入口；详细原因继续进入销售、商品或库存页面。' },
   sales: { purpose: '回答卖了多少、何时卖、哪些商品贡献销售。', includes: ['销售趋势', '订单与客单价', '时段分布', '商品及品牌排行'], decision: '适合复盘销售变化；毛利和商品级退款在成本与退款数据完整前不作结论。' },
   products: { purpose: '从商品、品牌和品类角度查看销售与当前库存结构。', includes: ['商品明细', '品牌结构', '品类结构', '资料与映射质量'], decision: '适合调整商品结构；售价、条码和商品主档仍在商品维护流程处理。' },
-  inventory: { purpose: '识别缺货、低库存、积压和库存覆盖风险。', includes: ['库存状态', '销售速度', '覆盖天数', '最后销售与库存更新时间'], decision: '适合制定补货和清货顺序；POS数据不足时不生成滞销结论。' },
+  inventory: { purpose: '识别缺货、低库存和滞销风险，帮助决定哪些商品需要补货或暂时隐藏提醒。', includes: ['库存状态', '观察期销量', '最低库存阈值', '最后销售时间'], decision: '缺货只统计最近120天有销售的零库存商品；未单独设置时最低库存按20件判断。', details: ['库存来自正式库存系统，销量来自已同步的 POS 订单。', '销售历史不足时，不生成库存覆盖天数和滞销结论，避免把缺少数据误判为没有销售。', '名称含 stage、数字+tins 或数字+bag 的直邮奶粉不进入补货提醒。点击“忽略”会持续隐藏，点击“下周显示”会在7天后自动恢复。'] },
+  procurement: { purpose: '把缺货、低库存和销售速度转为一张可确认的本周进货单。', includes: ['近7天进货建议', '进货数量与供应商', '草稿确认与已订货状态', '到货后转入正式入库流程'], decision: '加入进货单不会增加库存；只有完成扫码入库才改变正式库存。' },
   customers: { purpose: '维护商品经营分类、需求、人群倾向和营销标签。', includes: ['标签字典', '商品标签覆盖', '审核状态', '人工判断依据'], decision: '这是商品经营画像，不代表顾客真实身份，也不替代商品主档品类。' },
   stores: { purpose: '当前先保存单店经营基线，未来增加门店后再横向比较。', includes: ['单店销售基线', '订单与客单价', '库存与缺货', '后续多店排行'], decision: '目前只有一家门店，本页暂不作为重点开发模块。' },
   system: { purpose: '确认经营分析所依赖的数据是否已同步且足够可信。', includes: ['POS同步', '资料完整度', '商品映射', '异常与同步历史'], decision: '适合排查数据问题；同步保持观察模式，不直接修改正式库存。' },
@@ -242,29 +264,36 @@ function openDataCenter(view: 'sync' | 'quality' | 'issues' = 'quality') {
 }
 function openSalesFromOverview() {
   if (!overview.value) return;
-  const selectedMonth = overview.value.period.month;
-  const [year, monthNumber] = selectedMonth.split('-').map(Number);
-  salesFrom.value = `${selectedMonth}-01`;
-  salesTo.value = selectedMonth === today.slice(0, 7) ? today : `${selectedMonth}-${new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()}`;
+  salesFrom.value = overview.value.period.date;
+  salesTo.value = overview.value.period.date;
   salesBrand.value = ''; salesCategory.value = ''; salesDimension.value = 'DAY';
   selectSection('sales');
 }
 function clearSalesFilters() { salesBrand.value = ''; salesCategory.value = ''; }
 function clearProductFilters() { productQuery.value = ''; productBrand.value = ''; productCategory.value = ''; }
-function setDateRange(target: 'sales' | 'products' | 'stores', preset: 'today' | 'week' | 'month') {
+function setDateRange(target: 'sales' | 'products' | 'stores', preset: 'today' | 'week' | 'month' | 'year') {
   const weekStart = new Date(`${today}T00:00:00Z`);
   weekStart.setUTCDate(weekStart.getUTCDate() - 6);
-  const from = preset === 'today' ? today : preset === 'week' ? weekStart.toISOString().slice(0, 10) : `${today.slice(0, 7)}-01`;
-  if (target === 'sales') { salesFrom.value = from; salesTo.value = today; }
+  const from = preset === 'today' ? today : preset === 'week' ? weekStart.toISOString().slice(0, 10) : preset === 'year' ? `${today.slice(0, 4)}-01-01` : `${today.slice(0, 7)}-01`;
+  if (target === 'sales') {
+    salesFrom.value = from; salesTo.value = today;
+    salesDimension.value = preset === 'year' ? 'MONTH' : 'DAY';
+  }
   if (target === 'products') { productFrom.value = from; productTo.value = today; }
   if (target === 'stores') { storeFrom.value = from; storeTo.value = today; }
+}
+async function openInventoryAlert(status: 'OUT_OF_STOCK' | 'LOW') {
+  inventoryStatusFilter.value = status;
+  inventoryPage.value = 1;
+  selectSection('inventory');
+  if (!inventoryOperations.value) await loadInventoryOperations();
 }
 function clearInventoryFilters() {
   inventoryTableQuery.value = ''; inventoryBrandFilter.value = ''; inventoryCategoryFilter.value = ''; inventoryStatusFilter.value = 'ALL';
 }
-const pageBusy = computed(() => ({ overview: loading.value, sales: salesLoading.value, products: productsLoading.value, inventory: inventoryLoading.value, customers: insightLoading.value, stores: storeLoading.value, system: posLoading.value }[activeSection.value]));
+const pageBusy = computed(() => ({ overview: loading.value, sales: salesLoading.value, products: productsLoading.value, inventory: inventoryLoading.value, procurement: purchaseLoading.value, customers: insightLoading.value, stores: storeLoading.value, system: posLoading.value }[activeSection.value]));
 function retryCurrentPage() {
-  const loaders = { overview: loadOverview, sales: loadSalesAnalysis, products: loadProductsBrands, inventory: loadInventoryOperations, customers: loadProductInsights, stores: loadStoreComparison, system: loadSystemManagement };
+  const loaders = { overview: loadOverview, sales: loadSalesAnalysis, products: loadProductsBrands, inventory: loadInventoryOperations, procurement: loadProcurement, customers: loadProductInsights, stores: loadStoreComparison, system: loadSystemManagement };
   void loaders[activeSection.value]();
 }
 const overviewTrendSeries = computed(() => overviewTrendAnalysis.value?.trend
@@ -314,14 +343,6 @@ const expiryGradient = computed(() => {
   const expiry = overview.value?.inventory.expiry;
   return conicGradient(expiry ? [expiry.expired, expiry.urgent, expiry.warning, expiry.early] : [], ['#ff7080', '#f59c61', '#efd56a', '#45c6e4']);
 });
-const coverageTotal = computed(() => {
-  const buckets = inventoryOperations.value?.coverageBuckets;
-  return buckets ? buckets.noSales + buckets.under30 + buckets.days30To90 + buckets.over90 : 0;
-});
-const coverageGradient = computed(() => {
-  const buckets = inventoryOperations.value?.coverageBuckets;
-  return conicGradient(buckets ? [buckets.noSales, buckets.under30, buckets.days30To90, buckets.over90] : [], ['#ff7080', '#3dd9a2', '#6880ff', '#f4b860']);
-});
 const productDetailPageCount = computed(() => Math.max(1, Math.ceil((productsBrands.value?.products.length ?? 0) / productDetailPageSize.value)));
 const pagedProductDetails = computed(() => {
   const start = (productDetailPage.value - 1) * productDetailPageSize.value;
@@ -335,27 +356,28 @@ const pagedInsightProducts = computed(() => {
 const inventoryBrands = computed(() => [...new Set((inventoryOperations.value?.products ?? []).map((item) => item.brandName).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN')));
 const inventoryCategories = computed(() => [...new Set((inventoryOperations.value?.products ?? []).map((item) => item.categoryName).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN')));
 const inventoryStatusCounts = computed(() => {
-  const products = inventoryOperations.value?.products ?? [];
+  const products = (inventoryOperations.value?.products ?? []).filter((item) => !item.replenishmentHidden && !item.directShipExcluded);
   return {
     ALL: products.length,
     SLOW: products.filter((item) => item.slowMoving).length,
-    OUT_OF_STOCK: products.filter((item) => item.stockStatus === 'OUT_OF_STOCK').length,
+    OUT_OF_STOCK: products.filter((item) => item.stockStatus === 'OUT_OF_STOCK' && item.shortageVisible).length,
     LOW: products.filter((item) => item.stockStatus === 'LOW').length,
     OVERSTOCK: products.filter((item) => item.coverageDays !== null && item.coverageDays > 90).length,
-    NO_MINIMUM: products.filter((item) => item.minimumStock === null).length,
+    NO_MINIMUM: products.filter((item) => item.configuredMinimumStock === null).length,
   };
 });
 const filteredInventoryProducts = computed(() => {
   const query = inventoryTableQuery.value.trim().toLowerCase();
   const rows = (inventoryOperations.value?.products ?? []).filter((item) => {
+    if (item.replenishmentHidden || item.directShipExcluded) return false;
     if (query && ![item.productName, item.brandName, item.categoryName, item.sku].some((value) => value?.toLowerCase().includes(query))) return false;
     if (inventoryBrandFilter.value && item.brandName !== inventoryBrandFilter.value) return false;
     if (inventoryCategoryFilter.value && item.categoryName !== inventoryCategoryFilter.value) return false;
     if (inventoryStatusFilter.value === 'SLOW' && !item.slowMoving) return false;
-    if (inventoryStatusFilter.value === 'OUT_OF_STOCK' && item.stockStatus !== 'OUT_OF_STOCK') return false;
+    if (inventoryStatusFilter.value === 'OUT_OF_STOCK' && !(item.stockStatus === 'OUT_OF_STOCK' && item.shortageVisible)) return false;
     if (inventoryStatusFilter.value === 'LOW' && item.stockStatus !== 'LOW') return false;
     if (inventoryStatusFilter.value === 'OVERSTOCK' && !(item.coverageDays !== null && item.coverageDays > 90)) return false;
-    if (inventoryStatusFilter.value === 'NO_MINIMUM' && item.minimumStock !== null) return false;
+    if (inventoryStatusFilter.value === 'NO_MINIMUM' && item.configuredMinimumStock !== null) return false;
     return true;
   });
   return rows.sort((a, b) => {
@@ -397,15 +419,37 @@ async function loadOverview() {
   loading.value = true;
   error.value = '';
   try {
-    const [overviewData, foundationData] = await Promise.all([
-      managementRequest<Overview>(`/management/overview?storeId=${encodeURIComponent(props.storeId)}&month=${month.value}`),
+    const [overviewData, foundationData, purchaseOrderData] = await Promise.all([
+      managementRequest<Overview>(`/management/overview?storeId=${encodeURIComponent(props.storeId)}&date=${today}`),
       managementRequest<DataFoundation>(`/management/data-foundation?storeId=${encodeURIComponent(props.storeId)}`),
+      canSection('inventory') ? managementRequest<CurrentPurchaseOrder>(`/management/purchase-orders/current?storeId=${encodeURIComponent(props.storeId)}`).catch(() => null) : Promise.resolve(null),
     ]);
     overview.value = overviewData;
     foundation.value = foundationData;
+    if (purchaseOrderData) currentPurchaseOrder.value = purchaseOrderData;
     if (canSection('sales')) void Promise.all([loadOverviewTrend(), loadOverviewHotProducts()]);
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '经营数据加载失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function refreshOverviewRealtime() {
+  if (!props.storeId) return;
+  if (!managementAccess.value?.capabilities.posSync) {
+    await loadOverview();
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  try {
+    await managementRequest(`/management/pos-sync/run?storeId=${encodeURIComponent(props.storeId)}`, {
+      method: 'POST', body: JSON.stringify({ date: today, reconcile: false }),
+    });
+    await loadOverview();
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '今日实时数据刷新失败';
   } finally {
     loading.value = false;
   }
@@ -416,7 +460,10 @@ function overviewRange(period: OverviewTrendPeriod | OverviewHotPeriod) {
   const end = new Date(`${today}T00:00:00Z`);
   const start = new Date(end);
   if (period === 'DAY') return { from: today, to: today, dimension: 'DAY' as const };
-  if (period === 'WEEK') start.setUTCDate(start.getUTCDate() - 6);
+  if (period === 'WEEK') {
+    const weekday = start.getUTCDay();
+    start.setUTCDate(start.getUTCDate() - (weekday === 0 ? 6 : weekday - 1));
+  }
   if (period === 'MONTH') start.setUTCDate(1);
   if (period === 'QUARTER') { start.setUTCMonth(Math.floor(start.getUTCMonth() / 3) * 3, 1); }
   if (period === 'YEAR') start.setUTCMonth(0, 1);
@@ -571,6 +618,181 @@ async function loadInventoryOperations() {
   }
 }
 
+async function configureMinimumStock(product?: InventoryOperationRow) {
+  const current = product?.minimumStock ?? inventoryOperations.value?.defaultMinimumStock ?? 20;
+  minimumStockDialog.value = { product: product ?? null, value: String(current) };
+}
+
+async function saveMinimumStock() {
+  if (!props.storeId || !minimumStockDialog.value) return;
+  const minimumStock = Number(minimumStockDialog.value.value);
+  if (!Number.isInteger(minimumStock) || minimumStock < 0 || minimumStock > 100000) { error.value = '最低库存必须是0至100000之间的整数'; return; }
+  const product = minimumStockDialog.value.product;
+  minimumStockSaving.value = true; error.value = '';
+  try {
+    await managementRequest(`/management/inventory-operations/minimum-stock?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ productId: product?.productId, minimumStock }) });
+    minimumStockDialog.value = null;
+    await loadInventoryOperations();
+  } catch (reason) { error.value = reason instanceof Error ? reason.message : '最低库存配置失败'; }
+  finally { minimumStockSaving.value = false; }
+}
+
+async function setInventoryVisibility(item: InventoryOperationRow, mode: 'IGNORE' | 'NEXT_WEEK') {
+  if (!props.storeId) return;
+  inventoryActionProductId.value = item.productId; error.value = '';
+  try {
+    await managementRequest(`/management/inventory-operations/visibility?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ productId: item.productId, mode }) });
+    await loadInventoryOperations();
+  } catch (reason) { error.value = reason instanceof Error ? reason.message : '库存提醒处理失败'; }
+  finally { inventoryActionProductId.value = ''; }
+}
+
+async function loadProcurement() {
+  if (!props.storeId) return;
+  purchaseLoading.value = true; error.value = '';
+  try {
+    const store = encodeURIComponent(props.storeId);
+    const [suggestions, order] = await Promise.all([
+      managementRequest<PurchaseSuggestions>(`/management/purchase-suggestions?storeId=${store}`),
+      managementRequest<CurrentPurchaseOrder>(`/management/purchase-orders/current?storeId=${store}`),
+    ]);
+    purchaseSuggestions.value = suggestions;
+    currentPurchaseOrder.value = order;
+  } catch (reason) { error.value = reason instanceof Error ? reason.message : '进货数据加载失败'; }
+  finally { purchaseLoading.value = false; }
+}
+
+async function addToPurchaseOrder(productId: string | null, source: PurchaseSource, quantity?: number) {
+  if (!props.storeId || !productId) return;
+  purchaseLoading.value = true; purchaseMessage.value = ''; error.value = '';
+  try {
+    const order = await managementRequest<PurchaseOrder>(`/management/purchase-orders/items?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ productId, source, quantity }) });
+    currentPurchaseOrder.value = { currency: currentPurchaseOrder.value?.currency ?? 'NZD', order };
+    showPurchaseMessage('商品已加入本周进货单');
+    if (purchaseSuggestions.value) {
+      const row = purchaseSuggestions.value.suggestions.find((item) => item.productId === productId);
+      if (row) row.alreadyIncluded = true;
+    }
+  } catch (reason) { error.value = reason instanceof Error ? reason.message : '加入进货单失败'; }
+  finally { purchaseLoading.value = false; }
+}
+
+function showPurchaseMessage(message: string) {
+  if (purchaseMessageTimer) clearTimeout(purchaseMessageTimer);
+  purchaseMessage.value = message;
+  purchaseMessageTimer = setTimeout(() => { purchaseMessage.value = ''; }, 1000);
+}
+
+function isProductInCurrentOrder(productId: string | null) {
+  return Boolean(productId && currentPurchaseOrder.value?.order?.items.some((item) => item.productId === productId));
+}
+
+async function ignorePurchaseSuggestion(item: PurchaseSuggestion) {
+  if (!props.storeId) return;
+  const reason = window.prompt(`忽略“${item.productName}”的进货建议。可填写原因：`, '当前库存足够') ?? null;
+  if (reason === null) return;
+  purchaseLoading.value = true; purchaseMessage.value = ''; error.value = '';
+  try {
+    await managementRequest(`/management/purchase-suggestions/ignore?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ productId: item.productId, reason }) });
+    showPurchaseMessage(`${item.productName} 已忽略`);
+    await loadProcurement();
+  } catch (reasonValue) { error.value = reasonValue instanceof Error ? reasonValue.message : '忽略进货建议失败'; }
+  finally { purchaseLoading.value = false; }
+}
+
+async function restorePurchaseSuggestion(item: PurchaseSuggestion) {
+  if (!props.storeId) return;
+  purchaseLoading.value = true; purchaseMessage.value = ''; error.value = '';
+  try {
+    await managementRequest(`/management/purchase-suggestions/restore?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ productId: item.productId }) });
+    showPurchaseMessage(`${item.productName} 已恢复到进货建议`);
+    await loadProcurement();
+  } catch (reasonValue) { error.value = reasonValue instanceof Error ? reasonValue.message : '恢复进货建议失败'; }
+  finally { purchaseLoading.value = false; }
+}
+
+async function savePurchaseItem(item: PurchaseOrderItem) {
+  if (!props.storeId) return;
+  purchaseLoading.value = true; purchaseMessage.value = ''; error.value = '';
+  try {
+    const order = await managementRequest<PurchaseOrder>(`/management/purchase-orders/items/update?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ itemId: item.id, orderedQuantity: item.orderedQuantity, supplierName: item.supplierName, unitCostCents: item.unitCostCents, caseSize: item.caseSize, notes: item.notes }) });
+    currentPurchaseOrder.value = { currency: currentPurchaseOrder.value?.currency ?? 'NZD', order };
+    showPurchaseMessage(`${item.productName} 已保存`);
+  } catch (reason) { error.value = reason instanceof Error ? reason.message : '进货商品保存失败'; }
+  finally { purchaseLoading.value = false; }
+}
+
+async function removePurchaseItem(item: PurchaseOrderItem) {
+  if (!props.storeId) return;
+  purchaseConfirm.value = {
+    title: `移除“${item.productName}”`,
+    description: '商品会从本周进货单移除，但不会删除商品资料，也不会改变当前库存。',
+    confirmLabel: '确认移除', tone: 'danger', action: () => performRemovePurchaseItem(item),
+  };
+}
+
+async function performRemovePurchaseItem(item: PurchaseOrderItem) {
+  purchaseLoading.value = true; purchaseMessage.value = ''; error.value = '';
+  try {
+    const order = await managementRequest<PurchaseOrder>(`/management/purchase-orders/items/remove?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ itemId: item.id }) });
+    currentPurchaseOrder.value = { currency: currentPurchaseOrder.value?.currency ?? 'NZD', order };
+    showPurchaseMessage('商品已从本周进货单移除');
+    const suggestion = purchaseSuggestions.value?.suggestions.find((row) => row.productId === item.productId);
+    if (suggestion) suggestion.alreadyIncluded = false;
+  } catch (reason) { error.value = reason instanceof Error ? reason.message : '移除进货商品失败'; }
+  finally { purchaseLoading.value = false; }
+}
+
+async function changePurchaseStatus(status: 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'CANCELLED') {
+  if (!props.storeId) return;
+  const consequence = status === 'CONFIRMED' ? '确认后将暂时锁定商品和数量。' : status === 'ORDERED' ? '标记已订货后，仍需到货并扫码入库才会增加库存。' : status === 'CANCELLED' ? '取消后本周进货单不能继续使用。' : '退回草稿后可以继续修改。';
+  purchaseConfirm.value = {
+    title: status === 'CANCELLED' ? '取消本周进货单' : `${purchaseStatusLabel(status)}确认`,
+    description: consequence,
+    confirmLabel: status === 'CANCELLED' ? '确认取消' : '确认操作',
+    tone: status === 'CANCELLED' ? 'danger' : 'primary',
+    action: () => performPurchaseStatusChange(status),
+  };
+}
+
+async function performPurchaseStatusChange(status: 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'CANCELLED') {
+  purchaseLoading.value = true; purchaseMessage.value = ''; error.value = '';
+  try {
+    const order = await managementRequest<PurchaseOrder>(`/management/purchase-orders/status?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ status }) });
+    currentPurchaseOrder.value = { currency: currentPurchaseOrder.value?.currency ?? 'NZD', order };
+    showPurchaseMessage('进货单状态已更新');
+  } catch (reason) { error.value = reason instanceof Error ? reason.message : '进货单状态更新失败'; }
+  finally { purchaseLoading.value = false; }
+}
+
+async function confirmPurchaseAction() {
+  if (!purchaseConfirm.value || purchaseConfirmBusy.value) return;
+  const action = purchaseConfirm.value.action;
+  purchaseConfirmBusy.value = true;
+  try { await action(); purchaseConfirm.value = null; }
+  finally { purchaseConfirmBusy.value = false; }
+}
+
+function escapeXml(value: unknown) {
+  return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+}
+
+function exportPurchaseOrderExcel() {
+  const order = currentPurchaseOrder.value?.order;
+  if (!order?.items.length) return;
+  const headers = ['序号', '商品名称', 'SKU/条码', '来源', '当前库存', '近7天销量', '建议数量', '确定进货数量', '供应商', '单件进价(NZ$)', '整箱规格', '预计金额(NZ$)', '备注'];
+  const rows = order.items.map((item, index) => [index + 1, item.productName, item.barcode || item.sku, purchaseSourceLabel(item.source), item.currentInventory, item.recentSevenDayQty, item.suggestedQuantity, item.orderedQuantity, item.supplierName || '', item.unitCostCents == null ? '' : (item.unitCostCents / 100).toFixed(2), item.caseSize ?? '', item.unitCostCents == null ? '' : ((item.unitCostCents * item.orderedQuantity) / 100).toFixed(2), item.notes || '']);
+  const tableRows = [headers, ...rows].map((row) => `<Row>${row.map((cell) => `<Cell><Data ss:Type="${typeof cell === 'number' ? 'Number' : 'String'}">${escapeXml(cell)}</Data></Cell>`).join('')}</Row>`).join('');
+  const xml = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="本周进货单"><Table>${tableRows}</Table></Worksheet></Workbook>`;
+  const url = URL.createObjectURL(new Blob(['\ufeff', xml], { type: 'application/vnd.ms-excel;charset=utf-8' }));
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${order.orderNo}-本周进货单.xls`; anchor.click(); URL.revokeObjectURL(url);
+  showPurchaseMessage('进货单 Excel 已生成');
+}
+
+function openProcurement(view: 'suggestions' | 'order' = 'order') { purchaseView.value = view; selectSection('procurement'); }
+function purchaseSourceLabel(source: PurchaseSource) { return ({ MANUAL: '人工加入', OUT_OF_STOCK: '缺货', LOW_STOCK: '低库存', HOT_SALES: '热销商品', WEEKLY_FORECAST: '一周销量缺口' })[source]; }
+function purchaseStatusLabel(status: PurchaseOrder['status']) { return ({ DRAFT: '草稿', CONFIRMED: '已确认', ORDERED: '已订货', PARTIALLY_RECEIVED: '部分到货', RECEIVED: '全部到货', CANCELLED: '已取消' })[status]; }
+
 async function loadStoreComparison() {
   if (!props.storeId || !storeFrom.value || !storeTo.value) return;
   storeLoading.value = true;
@@ -636,7 +858,6 @@ async function saveInsightTag() {
   finally { insightLoading.value = false; }
 }
 
-watch(month, loadOverview);
 watch(productDetailPageSize, () => { productDetailPage.value = 1; });
 watch(productDetailPageCount, (count) => { if (productDetailPage.value > count) productDetailPage.value = count; });
 watch(insightDetailPageSize, () => { insightDetailPage.value = 1; });
@@ -648,10 +869,12 @@ watch(activeSection, (section) => {
   if (section === 'sales') void loadSalesAnalysis();
   if (section === 'products') void loadProductsBrands();
   if (section === 'inventory') void loadInventoryOperations();
+  if (section === 'procurement') void loadProcurement();
   if (section === 'stores') void loadStoreComparison();
   if (section === 'customers') void loadProductInsights();
 });
 onMounted(async () => { await loadManagementAccess(); if (canSection('overview')) await loadOverview(); });
+onBeforeUnmount(() => { if (purchaseMessageTimer) clearTimeout(purchaseMessageTimer); });
 </script>
 
 <template>
@@ -676,14 +899,16 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
     <main class="management-content" :class="{ 'overview-content': activeSection === 'overview' }">
     <header class="management-heading">
       <div><p>MANAGEMENT / {{ activeSection.toUpperCase() }}</p><h2>{{ currentSection.label }}</h2><span>{{ overview?.store.name || storeName }} · {{ currentSection.description }}</span></div>
-      <div v-if="activeSection === 'overview'" class="management-filters"><label>统计月份<input v-model="month" type="month" @click="openNativePicker" /></label><button type="button" :disabled="loading" @click="loadOverview">{{ loading ? '加载中…' : '刷新数据' }}</button></div>
+      <div v-if="activeSection === 'overview'" class="management-filters"><label>经营日期<strong>{{ today }}</strong></label><button type="button" :disabled="loading" @click="refreshOverviewRealtime">{{ loading ? '同步中…' : '刷新今日数据' }}</button></div>
       <div v-else-if="activeSection === 'system'" class="management-filters"><button type="button" :disabled="posLoading || posRunning" @click="loadSystemManagement">{{ posLoading ? '加载中…' : '刷新状态' }}</button></div>
     </header>
 
-    <details class="page-guide" :open="activeSection !== 'overview'">
-      <summary>本页包含什么</summary>
-      <div><p>{{ currentGuide.purpose }}</p><ul><li v-for="item in currentGuide.includes" :key="item">{{ item }}</li></ul><strong>{{ currentGuide.decision }}</strong></div>
-    </details>
+    <button class="page-guide-fab" type="button" aria-label="查看本页说明" :aria-expanded="pageGuideOpen" @click="pageGuideOpen = !pageGuideOpen"><img src="/sunshine-fern-assistant.png" alt="" /><span aria-hidden="true"></span><b>页面说明</b></button>
+    <Transition name="guide-pop"><aside v-if="pageGuideOpen" class="page-guide-popover" aria-label="本页包含什么"><header><span><small>阳光小助手 · 本页包含什么</small><strong>{{ currentSection.label }}怎么读</strong></span><button type="button" aria-label="关闭页面说明" @click="pageGuideOpen = false">×</button></header><p>{{ currentGuide.purpose }}</p><ul><li v-for="item in currentGuide.includes" :key="item">{{ item }}</li></ul><div v-if="currentGuide.details?.length" class="guide-details"><p v-for="detail in currentGuide.details" :key="detail">{{ detail }}</p></div><b>{{ currentGuide.decision }}</b></aside></Transition>
+
+    <Teleport to="body"><Transition name="modal-pop"><div v-if="minimumStockDialog" class="management-modal-backdrop" @click.self="minimumStockDialog = null"><form class="minimum-stock-dialog" @submit.prevent="saveMinimumStock"><header><span><small>库存提醒设置</small><strong>{{ minimumStockDialog.product ? minimumStockDialog.product.productName : '统一设置最低库存' }}</strong></span><button type="button" aria-label="关闭最低库存设置" @click="minimumStockDialog = null">×</button></header><p>库存低于这个数量时标记为低库存。这里只改变提醒阈值，不会修改真实库存。</p><label>最低库存数量<input v-model="minimumStockDialog.value" type="number" min="0" max="100000" step="1" autofocus /></label><div v-if="!minimumStockDialog.product" class="dialog-scope-note"><strong>统一应用</strong><span>保存后会更新当前门店全部启用商品。</span></div><footer><button class="dialog-cancel" type="button" @click="minimumStockDialog = null">暂不修改</button><button class="dialog-confirm" type="submit" :disabled="minimumStockSaving">{{ minimumStockSaving ? '保存中…' : '保存阈值' }}</button></footer></form></div></Transition></Teleport>
+    <Teleport to="body"><Transition name="toast-pop"><p v-if="purchaseMessage" class="purchase-toast" role="status">{{ purchaseMessage }}</p></Transition></Teleport>
+    <Teleport to="body"><Transition name="modal-pop"><div v-if="purchaseConfirm" class="management-modal-backdrop" @click.self="purchaseConfirm = null"><section class="purchase-confirm-dialog" role="dialog" aria-modal="true" aria-label="进货单操作确认"><header><span><small>本周进货单</small><strong>{{ purchaseConfirm.title }}</strong></span><button type="button" aria-label="关闭进货单确认框" @click="purchaseConfirm = null">×</button></header><p>{{ purchaseConfirm.description }}</p><footer><button class="dialog-cancel" type="button" @click="purchaseConfirm = null">暂不操作</button><button :class="['dialog-confirm', { danger: purchaseConfirm.tone === 'danger' }]" type="button" :disabled="purchaseConfirmBusy" @click="confirmPurchaseAction">{{ purchaseConfirmBusy ? '处理中…' : purchaseConfirm.confirmLabel }}</button></footer></section></div></Transition></Teleport>
 
     <div v-if="error" class="management-alert error" role="alert"><span>{{ error }}。本次数据未能更新，已显示的内容可能不是最新结果。</span><button class="text-action" type="button" :disabled="pageBusy" @click="retryCurrentPage">重新加载</button></div>
     <p v-if="pageBusy" class="page-load-status" role="status">正在更新{{ currentSection.label }}…</p>
@@ -693,10 +918,10 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
 
     <template v-if="overview">
       <div class="overview-metric-strip" aria-label="经营核心指标">
-        <article><i class="metric-symbol sales">$</i><span>本月净销售额<strong>{{ money(overview.sales.current.netRevenue) }}</strong><small :class="comparisonClass(overview.sales.comparison.netRevenuePercent)">较上月 {{ percent(overview.sales.comparison.netRevenuePercent) }}</small></span></article>
-        <article><i class="metric-symbol orders">#</i><span>本月订单<strong>{{ overview.sales.current.orderCount }} 单</strong><small :class="comparisonClass(overview.sales.comparison.orderCountPercent)">较上月 {{ percent(overview.sales.comparison.orderCountPercent) }}</small></span></article>
-        <article><i class="metric-symbol units">∑</i><span>销售件数<strong>{{ number(overview.sales.current.unitsSold) }} 件</strong><small :class="comparisonClass(overview.sales.comparison.unitsSoldPercent)">较上月 {{ percent(overview.sales.comparison.unitsSoldPercent) }}</small></span></article>
-        <article><i class="metric-symbol average">Ø</i><span>平均客单价<strong>{{ money(overview.sales.current.averageOrderValue) }}</strong><small :class="comparisonClass(overview.sales.comparison.averageOrderValuePercent)">较上月 {{ percent(overview.sales.comparison.averageOrderValuePercent) }}</small></span></article>
+        <article><i class="metric-symbol sales">$</i><span>今日净销售额<strong>{{ money(overview.sales.current.netRevenue) }}</strong><small :class="comparisonClass(overview.sales.comparison.netRevenuePercent)">较昨日 {{ percent(overview.sales.comparison.netRevenuePercent) }}</small></span></article>
+        <article><i class="metric-symbol orders">#</i><span>今日订单<strong>{{ overview.sales.current.orderCount }} 单</strong><small :class="comparisonClass(overview.sales.comparison.orderCountPercent)">较昨日 {{ percent(overview.sales.comparison.orderCountPercent) }}</small></span></article>
+        <article><i class="metric-symbol units">∑</i><span>今日销售件数<strong>{{ number(overview.sales.current.unitsSold) }} 件</strong><small :class="comparisonClass(overview.sales.comparison.unitsSoldPercent)">较昨日 {{ percent(overview.sales.comparison.unitsSoldPercent) }}</small></span></article>
+        <article><i class="metric-symbol average">Ø</i><span>今日平均客单价<strong>{{ money(overview.sales.current.averageOrderValue) }}</strong><small :class="comparisonClass(overview.sales.comparison.averageOrderValuePercent)">较昨日 {{ percent(overview.sales.comparison.averageOrderValuePercent) }}</small></span></article>
         <article><i class="metric-symbol stock">▦</i><span>当前库存<strong>{{ number(overview.inventory.totalQuantity) }} 件</strong><small>{{ overview.inventory.productCount }} 种商品</small></span></article>
         <article><i class="metric-symbol expiry">!</i><span>到期关注<strong>{{ number(overview.inventory.expiryAttentionQuantity) }} 件</strong><small>{{ overview.inventory.batchCount }} 个库存批次</small></span></article>
       </div>
@@ -704,7 +929,7 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
       <p v-if="overviewWidgetError" class="inline-notice">{{ overviewWidgetError }}，仍显示最近一次成功结果。</p>
       <div class="overview-command-grid">
         <section class="management-card overview-sales-card">
-          <header class="overview-card-header"><div><small>NET SALES</small><h3>销售趋势</h3><p>{{ overviewTrendAnalysis?.period.from ?? `${overview.period.month}-01` }} 至 {{ overviewTrendAnalysis?.period.to ?? today }}</p></div><div class="overview-header-actions"><div class="period-tabs" role="group" aria-label="销售趋势周期"><button v-for="item in overviewTrendPeriods" :key="item.key" type="button" :aria-pressed="overviewTrendPeriod === item.key" :disabled="overviewWidgetsLoading" @click="selectOverviewTrend(item.key)">{{ item.label }}</button></div><button v-if="canSection('sales')" class="text-action" type="button" @click="openSalesFromOverview">销售详情 →</button></div></header>
+          <header class="overview-card-header"><div><small>NET SALES</small><h3>销售趋势</h3><p>{{ overviewTrendAnalysis?.period.from ?? overview.period.date }} 至 {{ overviewTrendAnalysis?.period.to ?? today }}</p></div><div class="overview-header-actions"><div class="period-tabs" role="group" aria-label="销售趋势周期"><button v-for="item in overviewTrendPeriods" :key="item.key" type="button" :aria-pressed="overviewTrendPeriod === item.key" :disabled="overviewWidgetsLoading" @click="selectOverviewTrend(item.key)">{{ item.label }}</button></div><button v-if="canSection('sales')" class="text-action" type="button" @click="openSalesFromOverview">销售详情 →</button></div></header>
           <div class="trend-primary"><strong>{{ money(overviewTrendAnalysis?.metrics.netRevenue ?? overview.sales.current.netRevenue) }}</strong><span>{{ overviewTrendAnalysis?.metrics.orderCount ?? overview.sales.current.orderCount }} 单 · {{ number(overviewTrendAnalysis?.metrics.unitsSold ?? overview.sales.current.unitsSold) }} 件</span></div>
           <p v-if="overviewTrendSeries.length === 1" class="scope-note">当前只有 1 个有记录的日期，尚不足以形成完整趋势。</p><div v-if="overviewTrendSeries.length" :key="overviewTrendPeriod" class="trend-line-chart overview-line-chart">
             <svg viewBox="-150 0 1160 230" role="img" aria-label="销售趋势折线图"><defs><linearGradient id="overview-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#24d6e5" stop-opacity=".4"/><stop offset="100%" stop-color="#24d6e5" stop-opacity="0"/></linearGradient></defs><g class="chart-grid"><line v-for="y in [40,82,124,166,210]" :key="y" x1="0" :y1="y" x2="1000" :y2="y" /></g><g class="chart-values"><text v-for="y in [40,124,210]" :key="y" x="-12" :y="y + 5" text-anchor="end">{{ money(maxDailyRevenue * (210 - y) / 170) }}</text></g><path :d="areaPath(overviewTrendPoints)" fill="url(#overview-area)"/><polyline :points="linePath(overviewTrendPoints)"/><circle v-for="(point,index) in overviewTrendPoints" :key="index" :cx="point.x" :cy="point.y" r="4"><title>{{ overviewTrendSeries[index].period }} · {{ money(point.value) }}</title></circle></svg>
@@ -724,18 +949,19 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
       <section class="overview-action-rail action-list" aria-label="经营关注与待办"><h3 class="visually-hidden">经营关注与待办</h3>
         <button type="button" @click="emit('open-report', 'receipts')"><i>↧</i><span>待提交入库单<small>查看未完成的入库作业</small></span><strong>{{ overview.inventory.activity.openReceiptCount }} 单</strong></button>
         <button type="button" @click="emit('open-report', 'expiry')"><i>⌛</i><span>到期关注<small>处理临期与过期批次</small></span><strong>{{ number(overview.inventory.expiryAttentionQuantity) }} 件</strong></button>
-        <button type="button" @click="emit('open-report', 'movements')"><i>⇄</i><span>本月库存作业<small>含盘点修正 {{ overview.inventory.activity.stocktakeAdjustmentsThisMonth }} 笔</small></span><strong>{{ overview.inventory.activity.movementCountThisMonth }} 笔流水</strong></button>
+        <button type="button" @click="emit('open-report', 'movements')"><i>⇄</i><span>今日库存作业<small>含盘点修正 {{ overview.inventory.activity.stocktakeAdjustmentsToday }} 笔</small></span><strong>{{ overview.inventory.activity.movementCountToday }} 笔流水</strong></button>
+        <button type="button" @click="openProcurement('order')"><i>↧</i><span>本周进货单<small>查看建议、确认数量与订货状态</small></span><strong>{{ currentPurchaseOrder?.order?.summary.productCount ?? 0 }} 种</strong></button>
       </section>
 
       <section class="management-card hot-products-card">
-        <header class="overview-card-header"><div><small>TOP PRODUCTS</small><h3>热销商品 Top 10</h3><p>按销售金额排序，快速识别主力商品</p></div><div class="period-tabs" role="group" aria-label="热销商品周期"><button v-for="item in overviewHotPeriods" :key="item.key" type="button" :aria-pressed="overviewHotPeriod === item.key" :disabled="overviewWidgetsLoading" @click="selectOverviewHot(item.key)">{{ item.label }}</button></div></header>
-        <div v-if="(overviewHotAnalysis?.topProducts ?? overview.sales.current.topProducts).length" :key="overviewHotPeriod" class="hot-product-table-wrap"><table><thead><tr><th>排名</th><th>商品</th><th>品牌</th><th>销售件数</th><th>销售金额</th></tr></thead><tbody><tr v-for="(item,index) in (overviewHotAnalysis?.topProducts ?? overview.sales.current.topProducts).slice(0,10)" :key="`${item.productName}-${index}`"><td><b class="rank-badge" :class="{ podium: index < 3 }">{{ String(index + 1).padStart(2, '0') }}</b></td><td><strong>{{ item.productName }}</strong><span class="sales-share"><i :style="{ width: `${Math.max(8, item.revenue / Math.max(1, (overviewHotAnalysis?.topProducts ?? overview.sales.current.topProducts)[0]?.revenue ?? 1) * 100)}%` }"></i></span></td><td>{{ item.brandName || '未设置品牌' }}</td><td>{{ number(item.quantity) }} 件</td><td><strong>{{ money(item.revenue) }}</strong></td></tr></tbody></table></div><p v-else class="management-empty">所选周期暂无商品销售排行。</p>
+        <header class="overview-card-header"><div><small>TOP PRODUCTS</small><h3>热销产品 20</h3><p>按销售金额排序，快速识别主力商品</p></div><div class="period-tabs" role="group" aria-label="热销商品周期"><button v-for="item in overviewHotPeriods" :key="item.key" type="button" :aria-pressed="overviewHotPeriod === item.key" :disabled="overviewWidgetsLoading" @click="selectOverviewHot(item.key)">{{ item.label }}</button></div></header>
+        <div v-if="(overviewHotAnalysis?.topProducts ?? overview.sales.current.topProducts).length" :key="overviewHotPeriod" class="hot-products-grid"><article v-for="(item,index) in (overviewHotAnalysis?.topProducts ?? overview.sales.current.topProducts).slice(0,20)" :key="`${item.productName}-${index}`"><b class="rank-badge" :class="{ podium:index<3 }">{{ String(index+1).padStart(2,'0') }}</b><span><strong>{{ item.productName }}</strong><small>{{ item.brandName || '未设置品牌' }}</small></span><em>{{ number(item.quantity) }} 件</em><strong>{{ money(item.revenue) }}</strong><button class="table-action" type="button" :disabled="purchaseLoading || !item.productId || isProductInCurrentOrder(item.productId)" @click="addToPurchaseOrder(item.productId,'HOT_SALES')">{{ isProductInCurrentOrder(item.productId) ? '已加入' : '加入' }}</button></article></div><p v-else class="management-empty">所选周期暂无商品销售排行。</p>
       </section>
     </template>
     </template>
 
     <section v-else-if="activeSection === 'sales'" class="sales-analysis-page">
-      <div class="period-shortcuts" role="group" aria-label="快捷日期"><span>快捷日期</span><button type="button" @click="setDateRange('sales', 'today')">今天</button><button type="button" @click="setDateRange('sales', 'week')">近7天</button><button type="button" @click="setDateRange('sales', 'month')">本月</button><small>修改条件后点击更新分析</small></div>
+      <div class="period-shortcuts" role="group" aria-label="快捷日期"><span>默认显示今天</span><button type="button" @click="setDateRange('sales', 'today')">今天</button><button type="button" @click="setDateRange('sales', 'week')">近7天</button><button type="button" @click="setDateRange('sales', 'month')">本月</button><button type="button" @click="setDateRange('sales', 'year')">本年</button><small>快捷日期会同时选择合适的统计维度；自定义日期后可手动调整</small></div>
       <form class="sales-filter-panel" @submit.prevent="loadSalesAnalysis">
         <label>开始日期<input v-model="salesFrom" type="date" @click="openNativePicker" /></label>
         <label>结束日期<input v-model="salesTo" type="date" @click="openNativePicker" /></label>
@@ -781,12 +1007,14 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
       </form>
       <details class="analysis-method"><summary>商品分析口径</summary><p>本页仅展示经营数据，不提供商品新增、售价或条码维护。销售金额按已关联正式商品的明细累计，可能与订单净销售额不同；库存是当前余额，不是所选日期的历史库存。</p><p>品牌及品类筛选读取正式商品字段。展示名称可能来自名称识别；商品主档分类不等同于健康需求或人群标签。</p><p v-if="productsBrands && !productsBrands.marginAvailable">{{ productsBrands.marginNotice }}</p><button v-if="canSection('system')" class="text-action" type="button" @click="openDataCenter()">查看正式资料完整度 →</button></details>
       <template v-if="productsBrands">
+        <p v-if="productsBrands.mappingQuality?.activeItems && productsBrands.mappingQuality.coveragePercent < 100" class="management-alert pending"><strong>商品映射尚未完成</strong><span>当前销售明细映射率 {{ productsBrands.mappingQuality.coveragePercent }}%，未映射销售不会进入商品与品牌统计。</span><button v-if="canSection('system')" type="button" @click="openDataCenter('issues')">查看异常</button></p>
         <div class="product-kpis">
           <article><span>启用商品</span><strong>{{ productsBrands.summary.productCount }}</strong><small>所选条件下的正式商品</small></article>
           <article><span>有销售商品</span><strong>{{ productsBrands.summary.soldProductCount }}</strong><small>销售 {{ number(productsBrands.summary.unitsSold) }} 件</small></article>
           <article><span>商品销售额</span><strong>{{ money(productsBrands.summary.salesRevenue) }}</strong><small>{{ productsBrands.period.from }} 至 {{ productsBrands.period.to }}</small></article>
-          <article><span>当前库存</span><strong>{{ number(productsBrands.summary.currentInventory) }} 件</strong><small>来自正式库存表</small></article>
-          <article><span>缺货/低库存</span><strong>{{ productsBrands.summary.lowStockProducts }}</strong><small>按现有最低库存配置判断</small></article>
+          <article><span>当前库存</span><strong>{{ number(productsBrands.summary.currentInventory) }} 件</strong><small>{{ productsBrands.summary.inStockProducts }} 种有正库存</small></article>
+          <article><button class="kpi-filter" type="button" @click="openInventoryAlert('OUT_OF_STOCK')"><span>缺货商品</span><strong>{{ productsBrands.summary.outOfStockProducts }}</strong><small>点击查看零库存或负库存商品</small></button></article>
+          <article><button class="kpi-filter" type="button" @click="openInventoryAlert('LOW')"><span>低库存商品</span><strong>{{ productsBrands.summary.lowStockProducts }}</strong><small>{{ productsBrands.summary.minimumStockConfiguredProducts ? '按已配置最低库存判断' : '尚未配置最低库存阈值' }}</small></button></article>
         </div>
         <div class="view-switcher" role="group" aria-label="商品分析视图"><button type="button" :aria-pressed="productView === 'products'" @click="productView = 'products'">商品明细</button><button type="button" :aria-pressed="productView === 'brands'" @click="productView = 'brands'">品牌结构</button><button type="button" :aria-pressed="productView === 'categories'" @click="productView = 'categories'">品类结构</button></div>
         <div v-show="productView !== 'products'" class="product-analysis-grid">
@@ -810,24 +1038,17 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
       <p v-if="inventoryLoading" class="inventory-load-status" role="status">正在更新库存分析，请稍候…</p>
       <p v-else-if="!inventoryOperations && !error" class="system-empty">选择观察期并查询，查看当前门店的库存经营情况。</p>
       <p v-if="inventoryOperations && !inventoryOperations.salesCoverage.reliable" class="management-alert pending"><strong>销售历史不足</strong><span>{{ inventoryOperations.coverageNotice }} 缺货与低库存仍可使用，但积压和滞销需要等待更多销售历史。</span></p>
-      <details v-if="inventoryOperations" class="inventory-method-note"><summary>统计口径与数据来源</summary><p>{{ inventoryOperations.turnoverNotice }}</p><p>库存来自正式库存系统，销量来自已同步的 POS 订单。若销售历史未补齐，无销量不代表实际未售出，覆盖天数和滞销结论仅供关注。</p><p>缺货指启用商品的当前库存为零，不等于必须采购。积压筛选为覆盖超过90天，滞销按既有多条件规则判断，两类可以重叠。</p></details><p v-if="inventoryOperations" class="scope-note">销量基于已同步记录；补货或清库存前请核对销售历史。<button v-if="canSection('system')" type="button" class="text-action" @click="openDataCenter('sync')">查看同步记录 →</button></p>
       <template v-if="inventoryOperations">
         <div class="inventory-operation-kpis">
           <article><span>当前库存</span><strong>{{ number(inventoryOperations.summary.totalInventory) }} 件</strong><small>{{ inventoryOperations.summary.stockedProducts }} 种有库存商品</small></article>
-          <article><button class="kpi-filter" type="button" @click="inventoryStatusFilter = 'OUT_OF_STOCK'; inventoryPage = 1" aria-label="筛选缺货商品"><span>缺货商品</span><strong>{{ inventoryOperations.summary.outOfStockProducts }}</strong><small>启用但当前库存为0</small></button></article>
-          <article><button class="kpi-filter" type="button" @click="inventoryStatusFilter = 'LOW'; inventoryPage = 1" aria-label="筛选低库存商品"><span>低库存商品</span><strong>{{ inventoryOperations.summary.lowStockProducts }}</strong><small>达到已配置最低库存</small></button></article>
+          <article><button class="kpi-filter" type="button" @click="inventoryStatusFilter = 'OUT_OF_STOCK'; inventoryPage = 1" aria-label="筛选缺货商品"><span>缺货商品</span><strong>{{ inventoryOperations.summary.outOfStockProducts }}</strong><small>零库存且120天内有销售</small></button></article>
+          <article><button class="kpi-filter" type="button" @click="inventoryStatusFilter = 'LOW'; inventoryPage = 1" aria-label="筛选低库存商品"><span>低库存商品</span><strong>{{ inventoryOperations.summary.lowStockProducts }}</strong><small>低于最低库存；默认20件</small></button></article>
           <article><button class="kpi-filter" type="button" @click="inventoryStatusFilter = 'SLOW'; inventoryPage = 1" aria-label="筛选滞销关注"><span>滞销关注</span><strong>{{ inventoryOperations.summary.slowMovingProducts }}</strong><small>有库存且销量不足</small></button></article>
           <article><span>观察商品</span><strong>{{ inventoryOperations.summary.productCount }}</strong><small>已观察 {{ inventoryOperations.salesCoverage.observedDays }} 天POS销售跨度</small></article>
         </div>
-        <details class="inventory-analysis-disclosure">
-        <summary>库存覆盖结构 <span>查看有库存商品预计可售天数</span></summary>
-        <div class="inventory-operation-grid">
-          <section class="system-card coverage-card"><div class="card-title"><div><h3>库存覆盖结构</h3><p>{{ inventoryOperations.coverageNotice }}</p></div></div><div class="donut-analysis coverage-donut"><div class="donut-chart" :style="{ background: coverageGradient }"><div><strong>{{ coverageTotal }}</strong><span>商品种数</span></div></div><div class="donut-legend"><div class="expired"><i></i><span>无销售</span><strong>{{ inventoryOperations.coverageBuckets.noSales }}</strong></div><div class="healthy"><i></i><span>不足30天</span><strong>{{ inventoryOperations.coverageBuckets.under30 }}</strong></div><div class="medium"><i></i><span>30–90天</span><strong>{{ inventoryOperations.coverageBuckets.days30To90 }}</strong></div><div class="overstock"><i></i><span>超过90天</span><strong>{{ inventoryOperations.coverageBuckets.over90 }}</strong></div></div></div></section>
-        </div>
-        </details>
         <section class="system-card product-table-card inventory-detail-card" :aria-busy="inventoryLoading">
-          <div class="card-title"><div><h3>销售与库存关联明细</h3><p>{{ inventoryOperations.period.from }} 至 {{ inventoryOperations.period.to }} · 库存为当前余额</p></div><span>{{ filteredInventoryProducts.length }} / {{ inventoryOperations.products.length }} 种</span></div>
-          <p class="scope-note">以下筛选只作用于已查询结果；各状态可能重叠，数量不可相加。</p><div class="inventory-status-tabs" aria-label="库存状态快捷筛选">
+          <div class="card-title"><div><h3>销售与库存关联明细</h3><p>{{ inventoryOperations.period.from }} 至 {{ inventoryOperations.period.to }} · 库存为当前余额</p></div><div class="minimum-stock-tools"><span>{{ filteredInventoryProducts.length }} / {{ inventoryOperations.products.length }} 种</span><button class="table-action" type="button" @click="configureMinimumStock()">统一设置最低库存</button></div></div>
+          <div class="inventory-status-tabs" aria-label="库存状态快捷筛选">
             <button type="button" :class="{ active: inventoryStatusFilter === 'ALL' }" @click="inventoryStatusFilter = 'ALL'">全部 <b>{{ inventoryStatusCounts.ALL }}</b></button>
             <button type="button" :class="{ active: inventoryStatusFilter === 'SLOW' }" @click="inventoryStatusFilter = 'SLOW'">滞销 <b>{{ inventoryStatusCounts.SLOW }}</b></button>
             <button type="button" :class="{ active: inventoryStatusFilter === 'OUT_OF_STOCK' }" @click="inventoryStatusFilter = 'OUT_OF_STOCK'">缺货 <b>{{ inventoryStatusCounts.OUT_OF_STOCK }}</b></button>
@@ -841,13 +1062,34 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
             <label>商品分类<select v-model="inventoryCategoryFilter"><option value="">全部分类</option><option v-for="category in inventoryCategories" :key="category" :value="category">{{ category }}</option></select></label>
             <label>排序<select v-model="inventorySort"><option value="INVENTORY_DESC">库存从高到低</option><option value="SALES_DESC">销量从高到低</option><option value="COVERAGE_DESC">覆盖天数从高到低</option><option value="LAST_SALE_ASC">最久未销售优先</option><option value="NAME_ASC">商品名称排序</option></select></label>
           </div>
-          <button class="text-action clear-table-filter" type="button" @click="clearInventoryFilters">清除表格筛选</button><div class="product-table-wrap inventory-scroll-table"><table><thead><tr><th>商品</th><th>库存</th><th>最低库存</th><th>观察期销量</th><th>日均销量</th><th>覆盖天数</th><th>最后销售</th><th>状态</th></tr></thead><tbody><tr v-for="item in pagedInventoryProducts" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }}</small></td><td>{{ number(item.currentInventory) }}</td><td>{{ item.minimumStock ?? '未配置' }}</td><td>{{ number(item.soldUnits) }}</td><td>{{ number(item.dailyVelocity) }}</td><td>{{ item.coverageDays === null ? (inventoryOperations.salesCoverage.reliable ? '无销量' : '数据不足') : `${number(item.coverageDays)} 天` }}</td><td>{{ item.daysSinceLastSale === null ? '无记录' : `${item.daysSinceLastSale} 天前` }}</td><td><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ item.stockStatus === 'IN_STOCK' ? (item.slowMoving ? '滞销关注' : '正常') : item.stockStatus === 'LOW' ? '低库存' : '缺货' }}</b></td></tr></tbody></table><p v-if="!pagedInventoryProducts.length" class="system-empty">当前筛选条件没有商品。</p></div>
+          <button class="text-action clear-table-filter" type="button" @click="clearInventoryFilters">清除筛选</button><div class="product-table-wrap inventory-scroll-table"><table><thead><tr><th>商品</th><th>库存</th><th>最低库存</th><th>观察期销量</th><th>日均销量</th><th>最后销售</th><th>状态与提醒</th><th>操作</th></tr></thead><tbody><tr v-for="item in pagedInventoryProducts" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }}</small></td><td>{{ number(item.currentInventory) }}</td><td><button class="minimum-stock-value" type="button" @click="configureMinimumStock(item)">{{ item.minimumStock }} <small>{{ item.minimumStockSource === 'DEFAULT' ? '默认' : '单独' }}</small></button></td><td>{{ number(item.soldUnits) }}</td><td>{{ number(item.dailyVelocity) }}</td><td>{{ item.daysSinceLastSale === null ? '无记录' : `${item.daysSinceLastSale} 天前` }}</td><td><div class="stock-status-actions"><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ item.stockStatus === 'IN_STOCK' ? (item.slowMoving ? '滞销关注' : '正常') : item.stockStatus === 'LOW' ? '低库存' : item.shortageVisible ? '缺货' : '长期停卖' }}</b><span><button type="button" :disabled="inventoryActionProductId === item.productId" @click="setInventoryVisibility(item, 'IGNORE')">忽略</button><button type="button" :disabled="inventoryActionProductId === item.productId" @click="setInventoryVisibility(item, 'NEXT_WEEK')">下周显示</button></span></div></td><td><div class="row-actions"><button class="table-action muted" type="button" @click="configureMinimumStock(item)">设阈值</button><button v-if="item.stockStatus !== 'IN_STOCK' && (item.stockStatus !== 'OUT_OF_STOCK' || item.shortageVisible)" class="table-action" type="button" :disabled="purchaseLoading" @click="addToPurchaseOrder(item.productId, item.stockStatus === 'OUT_OF_STOCK' ? 'OUT_OF_STOCK' : 'LOW_STOCK')">加入进货单</button></div></td></tr></tbody></table><p v-if="!pagedInventoryProducts.length" class="system-empty">当前筛选条件没有需要处理的商品。</p></div>
           <div class="inventory-table-pagination">
             <span>显示 {{ filteredInventoryProducts.length ? (inventoryPage - 1) * inventoryPageSize + 1 : 0 }}–{{ Math.min(inventoryPage * inventoryPageSize, filteredInventoryProducts.length) }} / 共 {{ filteredInventoryProducts.length }} 种商品</span>
-            <label>每页<select v-model.number="inventoryPageSize"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select></label>
+            <label>每页<select v-model.number="inventoryPageSize"><option :value="18">18</option><option :value="54">54</option></select></label>
             <div><button type="button" :disabled="inventoryPage <= 1" @click="inventoryPage--">上一页</button><b>{{ inventoryPage }} / {{ inventoryPageCount }}</b><button type="button" :disabled="inventoryPage >= inventoryPageCount" @click="inventoryPage++">下一页</button></div>
           </div>
         </section>
+      </template>
+    </section>
+
+    <section v-else-if="activeSection === 'procurement'" class="procurement-page">
+      <div class="procurement-tabs" role="tablist" aria-label="进货管理视图"><button type="button" :class="{ active: purchaseView === 'suggestions' }" @click="purchaseView = 'suggestions'">进货建议 <b>{{ purchaseSuggestions?.summary.products ?? 0 }}</b></button><button type="button" :class="{ active: purchaseView === 'order' }" @click="purchaseView = 'order'">本周进货单 <b>{{ currentPurchaseOrder?.order?.summary.productCount ?? 0 }}</b></button></div>
+      <p class="management-alert pending"><strong>库存安全</strong><span>加入或确认进货单不会改变库存。商品到货后仍需进入扫码入库，填写批次和到期日期，库存才会正式增加。</span></p>
+
+      <template v-if="purchaseView === 'suggestions'">
+        <section class="procurement-summary" v-if="purchaseSuggestions"><article><span>建议商品</span><strong>{{ purchaseSuggestions.summary.products }} 种</strong><small>{{ purchaseSuggestions.period.from }} 至 {{ purchaseSuggestions.period.to }}</small></article><article><span>建议件数</span><strong>{{ number(purchaseSuggestions.summary.suggestedUnits) }} 件</strong><small>按库存覆盖周数计算</small></article><article><span>已忽略</span><strong>{{ purchaseSuggestions.summary.ignored }} 种</strong><small>可随时恢复</small></article></section>
+        <section class="system-card procurement-table-card" v-if="purchaseSuggestions">
+          <div class="card-title"><div><h3>库存覆盖进货建议</h3><p>{{ purchaseSuggestions.calculation }}</p></div><div class="purchase-suggestion-actions"><button class="text-action" type="button" @click="showIgnoredSuggestions = !showIgnoredSuggestions">{{ showIgnoredSuggestions ? '查看当前建议' : `查看已忽略 (${purchaseSuggestions.summary.ignored})` }}</button><button class="text-action" type="button" @click="purchaseView = 'order'">查看本周进货单 →</button></div></div>
+          <div class="purchase-suggestion-grid"><article v-for="item in (showIgnoredSuggestions ? purchaseSuggestions.ignoredSuggestions : purchaseSuggestions.suggestions).slice(0,54)" :key="item.productId"><header><strong>{{ item.productName }}</strong><small>{{ item.brandName }}</small></header><dl><div class="inventory-focus"><dt>库存</dt><dd>{{ number(item.currentInventory) }}</dd></div><div><dt>周销量</dt><dd>{{ number(item.weeklyVelocity) }}</dd></div><div class="suggested"><dt>建议进货</dt><dd>{{ number(item.suggestedQuantity) }}</dd></div></dl><small v-if="item.ignoredReason">忽略原因：{{ item.ignoredReason }}</small><footer><button v-if="!showIgnoredSuggestions" class="table-action" type="button" :disabled="purchaseLoading || item.alreadyIncluded" @click="addToPurchaseOrder(item.productId, item.source, item.suggestedQuantity)">{{ item.alreadyIncluded ? '已加入' : '加入进货单' }}</button><button v-if="!showIgnoredSuggestions" class="table-action muted" type="button" :disabled="purchaseLoading" @click="ignorePurchaseSuggestion(item)">忽略</button><button v-else class="table-action" type="button" :disabled="purchaseLoading" @click="restorePurchaseSuggestion(item)">恢复建议</button></footer></article><p v-if="!(showIgnoredSuggestions ? purchaseSuggestions.ignoredSuggestions : purchaseSuggestions.suggestions).length" class="system-empty">{{ showIgnoredSuggestions ? '当前没有已忽略的建议。' : '当前没有需要补货的商品。' }}</p></div>
+        </section>
+      </template>
+
+      <template v-else>
+        <section v-if="currentPurchaseOrder?.order" class="procurement-summary"><article><span>进货单状态</span><strong>{{ purchaseStatusLabel(currentPurchaseOrder.order.status) }}</strong><small>{{ currentPurchaseOrder.order.orderNo }}</small></article><article><span>商品与件数</span><strong>{{ currentPurchaseOrder.order.summary.productCount }} 种 · {{ number(currentPurchaseOrder.order.summary.orderedUnits) }} 件</strong><small>系统建议 {{ number(currentPurchaseOrder.order.summary.suggestedUnits) }} 件</small></article><article><span>预计金额</span><strong>{{ money(currentPurchaseOrder.order.summary.totalCostCents / 100) }}</strong><small>仅统计已填写进价</small></article></section>
+        <section v-if="currentPurchaseOrder?.order" class="system-card purchase-order-card"><div class="card-title"><div><h3>本周进货单</h3><p>周起始 {{ currentPurchaseOrder.order.weekStart }} · {{ currentPurchaseOrder.order.orderNo }}</p></div><div class="purchase-order-actions"><button class="secondary" type="button" :disabled="!currentPurchaseOrder.order.items.length" @click="exportPurchaseOrderExcel">导出 Excel</button><button v-if="currentPurchaseOrder.order.status === 'DRAFT'" type="button" :disabled="purchaseLoading || !currentPurchaseOrder.order.items.length" @click="changePurchaseStatus('CONFIRMED')">确认进货单</button><button v-if="currentPurchaseOrder.order.status === 'CONFIRMED'" class="secondary" type="button" :disabled="purchaseLoading" @click="changePurchaseStatus('DRAFT')">退回草稿</button><button v-if="currentPurchaseOrder.order.status === 'CONFIRMED'" type="button" :disabled="purchaseLoading" @click="changePurchaseStatus('ORDERED')">标记已订货</button><button v-if="['DRAFT','CONFIRMED','ORDERED'].includes(currentPurchaseOrder.order.status)" class="danger" type="button" :disabled="purchaseLoading" @click="changePurchaseStatus('CANCELLED')">取消进货单</button></div></div>
+          <div class="purchase-order-table-wrap"><table class="purchase-order-table"><thead><tr><th>商品</th><th>数量与供应商</th><th>进价与整箱</th><th>备注与操作</th></tr></thead><tbody><tr v-for="item in currentPurchaseOrder.order.items" :key="item.id"><td><strong>{{ item.productName }}</strong><small>{{ item.barcode || item.sku }} · {{ purchaseSourceLabel(item.source) }}</small><em>库存 {{ item.currentInventory }} · 近7天 {{ item.recentSevenDayQty }} · 建议 {{ item.suggestedQuantity }}</em></td><td><label>进货数量<input v-model.number="item.orderedQuantity" type="number" min="1" inputmode="numeric" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label><label>供应商<input v-model="item.supplierName" type="text" maxlength="120" placeholder="可稍后填写" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label></td><td><label>单件进价（分）<input v-model.number="item.unitCostCents" type="number" min="0" inputmode="numeric" placeholder="可选" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label><label>整箱规格<input v-model.number="item.caseSize" type="number" min="1" inputmode="numeric" placeholder="可选" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label></td><td><label>备注<input v-model="item.notes" type="text" maxlength="255" placeholder="采购或到货说明" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label><div v-if="currentPurchaseOrder.order.status === 'DRAFT'" class="purchase-row-actions"><button type="button" :disabled="purchaseLoading" @click="savePurchaseItem(item)">保存</button><button class="danger" type="button" :disabled="purchaseLoading" @click="removePurchaseItem(item)">移除</button></div></td></tr></tbody></table></div>
+        </section>
+        <section v-else class="system-card procurement-empty"><h3>本周还没有进货单</h3><p>先从进货建议、缺货列表或热销商品中加入商品。</p><button type="button" @click="purchaseView = 'suggestions'">查看进货建议</button></section>
       </template>
     </section>
 
@@ -888,14 +1130,13 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
 
       <section v-if="managementAccess?.capabilities.posSync" v-show="systemView === 'sync'" class="system-card manual-sync-card primary-sync-card">
         <div class="card-title"><div><h3>同步 POS 销售订单</h3><p>选择营业日期，由当前服务器主动读取 POS 接口</p></div><span>不扣减正式库存</span></div>
-        <div class="primary-sync-controls"><label>营业日期<input v-model="syncDate" type="date" :disabled="posRunning || posStatus?.running" @click="openNativePicker" /></label><button type="button" :disabled="posRunning || posStatus?.running || !syncDate" @click="runManualSync">{{ posRunning ? '正在同步…' : '开始同步' }}</button></div>
-        <label class="reconcile-option"><input v-model="reconcile" type="checkbox" :disabled="posRunning || posStatus?.running" /><span><strong>重新核对当天订单</strong><small>只在退款、取消或订单状态发生变化时勾选；日常同步不需勾选。</small></span></label>
+        <div class="sync-control-row"><div class="primary-sync-controls"><label>营业日期<input v-model="syncDate" type="date" :disabled="posRunning || posStatus?.running" @click="openNativePicker" /></label><button type="button" :disabled="posRunning || posStatus?.running || !syncDate" @click="runManualSync">{{ posRunning ? '正在同步…' : '开始同步' }}</button></div><label class="reconcile-option"><input v-model="reconcile" type="checkbox" :disabled="posRunning || posStatus?.running" /><span><strong>重新核对当天订单</strong><small>仅在退款、取消或状态变化时勾选</small></span></label></div>
       </section>
 
       <div v-show="systemView === 'sync'" class="pos-status-grid">
         <article><span>同步状态</span><strong :class="posLoadError || posStatus?.latestRun?.status === 'FAILED' ? 'status-warning' : posStatus?.running ? 'status-running' : ''">{{ posLoading ? '加载中' : posLoadError ? '加载失败' : !posStatus ? '未获取' : posStatus.running ? '正在同步' : posStatus.latestRun?.status === 'FAILED' ? '最近失败' : '空闲' }}</strong><small>最近成功或失败结果见下方记录</small></article>
         <article><span>POS订单</span><strong>{{ posLoading || posLoadError ? '—' : (posCheck?.orders.total ?? '—') }}</strong><small>最近订单：{{ dateTime(posCheck?.orders.lastOrderedAt ?? null) }}</small></article>
-        <article><span>商品映射率</span><strong>{{ posLoading || posLoadError || !posCheck ? '—' : `${posCheck.items.mappingCoveragePercent}%` }}</strong><small>{{ posCheck?.items.mapped ?? '—' }} / {{ posCheck?.items.total ?? '—' }} 条销售明细已关联</small></article>
+        <article><span>商品映射率</span><strong>{{ posLoading || posLoadError || !posCheck ? '—' : `${posCheck.items.mappingCoveragePercent}%` }}</strong><small>{{ posCheck?.items.mapped ?? '—' }} / {{ posCheck?.items.mappable ?? posCheck?.items.total ?? '—' }} 条商品销售明细已关联</small></article>
         <article><span>待处理异常</span><strong class="status-warning">{{ posLoading || posLoadError ? '—' : (posCheck?.issues.total ?? '—') }}</strong><small>商品、退款和人工复核事项</small></article>
       </div>
 
@@ -955,14 +1196,14 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
       <button :class="{ active: activeSection === 'sales' }" :disabled="!canSection('sales')" @click="selectSection('sales')"><span>↗</span>销售</button>
       <button :class="{ active: activeSection === 'products' }" :disabled="!canSection('products')" @click="selectSection('products')"><span>◇</span>商品</button>
       <button :class="{ active: activeSection === 'inventory' }" :disabled="!canSection('inventory')" @click="selectSection('inventory')"><span>▦</span>库存</button>
-      <button :class="{ active: ['customers', 'stores', 'system'].includes(activeSection) }" :aria-expanded="showMobileMore" @click="showMobileMore = true"><span>•••</span>更多</button>
+      <button :class="{ active: ['procurement', 'customers', 'stores', 'system'].includes(activeSection) }" :aria-expanded="showMobileMore" @click="showMobileMore = true"><span>•••</span>更多</button>
     </nav>
 
     <div v-if="showMobileMore" class="management-more-overlay" role="presentation" @click.self="showMobileMore = false">
       <section class="management-more-sheet" role="dialog" aria-modal="true" aria-label="更多经营模块">
         <header><div><small>MORE MODULES</small><h2>更多经营模块</h2></div><button type="button" aria-label="关闭更多模块" @click="showMobileMore = false">×</button></header>
         <div>
-          <button v-for="section in sections.filter((item) => ['customers', 'stores', 'system'].includes(item.id))" :key="section.id" type="button" :disabled="!canSection(section.id)" @click="selectSection(section.id)"><span>{{ section.id === 'customers' ? '◫' : section.id === 'stores' ? '⌘' : '⚙' }}</span><strong>{{ section.label }}</strong><small>{{ canSection(section.id) ? section.description : '当前账号无权限' }}</small></button>
+          <button v-for="section in sections.filter((item) => ['procurement', 'customers', 'stores', 'system'].includes(item.id))" :key="section.id" type="button" :disabled="!canSection(section.id)" @click="selectSection(section.id)"><span>{{ section.id === 'procurement' ? '↧' : section.id === 'customers' ? '◫' : section.id === 'stores' ? '⌘' : '⚙' }}</span><strong>{{ section.label }}</strong><small>{{ canSection(section.id) ? section.description : '当前账号无权限' }}</small></button>
         </div>
       </section>
     </div>
@@ -972,6 +1213,7 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
 <style scoped src="./inventory-master.css"></style>
 
 <style scoped>
+.kpi-filter{display:grid;width:100%;height:100%;gap:8px;padding:0;border:0;color:inherit;background:transparent;text-align:left;cursor:pointer}.kpi-filter:hover span{color:#36d4df}.kpi-filter:focus-visible{outline:2px solid #32c9dc;outline-offset:5px;border-radius:8px}
 /* finesse-ui · operations cockpit · compact command strip / responsive navigation / feedback motion */
 /* finesse · product-ui · evidence-first management cockpit */
 .management-workspace{display:grid;grid-template-columns:230px minmax(0,1fr);gap:18px;color:#17243a}.management-sidebar{display:flex;flex-direction:column;min-height:720px;padding:18px 12px;border:1px solid #dce8f7;border-radius:22px;background:linear-gradient(180deg,#13243f,#0d1a30);box-shadow:0 18px 45px rgb(28 52 89 / 15%)}.sidebar-heading{display:grid;gap:5px;padding:8px 10px 18px;color:#fff}.sidebar-heading strong{font-size:20px}.sidebar-heading small{overflow:hidden;color:#9eb2d0;text-overflow:ellipsis;white-space:nowrap}.management-sidebar nav{display:grid;gap:5px}.management-sidebar button{position:relative;display:grid;gap:3px;width:100%;padding:12px;border:0;border-radius:13px;color:#dbe8fa;background:transparent;text-align:left}.management-sidebar button span{font-weight:850}.management-sidebar button small{color:#8fa4c2;font-size:11px}.management-sidebar button em{position:absolute;top:10px;right:9px;padding:2px 5px;border-radius:7px;color:#93a7c5;background:rgb(255 255 255 / 8%);font-size:9px;font-style:normal}.management-sidebar button.locked{opacity:.48;cursor:not-allowed}.management-sidebar button.locked em{color:#ffd8a8;background:rgb(255 174 66 / 12%)}.management-sidebar button.active{color:#fff;background:linear-gradient(135deg,#1eb6ed,#3868f4);box-shadow:0 10px 22px rgb(26 103 226 / 28%)}.management-sidebar button.active small,.management-sidebar button.active em{color:#eaf6ff}.management-sidebar>p{margin:auto 8px 4px;color:#7187a8;font-size:10px;line-height:1.7}.management-content{display:grid;align-content:start;gap:18px;min-width:0}.management-heading{display:flex;align-items:end;justify-content:space-between;gap:24px;padding:24px 26px;border:1px solid #dce8f7;border-radius:24px;background:linear-gradient(135deg,#f8fcff,#eef5ff 55%,#eefbf8);box-shadow:0 18px 45px rgb(46 88 145 / 10%)}.management-heading p{margin:0 0 5px;color:#2188f3;font-size:12px;font-weight:900;letter-spacing:.15em}.management-heading h2{margin:0;font-size:30px}.management-heading span{display:block;margin-top:6px;color:#6d7b91}.management-filters{display:flex;align-items:end;gap:10px}.management-filters label{display:grid;gap:6px;color:#69778d;font-size:12px;font-weight:800}.management-filters input,.management-filters button{min-height:42px;border:1px solid #cfddf0;border-radius:12px;background:#fff;padding:0 14px;font:inherit}.management-filters button{color:#fff;border:0;background:linear-gradient(135deg,#17b8f4,#3567f4);font-weight:850}.management-alert{display:flex;gap:8px;padding:15px 18px;border-radius:16px}.management-alert span{color:#59677b}.management-alert.pending{background:#fff8df;border:1px solid #f4d982}.management-alert.error{color:#9c2f38;background:#fff0f1;border:1px solid #f2bcc1}.management-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}.management-kpis article{display:grid;gap:8px;min-height:120px;padding:18px;border:1px solid #dfebf8;border-radius:19px;background:linear-gradient(145deg,#fff,#f4f8ff);box-shadow:0 12px 28px rgb(43 75 120 / 8%)}.management-kpis span{color:#68778d;font-size:13px;font-weight:800}.management-kpis strong{font-size:25px}.management-kpis small{color:#728097}.management-kpis .up{color:#159766}.management-kpis .down{color:#d3535a}.management-kpis .inventory-kpi{background:linear-gradient(145deg,#ecf6ff,#eaf2ff)}.management-kpis .expiry-kpi{background:linear-gradient(145deg,#fff7ec,#fff0f1)}.management-grid{display:grid;grid-template-columns:1.35fr .65fr;gap:16px}.management-card{min-height:280px;padding:22px;border:1px solid #dfe9f6;border-radius:22px;background:rgb(255 255 255 / 92%);box-shadow:0 14px 35px rgb(39 73 116 / 9%)}.card-title{display:flex;justify-content:space-between;gap:12px}.card-title h3{margin:0;font-size:19px}.card-title p{margin:5px 0 0;color:#8290a3;font-size:13px}.card-title>span{color:#d05b68;font-weight:750}.bar-chart{display:flex;align-items:end;gap:8px;height:210px;margin-top:20px;padding:20px 8px 0;border-bottom:1px solid #dce5f1;overflow-x:auto}.bar-column{display:grid;align-items:end;gap:7px;min-width:28px;height:100%;text-align:center}.bar-column b{position:relative;display:block;min-height:5px;border-radius:7px 7px 2px 2px;background:linear-gradient(180deg,#24b9ef,#4264f0)}.bar-column i{display:none;position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);padding:4px 6px;border-radius:6px;color:#fff;background:#17243a;font-size:10px;font-style:normal;white-space:nowrap}.bar-column:hover i{display:block}.bar-column small{font-size:10px;color:#8390a2}.expiry-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:24px}.expiry-grid div{display:grid;gap:8px;padding:18px;border-radius:16px}.expiry-grid strong{font-size:27px}.expired{color:#a8444e;background:#fff0f1}.urgent{color:#b46623;background:#fff3e5}.warning{color:#947112;background:#fff9dc}.early{color:#277493;background:#eaf8ff}.ranking ol{display:grid;gap:5px;margin:16px 0 0;padding:0;list-style:none}.ranking li{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #edf1f6}.ranking li>b{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;color:#2878ec;background:#e8f2ff}.ranking li span{display:grid;gap:3px;min-width:0}.ranking li span strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ranking li small{color:#8490a0}.ranking li em{color:#25334a;font-style:normal;font-weight:850}.management-empty{display:grid;place-items:center;min-height:190px;color:#8995a6}.sync-note{margin:0;color:#8490a0;font-size:12px;text-align:right}.planned-section{display:grid;place-items:center;min-height:520px;padding:50px;border:1px dashed #bfd0e8;border-radius:24px;background:linear-gradient(145deg,#fbfdff,#f2f7ff);text-align:center}.planned-icon{display:grid;width:62px;height:62px;place-items:center;border-radius:18px;color:#fff;background:linear-gradient(135deg,#17b8f4,#3567f4);font-size:28px}.planned-section>p{margin:18px 0 5px;color:#3381e5;font-size:11px;font-weight:900;letter-spacing:.14em}.planned-section h3{margin:0;font-size:28px}.planned-section>span{max-width:650px;margin:12px 0 25px;color:#6b7b91;line-height:1.7}.planned-modules{display:flex;justify-content:center;flex-wrap:wrap;gap:9px}.planned-modules b{padding:9px 13px;border:1px solid #d6e3f4;border-radius:999px;color:#53667f;background:#fff;font-size:12px}
@@ -1120,7 +1362,7 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
 .period-tabs{display:flex;flex-wrap:wrap;gap:4px;padding:3px;border:1px solid #202f44;border-radius:10px;background:#09111d}.period-tabs button{min-height:30px;padding:5px 10px;border:0;border-radius:7px;color:#75849a;background:transparent;font:inherit;font-size:11px;font-weight:800;cursor:pointer;transition:color .18s ease,background .18s ease,transform .16s ease}.period-tabs button:hover{color:#d8e7fa}.period-tabs button:active{transform:scale(.96)}.period-tabs button[aria-pressed=true]{color:#f5fbff;background:linear-gradient(135deg,#176c8b,#475bc8);box-shadow:0 5px 14px rgb(27 116 169 / 24%)}.period-tabs button:disabled{cursor:wait}
 .trend-primary{display:flex;align-items:baseline;gap:12px;margin-top:14px}.trend-primary strong{color:#38d4df;font-size:clamp(25px,3vw,40px);font-variant-numeric:tabular-nums;letter-spacing:-.035em}.trend-primary span{color:#78889e;font-size:11px}.overview-line-chart{min-height:190px;margin-top:2px}.overview-line-chart svg{height:190px}.overview-line-chart polyline{stroke-width:4}.overview-line-chart circle{animation-delay:.72s}
 .expiry-earnings-card{display:grid;align-content:start;gap:0}.expiry-earning-row{display:grid;grid-template-columns:minmax(0,1fr) auto 56px;align-items:center;gap:9px;min-height:66px;padding:10px 2px;color:inherit;border:0;border-bottom:1px solid #1c293c;background:transparent;text-align:left;cursor:pointer;transition:background .18s ease,padding .18s ease}.expiry-earning-row:last-child{border-bottom:0}.expiry-earning-row:hover{padding-inline:8px;background:rgb(255 255 255 / 2%)}.expiry-earning-row span{display:grid;gap:3px;color:#dce6f4;font-size:12px;font-weight:800}.expiry-earning-row small{color:#69798f;font-size:9px;font-weight:500}.expiry-earning-row>strong{font-size:22px;font-variant-numeric:tabular-nums}.expiry-earning-row>i{display:flex;height:30px;align-items:end;justify-content:flex-end;gap:3px}.expiry-earning-row>i b{width:10px;border-radius:3px 3px 1px 1px;background:currentColor;opacity:.55;transform-origin:bottom;animation:management-bar-grow .5s cubic-bezier(.22,1,.36,1) both}.expiry-earning-row>i b:nth-child(1){height:35%}.expiry-earning-row>i b:nth-child(2){height:72%;animation-delay:.08s}.expiry-earning-row>i b:nth-child(3){height:48%;animation-delay:.16s}.expiry-earning-row.expired{color:#ff7080}.expiry-earning-row.urgent{color:#f4a969}.expiry-earning-row.warning{color:#efd56a}.expiry-earning-row.early{color:#69cde8}
-.overview-action-rail{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.overview-action-rail button{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;min-width:0;padding:12px 13px;color:#edf4ff;border:1px solid #202f44;border-radius:13px;background:linear-gradient(145deg,#111b2b,#0c1523);font:inherit;text-align:left;cursor:pointer;transition:transform .18s ease,border-color .18s ease}.overview-action-rail button:hover{transform:translateY(-2px);border-color:#35516f}.overview-action-rail i{display:grid;width:32px;height:32px;place-items:center;border-radius:9px;color:#43d9e5;background:#12313d;font-size:17px;font-style:normal}.overview-action-rail span{display:grid;min-width:0;gap:3px;font-size:12px;font-weight:800}.overview-action-rail small{overflow:hidden;color:#718198;font-size:9px;font-weight:500;text-overflow:ellipsis;white-space:nowrap}.overview-action-rail strong{color:#dbe7f7;font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.overview-action-rail{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.overview-action-rail button{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;min-width:0;padding:12px 13px;color:#edf4ff;border:1px solid #202f44;border-radius:13px;background:linear-gradient(145deg,#111b2b,#0c1523);font:inherit;text-align:left;cursor:pointer;transition:transform .18s ease,border-color .18s ease}.overview-action-rail button:hover{transform:translateY(-2px);border-color:#35516f}.overview-action-rail i{display:grid;width:32px;height:32px;place-items:center;border-radius:9px;color:#43d9e5;background:#12313d;font-size:17px;font-style:normal}.overview-action-rail span{display:grid;min-width:0;gap:3px;font-size:12px;font-weight:800}.overview-action-rail small{overflow:hidden;color:#718198;font-size:9px;font-weight:500;text-overflow:ellipsis;white-space:nowrap}.overview-action-rail strong{color:#dbe7f7;font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .hot-products-card{min-height:0!important;padding:17px!important;border-radius:16px!important}.hot-product-table-wrap{margin-top:12px;overflow-x:auto;border:1px solid #1d2a3e;border-radius:11px}.hot-product-table-wrap table{width:100%;min-width:670px;border-collapse:collapse}.hot-product-table-wrap th{padding:9px 12px;color:#718198;background:#0b1422!important;font-size:9px;font-weight:800;letter-spacing:.06em;text-align:left}.hot-product-table-wrap td{padding:9px 12px;color:#93a2b6;border-top:1px solid #1b283a;font-size:11px}.hot-product-table-wrap tr{transition:background .16s ease}.hot-product-table-wrap tbody tr:hover{background:#111e31}.hot-product-table-wrap td:nth-child(2){min-width:230px;color:#e5edf8}.hot-product-table-wrap td:nth-last-child(-n+2),.hot-product-table-wrap th:nth-last-child(-n+2){text-align:right;white-space:nowrap}.rank-badge{display:grid;width:28px;height:24px;place-items:center;border-radius:7px;color:#6d829e;background:#142033;font-size:10px}.rank-badge.podium{color:#78e8f1;background:#123340}.sales-share{display:block;width:100%;height:2px;margin-top:6px;border-radius:99px;background:#172338;overflow:hidden}.sales-share i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#2cd5df,#6975f4);animation:overview-share-in .55s cubic-bezier(.22,1,.36,1) both;transform-origin:left}.hot-product-table-wrap td:last-child strong{color:#51d7c1}.hot-product-table-wrap tbody{animation:management-section-enter .25s ease both}@keyframes overview-share-in{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 
 @media(max-width:1280px) and (min-width:721px){
@@ -1132,6 +1374,149 @@ onMounted(async () => { await loadManagementAccess(); if (canSection('overview')
 @media(max-width:720px){.overview-metric-strip{margin-inline:-1px;grid-template-columns:repeat(6,minmax(152px,1fr))}.overview-command-grid>.management-card,.hot-products-card{padding:14px!important}.overview-card-header{display:grid}.period-tabs{width:max-content;max-width:100%;overflow-x:auto;flex-wrap:nowrap}.expiry-earnings-card{grid-template-columns:1fr}.expiry-earnings-card .overview-card-header{grid-column:auto}.expiry-earning-row:nth-of-type(2n){border-left:0}.overview-action-rail button{min-height:68px}.trend-primary{align-items:flex-start;flex-direction:column;gap:2px}.overview-line-chart,.overview-line-chart svg{min-height:170px;height:170px}.hot-products-card .overview-card-header{gap:10px}}
 @media(max-width:420px){.overview-metric-strip{grid-template-columns:repeat(6,minmax(144px,1fr))}.overview-action-rail button{grid-template-columns:32px minmax(0,1fr)}.overview-action-rail strong{grid-column:2}.overview-card-header h3{font-size:16px}}
 @media(prefers-reduced-motion:reduce){.overview-metric-strip article,.expiry-earning-row>i b,.sales-share i,.hot-product-table-wrap tbody{animation:none!important}.overview-line-chart polyline{stroke-dashoffset:0}}
+
+/* finesse · register=product · A=steel-cyan · B=800/500 · C=workflow-list · D=feedback-only · E=tinted-dark-panels · SOUL=5 SPECTACLE=2 DENSITY=8 */
+.procurement-page{display:grid;align-content:start;gap:14px}.procurement-tabs{display:flex;gap:6px;padding:4px;border:1px solid #202f44;border-radius:13px;background:#09111d}.procurement-tabs button{min-height:42px;padding:8px 15px;color:#8090a7;border:0;border-radius:9px;background:transparent;font:inherit;font-weight:850}.procurement-tabs button.active{color:#effcff;background:linear-gradient(135deg,#176c8b,#475bc8)}.procurement-tabs b{margin-left:6px;font-variant-numeric:tabular-nums}.procurement-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.procurement-summary article{display:grid;gap:5px;min-height:96px;padding:15px;border:1px solid #202f44;border-radius:15px;background:linear-gradient(145deg,#111b2b,#0c1422)}.procurement-summary span,.procurement-summary small{color:#8291a7;font-size:11px}.procurement-summary strong{color:#edf6ff;font-size:20px;font-variant-numeric:tabular-nums}.procurement-table-card{display:grid;gap:13px}.procurement-table-card table{min-width:860px}.purchase-source{display:inline-flex;padding:5px 8px;color:#6fe3eb;border-radius:8px;background:#12313d;font-size:10px}.table-action{min-height:34px;padding:6px 10px;color:#eafaff;border:1px solid #2c6980;border-radius:9px;background:#123746;font:inherit;font-size:11px;font-weight:850;white-space:nowrap}.table-action:disabled{cursor:not-allowed;opacity:.48}.purchase-order-card{display:grid;gap:15px}.purchase-order-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}.purchase-order-actions button,.purchase-order-list footer button,.procurement-empty button{min-height:40px;padding:8px 13px;color:#effbff;border:1px solid #23758e;border-radius:10px;background:#176c8b;font:inherit;font-weight:850}.purchase-order-actions .secondary{color:#b9c8db;border-color:#314058;background:#101b2a}.purchase-order-actions .danger,.purchase-order-list footer .danger{color:#ffabb3;border-color:#60313b;background:#28171e}.purchase-order-list{display:grid;gap:10px}.purchase-order-list>article{display:grid;gap:13px;padding:15px;border:1px solid #202f44;border-radius:15px;background:#0b1422}.purchase-order-list header{display:flex;align-items:flex-start;justify-content:space-between;gap:15px}.purchase-order-list header>div{display:grid;gap:4px}.purchase-order-list header strong{color:#edf5ff}.purchase-order-list header small,.purchase-order-list header>b{color:#8493a9;font-size:11px}.purchase-item-fields{display:grid;grid-template-columns:minmax(110px,.7fr) minmax(170px,1.2fr) minmax(140px,.8fr) minmax(110px,.7fr);gap:9px}.purchase-item-fields label{display:grid;gap:5px;color:#8493a9;font-size:10px;font-weight:800}.purchase-item-fields input{width:100%;min-height:40px;padding:8px 10px;color:#edf5ff;border:1px solid #29384f;border-radius:9px;background:#09111d;font:inherit}.purchase-item-fields input:focus{outline:0;border-color:#36c7d5;box-shadow:0 0 0 3px rgb(54 199 213 / 13%)}.purchase-item-fields input:disabled{opacity:.68}.purchase-notes{grid-column:1/-1}.purchase-order-list footer{display:flex;align-items:center;justify-content:flex-end;gap:8px}.purchase-order-list footer span{margin-right:auto;color:#8090a7;font-size:11px}.procurement-empty{display:grid;min-height:220px;place-items:center;align-content:center;gap:9px;text-align:center}.procurement-empty h3,.procurement-empty p{margin:0}.procurement-empty p{color:#8291a7}.management-alert.success{color:#82e5bd;border-color:#235b4d;background:#102820}
+.purchase-suggestion-actions,.row-actions{display:flex;flex-wrap:wrap;align-items:center;gap:7px}.table-action.muted{color:#a8b5c7;border-color:#334157;background:#111b2a}.procurement-table-card td small{display:block;margin-top:3px;color:#7f8ea4;font-size:10px}
+@media(max-width:1100px){.purchase-item-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.purchase-notes{grid-column:1/-1}.overview-action-rail{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.procurement-summary{grid-template-columns:1fr}.purchase-order-card{padding:12px}.purchase-order-card>.card-title,.purchase-order-list header{display:grid}.purchase-order-actions{justify-content:flex-start}.purchase-item-fields{grid-template-columns:1fr}.purchase-notes{grid-column:auto}.purchase-order-list footer{flex-wrap:wrap}.purchase-order-list footer span{width:100%;margin:0}.procurement-tabs button{flex:1;min-width:0}.table-action{min-height:44px}}
+
+/* Compact management shell, floating page help, and dense procurement cards. */
+.management-heading{min-height:64px!important;padding:10px 16px!important;border-radius:14px!important}.management-heading p{margin:0 0 1px;font-size:8px}.management-heading h2{font-size:21px!important}.management-heading span{font-size:11px!important}.page-guide-fab{position:fixed;z-index:30;right:24px;bottom:28px;display:grid;width:54px;height:54px;place-items:center;padding:5px;color:#eafbff;border:1px solid #2f7890;border-radius:50%;background:linear-gradient(145deg,#176c8b,#4a58ca);box-shadow:0 14px 34px rgb(20 91 143 / 34%);font:inherit}.page-guide-fab span{font-size:20px}.page-guide-fab b{position:absolute;right:58px;padding:6px 9px;color:#c8d6e8;border:1px solid #2a3a51;border-radius:8px;background:#101a2a;font-size:10px;white-space:nowrap;opacity:0;transform:translateX(5px);transition:.18s}.page-guide-fab:hover b,.page-guide-fab:focus-visible b{opacity:1;transform:none}.page-guide-popover{position:fixed;z-index:29;right:24px;bottom:92px;width:min(360px,calc(100vw - 32px));padding:16px;border:1px solid #2a3b53;border-radius:16px;background:#0d1726;box-shadow:0 22px 60px rgb(0 0 0 / 38%)}.page-guide-popover header{display:flex;align-items:center;justify-content:space-between}.page-guide-popover header button{width:36px;height:36px;padding:0;border-radius:50%}.page-guide-popover p,.page-guide-popover>b{color:#aebdd0;font-size:12px}.page-guide-popover ul{display:flex;flex-wrap:wrap;gap:6px;padding:0;list-style:none}.page-guide-popover li{padding:5px 8px;border:1px solid #2c3d55;border-radius:999px;color:#bfd0e4;font-size:10px}.minimum-stock-tools{display:flex;align-items:center;gap:9px}.minimum-stock-value{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:4px 8px;color:#eaf6ff;border:1px solid #30445f;border-radius:8px;background:#111e30}.minimum-stock-value small{color:#6edce3}.purchase-suggestion-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}.purchase-suggestion-grid>article{display:grid;align-content:start;gap:9px;min-width:0;min-height:220px;padding:12px;border:1px solid #202f44;border-radius:13px;background:#0c1624}.purchase-suggestion-grid header{display:grid;gap:3px;min-width:0}.purchase-suggestion-grid header strong,.purchase-suggestion-grid header small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.purchase-suggestion-grid header small,.purchase-suggestion-grid>article>p,.purchase-suggestion-grid>article>small{color:#7f90a8;font-size:9px}.purchase-suggestion-grid dl{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0}.purchase-suggestion-grid dl div{padding:7px;border-radius:8px;background:#111d2d}.purchase-suggestion-grid dt{color:#77889f;font-size:8px}.purchase-suggestion-grid dd{margin:2px 0 0;color:#eef6ff;font-size:12px;font-weight:850}.purchase-suggestion-grid .suggested{background:#12313d}.purchase-suggestion-grid .suggested dd{color:#66e0e7}.purchase-suggestion-grid footer{display:flex;gap:5px;margin-top:auto}.purchase-suggestion-grid footer button{flex:1;min-width:0;padding-inline:5px}
+@media(max-width:1500px){.purchase-suggestion-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}@media(max-width:1050px){.purchase-suggestion-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:720px){.purchase-suggestion-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-guide-fab{right:16px;bottom:82px}.page-guide-popover{right:16px;bottom:144px}.minimum-stock-tools{align-items:flex-end;flex-direction:column}}@media(max-width:420px){.purchase-suggestion-grid{grid-template-columns:1fr}}
+
+:root:not([data-theme="dark"]) .management-workspace{--dash-bg:#f5f5fb;--dash-panel:#ffffff;--dash-line:#e4e5f0;--dash-text:#252d4a;--dash-muted:#7d849e;--dash-cyan:#6d63dc;--dash-blue:#7569e8;background:linear-gradient(145deg,#f8f8fc,#f2f3fa);color:#252d4a}.management-workspace:where(:root:not([data-theme="dark"]) *){}
+:root:not([data-theme="dark"]) .management-workspace :is(.management-sidebar,.management-heading,.management-card,.system-card,.inventory-truth-panel,.sales-filter-panel,.product-filter-panel,.inventory-operation-filters,.store-comparison-filters,.insight-search,.inventory-detail-filters,.procurement-summary article,.purchase-suggestion-grid>article,.page-guide-popover){color:#203047;border-color:#d8e2ec;background:#fff;box-shadow:0 8px 24px rgb(75 99 130 / 8%)}
+:root:not([data-theme="dark"]) .management-workspace :is(h2,h3,strong,dd,th){color:#24314d}:root:not([data-theme="dark"]) .management-workspace :is(p,small,span,dt){color:#718096}:root:not([data-theme="dark"]) .management-workspace :is(input,select){color:#2d3854;border-color:#d9e2ec;background:#f7f9fc}:root:not([data-theme="dark"]) .management-workspace table{background:#fff}:root:not([data-theme="dark"]) .management-workspace :is(th,thead){background:#f5f7fb}:root:not([data-theme="dark"]) .management-workspace td{border-color:#e5ebf2}:root:not([data-theme="dark"]) .management-sidebar button.active{background:linear-gradient(135deg,#6e5bd7,#8a72e7)}:root:not([data-theme="dark"]) .management-sidebar button:not(.active){color:#64748b;background:transparent}:root:not([data-theme="dark"]) .purchase-suggestion-grid dl div{background:#f5f7fb}:root:not([data-theme="dark"]) .purchase-suggestion-grid .suggested{background:#f0edff}:root:not([data-theme="dark"]) .purchase-suggestion-grid .suggested dd{color:#6757d9}:root:not([data-theme="dark"]) .minimum-stock-value{color:#34425b;border-color:#d8e2ec;background:#f6f8fb}:root:not([data-theme="dark"]) .page-guide-fab{background:linear-gradient(145deg,#6d5cdb,#8d79e9)}
+:root:not([data-theme="dark"]) .management-workspace .management-sidebar{background:#fff;border-color:#e6e6f1;box-shadow:0 14px 36px rgb(67 70 125 / 8%)}
+:root:not([data-theme="dark"]) .management-workspace .sidebar-heading strong{color:#2a3150}:root:not([data-theme="dark"]) .management-workspace .sidebar-heading small,:root:not([data-theme="dark"]) .management-workspace .management-sidebar>p{color:#9298ad}
+:root:not([data-theme="dark"]) .management-workspace .management-heading{background:linear-gradient(135deg,#fff,#fbfbff 62%,#f5f2ff);border-color:#e8e7f3}
+:root:not([data-theme="dark"]) .management-workspace .overview-metric-strip article{border-color:#e6e6f0;background:#fff;box-shadow:0 8px 20px rgb(71 70 120 / 7%)}
+:root:not([data-theme="dark"]) .management-workspace .overview-metric-strip article:hover{border-color:#cbc7ee;background:#fcfbff}
+:root:not([data-theme="dark"]) .management-workspace .overview-metric-strip article>span,:root:not([data-theme="dark"]) .management-workspace .overview-metric-strip small{color:#858ca5}:root:not([data-theme="dark"]) .management-workspace .overview-metric-strip strong{color:#252d4a}
+:root:not([data-theme="dark"]) .management-workspace .management-card,:root:not([data-theme="dark"]) .management-workspace .system-card{border-color:#e7e7f1;background:#fff;box-shadow:0 10px 28px rgb(67 70 125 / 7%)}
+:root:not([data-theme="dark"]) .management-workspace .overview-card-header small{color:#7165dc}:root:not([data-theme="dark"]) .management-workspace .overview-card-header h3{color:#252d4a}:root:not([data-theme="dark"]) .management-workspace .overview-card-header p{color:#8a91a8}
+:root:not([data-theme="dark"]) .management-workspace .period-tabs{border-color:#e4e4ee;background:#f7f7fb}:root:not([data-theme="dark"]) .management-workspace .period-tabs button{color:#747b94}:root:not([data-theme="dark"]) .management-workspace .period-tabs button:hover{color:#50489f}:root:not([data-theme="dark"]) .management-workspace .period-tabs button[aria-pressed=true]{color:#fff;background:linear-gradient(135deg,#7165df,#5969d9)}
+:root:not([data-theme="dark"]) .management-workspace .trend-primary strong{color:#2f385a}:root:not([data-theme="dark"]) .management-workspace .chart-grid line{stroke:#ebeaf3}:root:not([data-theme="dark"]) .management-workspace .chart-values text{fill:#969bb0}
+:root:not([data-theme="dark"]) .management-workspace .expiry-earning-row{border-bottom-color:#eeeef5;background:transparent}:root:not([data-theme="dark"]) .management-workspace .expiry-earning-row:hover{background:#faf9ff}:root:not([data-theme="dark"]) .management-workspace .expiry-earning-row span{color:#39415f}
+:root:not([data-theme="dark"]) .management-workspace .overview-action-rail button{color:#303854;border-color:#e5e5ef;background:#fff;box-shadow:0 8px 20px rgb(67 70 125 / 6%)}:root:not([data-theme="dark"]) .management-workspace .overview-action-rail button:hover{border-color:#cbc7ee}:root:not([data-theme="dark"]) .management-workspace .overview-action-rail i{color:#655bd4;background:#eeecff}:root:not([data-theme="dark"]) .management-workspace .overview-action-rail strong{color:#303854}
+:root:not([data-theme="dark"]) .management-workspace .hot-product-table-wrap{border-color:#e6e6f0}:root:not([data-theme="dark"]) .management-workspace .hot-product-table-wrap th{color:#888fa6;background:#f8f8fb!important}:root:not([data-theme="dark"]) .management-workspace .hot-product-table-wrap td{color:#68718e;border-top-color:#ececf3}:root:not([data-theme="dark"]) .management-workspace .hot-product-table-wrap tbody tr:hover{background:#faf9ff}:root:not([data-theme="dark"]) .management-workspace .hot-product-table-wrap td:nth-child(2){color:#303854}:root:not([data-theme="dark"]) .management-workspace .rank-badge{color:#6d7190;background:#f0f0f7}:root:not([data-theme="dark"]) .management-workspace .rank-badge.podium{color:#6258d0;background:#eeecff}:root:not([data-theme="dark"]) .management-workspace .sales-share{background:#eeeef5}:root:not([data-theme="dark"]) .management-workspace .hot-product-table-wrap td:last-child strong{color:#655bd4}
+:root:not([data-theme="dark"]) .management-workspace .metric-symbol{border-color:#fff;box-shadow:0 5px 14px rgb(76 74 148 / 15%)}:root:not([data-theme="dark"]) .management-workspace .metric-symbol.sales{background:#6672e8}:root:not([data-theme="dark"]) .management-workspace .metric-symbol.orders{background:#a99bf2}:root:not([data-theme="dark"]) .management-workspace .metric-symbol.units{background:#7c6ce3}:root:not([data-theme="dark"]) .management-workspace .metric-symbol.average{background:#f1b8c6}:root:not([data-theme="dark"]) .management-workspace .metric-symbol.stock{background:#8fd8c2}:root:not([data-theme="dark"]) .management-workspace .metric-symbol.expiry{background:#ee9cae}
+:root:not([data-theme="dark"]) .management-workspace :is(.sales-kpis,.product-kpis,.inventory-operation-kpis,.store-kpis,.insight-kpis,.inventory-truth-grid) article{
+  color:#303854;border-color:rgb(211 208 239 / 88%);background:linear-gradient(145deg,rgb(255 255 255 / 96%),rgb(241 239 255 / 86%));
+  box-shadow:inset 0 1px 0 #fff,0 10px 25px rgb(91 82 160 / 9%);backdrop-filter:blur(16px)
+}
+:root:not([data-theme="dark"]) .management-workspace :is(.sales-kpis,.product-kpis,.inventory-operation-kpis,.store-kpis,.insight-kpis,.inventory-truth-grid) article:hover{border-color:#bbb4ec;box-shadow:inset 0 1px 0 #fff,0 14px 30px rgb(91 82 160 / 14%)}
+:root:not([data-theme="dark"]) .management-workspace :is(.sales-kpis,.product-kpis,.inventory-operation-kpis,.store-kpis,.insight-kpis,.inventory-truth-grid) :is(span,small){color:#77809a}
+:root:not([data-theme="dark"]) .management-workspace :is(.sales-kpis,.product-kpis,.inventory-operation-kpis,.store-kpis,.insight-kpis,.inventory-truth-grid) strong{color:#2e3656}
+:root:not([data-theme="dark"]) .management-workspace :is(.sales-filter-panel,.product-filter-panel,.inventory-operation-filters,.store-comparison-filters,.insight-search){border-color:#dfdced;background:linear-gradient(145deg,rgb(255 255 255 / 94%),rgb(245 243 255 / 88%));box-shadow:0 10px 26px rgb(91 82 160 / 7%);backdrop-filter:blur(16px)}
+:root:not([data-theme="dark"]) .management-workspace :is(.sales-filter-panel,.product-filter-panel,.inventory-operation-filters,.store-comparison-filters,.insight-search) :is(input,select){color:#303854!important;border-color:#ddd9ef!important;background:rgb(255 255 255 / 84%)!important;box-shadow:inset 0 1px 2px rgb(64 62 105 / 5%)}
+:root:not([data-theme="dark"]) .management-workspace :is(.sales-filter-panel,.product-filter-panel,.inventory-operation-filters,.store-comparison-filters,.insight-search) label{color:#707891}
+:root:not([data-theme="dark"]) .management-workspace :is(.sales-filter-panel,.product-filter-panel,.inventory-operation-filters,.store-comparison-filters,.insight-search)>button:not(.secondary-action){border:1px solid rgb(255 255 255 / 76%);background:linear-gradient(135deg,#8b79ed,#6875e4);box-shadow:inset 0 1px 0 rgb(255 255 255 / 42%),0 7px 16px rgb(100 88 209 / 22%)}
+:root:not([data-theme="dark"]) .management-workspace .secondary-action{color:#625a9c!important;border:1px solid #d8d3ec!important;background:rgb(247 245 255 / 92%)!important;box-shadow:inset 0 1px 0 #fff!important}
+:root:not([data-theme="dark"]) .management-workspace :is(.time-bucket-grid article,.coverage-buckets article,.source-quality dl>div,.store-result-card dl>div,.store-rankings>div,.insight-products>article,.insight-tags span){color:#38415f;border-color:#e2dfef;background:linear-gradient(145deg,#fbfaff,#f1effb)}
+:root:not([data-theme="dark"]) .management-workspace .time-bucket-grid :is(span,strong,small){color:#56607e}
+:root:not([data-theme="dark"]) .management-workspace :is(.analysis-method,.inline-notice,.scope-note){color:#69728d;border-color:#dfddec;background:rgb(249 248 255 / 88%)}
+:root:not([data-theme="dark"]) .management-workspace .table-action:not(.muted){color:#fff;border-color:rgb(255 255 255 / 68%);background:linear-gradient(135deg,rgb(151 130 239 / 96%),rgb(103 116 226 / 96%));box-shadow:inset 0 1px 0 rgb(255 255 255 / 48%),0 5px 12px rgb(103 91 200 / 24%);backdrop-filter:blur(12px);transform:translateY(-1px)}
+:root:not([data-theme="dark"]) .management-workspace .table-action:not(.muted):hover{background:linear-gradient(135deg,#a18cf1,#6d78e6);box-shadow:inset 0 1px 0 rgb(255 255 255 / 56%),0 8px 17px rgb(103 91 200 / 29%);transform:translateY(-2px)}
+:root:not([data-theme="dark"]) .management-workspace .table-action:not(.muted):active{box-shadow:inset 0 2px 5px rgb(65 54 145 / 18%);transform:translateY(0)}
+:root:not([data-theme="dark"]) .management-workspace .table-action.muted{color:#686e88;border-color:#deddeb;background:#f5f4fa;box-shadow:inset 0 1px 0 #fff}
+:root:not([data-theme="dark"]) .management-workspace :is(.procurement-tabs,.purchase-order-list>article){border-color:#dfddec;background:#f8f7fd}
+:root:not([data-theme="dark"]) .management-workspace .procurement-tabs button{color:#727992}:root:not([data-theme="dark"]) .management-workspace .procurement-tabs button.active{color:#fff;background:linear-gradient(135deg,#8b79ed,#6875e4)}
+:root:not([data-theme="dark"]) .management-workspace .purchase-item-fields input{color:#303854;border-color:#dedbec;background:#fff}
+
+/* Light mode: aqua glass system inspired by the supplied Payrix reference. */
+:root:not([data-theme="dark"]) .management-workspace{
+  --dash-bg:#edf5f6;--dash-panel:rgb(255 255 255 / 78%);--dash-line:#c9dfe2;--dash-text:#173244;--dash-muted:#6d8791;--dash-cyan:#18a8b7;--dash-blue:#3f7ec8;
+  background:
+    radial-gradient(circle at 18% 2%,rgb(42 190 203 / 22%),transparent 28%),
+    radial-gradient(circle at 72% 18%,rgb(255 170 71 / 10%),transparent 18%),
+    linear-gradient(145deg,#e8f4f5 0%,#f4f8f7 46%,#eaf2f3 100%);color:var(--dash-text);border:0;outline:0;box-shadow:none
+}
+:root:not([data-theme="dark"]) .management-workspace :is(.management-sidebar,.management-heading,.management-card,.system-card,.inventory-truth-panel,.sales-filter-panel,.product-filter-panel,.inventory-operation-filters,.store-comparison-filters,.insight-search,.inventory-detail-filters,.procurement-summary article,.purchase-suggestion-grid>article,.page-guide-popover,.planned-section,.taxonomy-columns>article,.insight-products>article,.readiness-list>div,.source-quality dl>div,.store-rankings>div,.health-check-card li,.sync-history article){
+  color:var(--dash-text);border-color:rgb(255 255 255 / 88%);background:linear-gradient(145deg,rgb(255 255 255 / 91%),rgb(239 248 248 / 74%));
+  box-shadow:inset 0 0 0 1px rgb(157 196 201 / 35%),inset 0 1px 0 #fff,0 13px 30px rgb(37 104 114 / 10%);backdrop-filter:blur(20px) saturate(120%)
+}
+:root:not([data-theme="dark"]) .management-workspace :is(h2,h3,strong,dd,th){color:#183548}
+:root:not([data-theme="dark"]) .management-workspace :is(p,small,span,dt){color:#6d8590}
+:root:not([data-theme="dark"]) .management-workspace .management-sidebar{border-color:rgb(255 255 255 / 90%);background:rgb(250 254 253 / 78%)}
+:root:not([data-theme="dark"]) .management-workspace .management-sidebar button:not(.active){color:#57717c;background:transparent}
+:root:not([data-theme="dark"]) .management-workspace .management-sidebar button:not(.active):hover{color:#153f4c;background:rgb(207 237 239 / 60%)}
+:root:not([data-theme="dark"]) .management-workspace .management-sidebar button.active{color:#fff;background:linear-gradient(135deg,#18b5c2,#4084cb);box-shadow:inset 0 1px 0 rgb(255 255 255 / 45%),0 8px 20px rgb(29 139 159 / 20%)}
+:root:not([data-theme="dark"]) .management-workspace .management-sidebar button.active :is(span,small,em){color:#fff}
+:root:not([data-theme="dark"]) .management-workspace .management-heading{border-color:rgb(255 255 255 / 90%);background:linear-gradient(120deg,rgb(255 255 255 / 88%),rgb(224 244 245 / 68%))}
+:root:not([data-theme="dark"]) .management-workspace .management-heading::after{background:linear-gradient(90deg,transparent,#20b5bf 42%,#ffad4d 70%,transparent)}
+:root:not([data-theme="dark"]) .management-workspace :is(input,select,textarea),
+:root:not([data-theme="dark"]) .management-workspace :is(.sales-filter-panel,.product-filter-panel,.inventory-operation-filters,.store-comparison-filters,.insight-search,.inventory-detail-filters) :is(input,select){color:#183548!important;border-color:#c8dfe2!important;background:rgb(255 255 255 / 76%)!important;box-shadow:inset 0 1px 2px rgb(31 95 105 / 5%)!important}
+:root:not([data-theme="dark"]) .management-workspace :is(input,select,textarea){opacity:1!important;-webkit-text-fill-color:#183548!important;color-scheme:light!important}
+:root:not([data-theme="dark"]) .management-workspace :is(input,textarea)::placeholder{color:#5f7a84!important;opacity:1!important;-webkit-text-fill-color:#5f7a84!important}
+:root:not([data-theme="dark"]) .management-workspace :is(.management-kpis,.sales-kpis,.product-kpis,.inventory-operation-kpis,.store-kpis,.insight-kpis,.inventory-truth-grid,.overview-metric-strip) article{
+  color:#173244;border-color:rgb(255 255 255 / 92%);background:linear-gradient(145deg,rgb(255 255 255 / 92%),rgb(226 244 245 / 72%));
+  box-shadow:inset 0 0 0 1px rgb(161 201 205 / 32%),inset 0 1px 0 #fff,0 10px 25px rgb(37 104 114 / 9%)
+}
+:root:not([data-theme="dark"]) .management-workspace :is(.management-kpis,.sales-kpis,.product-kpis,.inventory-operation-kpis,.store-kpis,.insight-kpis,.inventory-truth-grid,.overview-metric-strip) article:hover{border-color:#fff;background:linear-gradient(145deg,#fff,rgb(218 242 244 / 82%));box-shadow:inset 0 0 0 1px rgb(112 187 194 / 45%),0 15px 32px rgb(37 104 114 / 14%)}
+:root:not([data-theme="dark"]) .management-workspace :is(.management-kpis,.sales-kpis,.product-kpis,.inventory-operation-kpis,.store-kpis,.insight-kpis,.inventory-truth-grid,.overview-metric-strip) :is(strong,dd){color:#173548}
+:root:not([data-theme="dark"]) .management-workspace :is(.management-filters button,.sales-filter-panel>button:not(.secondary-action),.product-filter-panel>button:not(.secondary-action),.inventory-operation-filters>button:not(.secondary-action),.store-comparison-filters>button:not(.secondary-action),.insight-search>button:not(.secondary-action),.primary-sync-controls button,.purchase-order-actions button,.procurement-empty button,.table-action:not(.muted)){
+  color:#fff!important;border:1px solid rgb(255 255 255 / 72%)!important;border-radius:12px;background:linear-gradient(135deg,#1db7c4,#467fce)!important;box-shadow:inset 0 1px 0 rgb(255 255 255 / 52%),0 7px 17px rgb(27 132 155 / 24%)!important
+}
+:root:not([data-theme="dark"]) .management-workspace :is(.management-filters button,.sales-filter-panel>button:not(.secondary-action),.product-filter-panel>button:not(.secondary-action),.inventory-operation-filters>button:not(.secondary-action),.store-comparison-filters>button:not(.secondary-action),.insight-search>button:not(.secondary-action),.primary-sync-controls button,.purchase-order-actions button,.procurement-empty button,.table-action:not(.muted)):hover{filter:brightness(1.05);transform:translateY(-2px);box-shadow:inset 0 1px 0 rgb(255 255 255 / 58%),0 10px 22px rgb(27 132 155 / 28%)!important}
+:root:not([data-theme="dark"]) .management-workspace :is(.secondary-action,.table-action.muted,.editor-reset){color:#426d78!important;border-color:#c9dfe2!important;background:rgb(255 255 255 / 68%)!important;box-shadow:inset 0 1px 0 #fff!important}
+:root:not([data-theme="dark"]) .management-workspace :is(.period-tabs,.procurement-tabs,.inventory-status-tabs,.product-tabs,.insight-tabs){border-color:rgb(255 255 255 / 88%);background:rgb(222 241 242 / 62%);box-shadow:inset 0 0 0 1px rgb(155 196 201 / 28%)}
+:root:not([data-theme="dark"]) .management-workspace :is(.period-tabs,.procurement-tabs,.inventory-status-tabs,.product-tabs,.insight-tabs) button{color:#68818b;background:transparent}
+:root:not([data-theme="dark"]) .management-workspace :is(.period-tabs,.procurement-tabs,.inventory-status-tabs,.product-tabs,.insight-tabs) button:is(.active,[aria-pressed=true]){color:#17404b;background:rgb(255 255 255 / 88%);box-shadow:0 5px 14px rgb(36 105 116 / 13%)}
+:root:not([data-theme="dark"]) .management-workspace :is(.management-alert.pending,.sync-required-alert,.analysis-method,.inline-notice,.scope-note){color:#496871!important;border-color:rgb(255 255 255 / 84%)!important;background:linear-gradient(105deg,rgb(225 246 247 / 86%),rgb(255 247 223 / 75%))!important;box-shadow:inset 0 0 0 1px rgb(168 205 208 / 32%)}
+:root:not([data-theme="dark"]) .management-workspace :is(.management-alert.pending,.sync-required-alert,.analysis-method,.inline-notice,.scope-note) :is(span,strong,p){color:#496871!important}
+:root:not([data-theme="dark"]) .management-workspace :is(.time-bucket-grid article,.coverage-buckets article,.source-quality dl>div,.store-result-card dl>div,.store-rankings>div,.insight-products>article,.insight-tags span,.taxonomy-list>div,.purchase-suggestion-grid dl div){color:#284b59;border-color:#d3e6e8;background:rgb(237 247 247 / 80%)}
+:root:not([data-theme="dark"]) .management-workspace .purchase-suggestion-grid .suggested{background:linear-gradient(135deg,rgb(207 241 241 / 92%),rgb(229 239 255 / 90%))}
+:root:not([data-theme="dark"]) .management-workspace .purchase-suggestion-grid .suggested dd{color:#167f8e}
+:root:not([data-theme="dark"]) .management-workspace .store-result-card.selected{color:#173548!important;border-color:rgb(255 255 255 / 92%)!important;background:linear-gradient(145deg,rgb(255 255 255 / 92%),rgb(218 242 244 / 80%))!important;box-shadow:inset 0 0 0 1px rgb(81 169 180 / 40%),0 16px 34px rgb(37 104 114 / 14%)!important}
+:root:not([data-theme="dark"]) .management-workspace .store-result-card.selected .card-title h3,:root:not([data-theme="dark"]) .management-workspace .store-result-card.selected dd{color:#173548!important}
+:root:not([data-theme="dark"]) .management-workspace .store-result-card.selected :is(.card-title p,dt){color:#6d8791!important}
+:root:not([data-theme="dark"]) .management-workspace .store-result-card.selected dl>div{border-color:#d3e6e8!important;background:rgb(255 255 255 / 64%)!important}
+:root:not([data-theme="dark"]) .management-workspace table{color:#244554;background:rgb(255 255 255 / 67%)}
+:root:not([data-theme="dark"]) .management-workspace :is(th,thead){color:#526e79;background:rgb(220 240 242 / 72%)!important}
+:root:not([data-theme="dark"]) .management-workspace td{color:#315461;border-color:#d8e7e9}
+:root:not([data-theme="dark"]) .management-workspace tbody tr:hover{background:rgb(221 243 244 / 55%)}
+:root:not([data-theme="dark"]) .management-workspace .page-guide-fab{border-color:rgb(255 255 255 / 75%);background:linear-gradient(145deg,#1cb5c1,#4580cb);box-shadow:inset 0 1px 0 rgb(255 255 255 / 46%),0 12px 28px rgb(28 132 153 / 27%)}
+:root:not([data-theme="dark"]) .management-workspace .metric-symbol.sales{background:#318ed0}:root:not([data-theme="dark"]) .management-workspace .metric-symbol.orders{background:#20b0bd}:root:not([data-theme="dark"]) .management-workspace .metric-symbol.units{background:#7188dc}:root:not([data-theme="dark"]) .management-workspace .metric-symbol.average{background:#f2aa48}:root:not([data-theme="dark"]) .management-workspace .metric-symbol.stock{background:#3db396}:root:not([data-theme="dark"]) .management-workspace .metric-symbol.expiry{background:#e67d8a}
+
+/* Dense operational refinements: visible native dates, compact explanations and decision-first cards. */
+.management-heading>div:first-child>span{display:none}.management-heading{min-height:58px!important}.management-heading h2{font-size:20px!important}
+.hot-products-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:14px}.hot-products-grid article{display:grid;grid-template-columns:34px minmax(0,1fr) auto auto auto;align-items:center;gap:10px;min-width:0;padding:9px 10px;border-bottom:1px solid var(--dash-line)}.hot-products-grid article>span{display:grid;min-width:0;gap:2px}.hot-products-grid article>span strong,.hot-products-grid article>span small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hot-products-grid article>em{color:var(--dash-muted);font-size:11px;font-style:normal}.hot-products-grid article>strong{font-size:12px}.hot-products-grid .table-action{min-height:32px;padding:4px 10px}
+.purchase-suggestion-grid>article{min-height:178px;padding:13px}.purchase-suggestion-grid header strong{font-size:14px;line-height:1.35}.purchase-suggestion-grid dl{grid-template-columns:repeat(3,minmax(0,1fr))}.purchase-suggestion-grid dl div{display:grid;align-content:center;min-height:55px}.purchase-suggestion-grid dl .inventory-focus dd,.purchase-suggestion-grid dl .suggested dd{font-size:18px}.purchase-suggestion-grid>article>p{display:none}
+.purchase-suggestion-grid header strong,.purchase-suggestion-grid header small{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere}.purchase-suggestion-grid header strong{min-height:32px;font-size:12px;line-height:1.28}.purchase-suggestion-grid header small{font-size:9px;line-height:1.25}.purchase-suggestion-grid>article{min-height:188px}.purchase-suggestion-grid footer button{font-size:10px}
+.page-guide-fab{top:52%;right:24px;bottom:auto;width:74px;height:74px;padding:0;border:0!important;background:transparent!important;box-shadow:none!important;transform:translateY(-50%);overflow:visible}.page-guide-fab img{position:relative;z-index:2;width:72px;height:72px;object-fit:contain;filter:drop-shadow(0 8px 12px rgb(32 108 95 / 24%));animation:assistant-float 3.8s ease-in-out infinite}.page-guide-fab span{position:absolute;z-index:1;width:62px;height:62px;border-radius:50%;background:radial-gradient(circle,rgb(255 217 91 / 70%),rgb(255 217 91 / 0) 68%);animation:assistant-rays 9s ease-in-out infinite}.page-guide-fab b{right:76px}.page-guide-popover{top:50%;right:112px;bottom:auto;transform:translateY(-50%)}
+@keyframes assistant-float{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-8px) rotate(1deg)}}@keyframes assistant-rays{0%,55%,100%{opacity:0;transform:scale(.72)}60%,82%{opacity:.82;transform:scale(1.45)}93%{opacity:0;transform:scale(1.9)}}
+@media(max-width:900px){.hot-products-grid{grid-template-columns:1fr}.hot-products-grid article{grid-template-columns:30px minmax(0,1fr) auto auto}.hot-products-grid article>em{display:none}}
+:root:not([data-theme="dark"]) .management-workspace input[type="date"]{color:#183548!important;-webkit-text-fill-color:#183548!important;opacity:1!important;color-scheme:light!important}
+:root:not([data-theme="dark"]) .management-workspace input[type="date"]::-webkit-date-and-time-value{color:#183548!important;-webkit-text-fill-color:#183548!important;opacity:1!important;text-align:left}
+:root:not([data-theme="dark"]) .management-workspace input[type="date"]::-webkit-calendar-picker-indicator{opacity:.75;filter:none}
+:root:not([data-theme="dark"]) .management-workspace .product-kpis{grid-template-columns:repeat(6,minmax(0,1fr))}
+:root:not([data-theme="dark"]) .management-workspace .clear-table-filter{padding:4px 0!important;color:#168d9b!important;border:0!important;background:transparent!important;box-shadow:none!important}
+:root:not([data-theme="dark"]) .management-workspace .stock-badge{color:#56477f!important;border:1px solid rgb(174 155 224 / 38%);background:linear-gradient(135deg,#f4efff,#ded5fb)!important;box-shadow:inset 0 1px 0 #fff}
+:root:not([data-theme="dark"]) .management-workspace :is(.primary-sync-card,.pos-status-grid article,.reconcile-option){color:#173548;border-color:rgb(255 255 255 / 90%);background:linear-gradient(145deg,rgb(255 255 255 / 92%),rgb(222 243 244 / 78%));box-shadow:inset 0 0 0 1px rgb(157 196 201 / 32%),0 10px 24px rgb(37 104 114 / 9%)}
+:root:not([data-theme="dark"]) .management-workspace :is(.primary-sync-card,.pos-status-grid article,.reconcile-option) :is(strong,span,small){color:#315767}
+:root:not([data-theme="dark"]) .management-workspace .reconcile-option input{accent-color:#21a8b5}
+
+/* Dense single-row summaries, theme-matched actions and legible procurement cards. */
+@media(min-width:1101px){.overview-action-rail{grid-template-columns:repeat(4,minmax(0,1fr))!important}.product-kpis{grid-template-columns:repeat(6,minmax(0,1fr))!important}.product-kpis article{min-width:0;padding-inline:13px}.product-kpis strong{font-size:clamp(17px,1.35vw,23px)}}
+.stock-status-actions>span{display:flex;gap:5px}.management-workspace .stock-status-actions button,.management-workspace .table-action{border-color:rgb(127 126 221 / 38%);background:linear-gradient(135deg,rgb(74 68 157 / 78%),rgb(28 135 160 / 72%));color:#f2f3ff;box-shadow:inset 0 1px 0 rgb(255 255 255 / 15%),0 5px 14px rgb(2 10 27 / 26%)}
+.management-workspace .stock-status-actions button:hover,.management-workspace .table-action:not(:disabled):hover{border-color:rgb(166 162 246 / 56%);filter:brightness(1.09)}
+:root:not([data-theme="dark"]) .management-workspace .stock-status-actions button,:root:not([data-theme="dark"]) .management-workspace .table-action:not(.muted){border-color:rgb(255 255 255 / 78%);background:linear-gradient(135deg,rgb(176 151 244 / 96%),rgb(105 149 232 / 94%));color:#fff;box-shadow:inset 0 1px 0 rgb(255 255 255 / 52%),0 6px 16px rgb(106 96 194 / 22%)}
+.purchase-suggestion-grid>article{border-color:#30425c;background:linear-gradient(145deg,#111f32,#0d1828);box-shadow:inset 0 1px 0 rgb(255 255 255 / 5%),0 8px 20px rgb(0 0 0 / 18%)}.purchase-suggestion-grid header strong{color:#f2f7ff;font-size:14px;font-weight:900}.purchase-suggestion-grid header small{color:#9dacc0;font-size:10px}.purchase-suggestion-grid dl div{border:1px solid rgb(87 111 145 / 18%);background:#152238}.purchase-suggestion-grid dt{color:#9aabc0;font-size:9px}.purchase-suggestion-grid dd{color:#f4f8ff;font-size:14px}.purchase-suggestion-grid .inventory-focus{background:#19263a}.purchase-suggestion-grid .suggested{background:linear-gradient(145deg,#14394a,#15314b)}.purchase-suggestion-grid .suggested dd{color:#6fe7ed}.purchase-suggestion-grid footer button{font-size:11px;font-weight:900}
+:root:not([data-theme="dark"]) .management-workspace .purchase-suggestion-grid>article{border-color:rgb(171 197 213 / 62%);background:linear-gradient(145deg,rgb(255 255 255 / 96%),rgb(234 244 248 / 92%));box-shadow:inset 0 1px 0 #fff,0 9px 22px rgb(57 98 116 / 10%)}:root:not([data-theme="dark"]) .management-workspace .purchase-suggestion-grid header strong{color:#18394a}:root:not([data-theme="dark"]) .management-workspace .purchase-suggestion-grid header small{color:#65808c}:root:not([data-theme="dark"]) .management-workspace .purchase-suggestion-grid dl div{border-color:rgb(183 213 218 / 52%);background:rgb(237 247 247 / 88%)}:root:not([data-theme="dark"]) .management-workspace .purchase-suggestion-grid dt{color:#5d7984}:root:not([data-theme="dark"]) .management-workspace .purchase-suggestion-grid dd{color:#18394a}:root:not([data-theme="dark"]) .management-workspace .purchase-suggestion-grid .suggested{background:linear-gradient(135deg,rgb(222 211 255 / 92%),rgb(211 235 255 / 92%))}:root:not([data-theme="dark"]) .management-workspace .purchase-suggestion-grid .suggested dd{color:#6552c5}
+.sync-control-row{display:grid;grid-template-columns:minmax(340px,540px) minmax(280px,1fr);align-items:end;gap:12px}.sync-control-row .primary-sync-controls{grid-template-columns:minmax(190px,1fr) minmax(150px,220px)}.sync-control-row .reconcile-option{min-height:46px;margin:0;align-items:center;padding:8px 12px}.sync-control-row .reconcile-option input{margin:0}.sync-control-row .reconcile-option span{display:flex;align-items:center;gap:9px;min-width:0}.sync-control-row .reconcile-option small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:root:not([data-theme="dark"]) .management-workspace .sales-ranking li span strong{color:#19795e!important}:root:not([data-theme="dark"]) .management-workspace .sales-ranking li em{color:#7659cf!important;font-weight:900}
+.purchase-toast{position:fixed;z-index:1400;top:92px;left:50%;max-width:min(520px,calc(100vw - 32px));margin:0;padding:12px 20px;border:1px solid rgb(191 179 255 / 34%);border-radius:999px;background:linear-gradient(135deg,rgb(83 69 170 / 96%),rgb(26 139 157 / 94%));box-shadow:inset 0 1px 0 rgb(255 255 255 / 20%),0 16px 38px rgb(0 0 0 / 28%);color:#f7f7ff;font-size:13px;font-weight:850;white-space:nowrap;transform:translateX(-50%);backdrop-filter:blur(16px)}
+:root:not([data-theme="dark"]) .purchase-toast{border-color:rgb(255 255 255 / 84%);background:linear-gradient(135deg,rgb(185 156 244 / 94%),rgb(111 163 231 / 94%));box-shadow:inset 0 1px 0 rgb(255 255 255 / 58%),0 14px 32px rgb(103 92 188 / 22%);color:#fff}.toast-pop-enter-active,.toast-pop-leave-active{transition:opacity .18s ease,transform .22s cubic-bezier(.2,.8,.2,1)}.toast-pop-enter-from,.toast-pop-leave-to{opacity:0;transform:translate(-50%,-10px) scale(.96)}
+
+/* One purchase-order module with four compact information columns. */
+.purchase-order-table-wrap{max-height:min(520px,58dvh);overflow:auto;border:1px solid #263751;border-radius:16px;scrollbar-gutter:stable}.purchase-order-table{width:100%;min-width:980px;border-collapse:separate;border-spacing:0}.purchase-order-table th{position:sticky;z-index:2;top:0;padding:11px 12px;color:#9eacc0;background:#101b2b;text-align:left;font-size:11px}.purchase-order-table td{padding:10px 12px;border-top:1px solid #223149;vertical-align:top}.purchase-order-table td:first-child{width:27%}.purchase-order-table td:nth-child(2){width:25%}.purchase-order-table td:nth-child(3){width:22%}.purchase-order-table td:nth-child(4){width:26%}.purchase-order-table td>strong,.purchase-order-table td>small,.purchase-order-table td>em{display:block}.purchase-order-table td>strong{color:#edf6ff;font-size:13px;line-height:1.35}.purchase-order-table td>small,.purchase-order-table td>em{margin-top:3px;color:#91a0b4;font-size:9px;font-style:normal}.purchase-order-table td label{display:grid;grid-template-columns:88px minmax(0,1fr);align-items:center;gap:6px;margin-bottom:6px;color:#91a0b4;font-size:9px}.purchase-order-table input{min-width:0;height:34px;padding:6px 8px;color:#edf5ff;border:1px solid #30415b;border-radius:8px;background:#09121f}.purchase-row-actions{display:flex;justify-content:flex-end;gap:6px}.purchase-row-actions button{min-height:32px;padding:5px 10px;border-radius:8px}.purchase-confirm-dialog{width:min(520px,calc(100vw - 30px));padding:24px;border:1px solid rgb(174 193 255 / 28%);border-radius:25px;background:linear-gradient(135deg,rgb(96 61 203 / 94%),rgb(67 78 189 / 93%) 50%,rgb(16 197 184 / 86%));box-shadow:inset 0 1px rgb(255 255 255 / 24%),0 30px 85px rgb(0 0 0 / 48%);color:#fff;backdrop-filter:blur(28px) saturate(135%)}.purchase-confirm-dialog header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.purchase-confirm-dialog header span{display:grid;gap:4px}.purchase-confirm-dialog header small{color:rgb(255 255 255 / 72%);letter-spacing:.15em}.purchase-confirm-dialog header strong{font-size:22px}.purchase-confirm-dialog header>button{width:38px;height:38px;padding:0;border:1px solid rgb(255 255 255 / 28%);border-radius:50%;color:#fff;background:rgb(255 255 255 / 13%)}.purchase-confirm-dialog p{color:rgb(255 255 255 / 82%);line-height:1.7}.purchase-confirm-dialog footer{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}.purchase-confirm-dialog footer button{min-height:42px;padding:8px 15px;border-radius:12px}.purchase-confirm-dialog .dialog-cancel{color:#fff;border:1px solid rgb(255 255 255 / 32%);background:rgb(255 255 255 / 12%)}.purchase-confirm-dialog .dialog-confirm{color:#25304a;border:0;background:#fff}.purchase-confirm-dialog .dialog-confirm.danger{color:#fff;background:#d95d72}
+:root:not([data-theme="dark"]) .management-workspace .purchase-order-table-wrap{border-color:#dfe3ef;background:rgb(255 255 255 / 70%)}:root:not([data-theme="dark"]) .management-workspace .purchase-order-table th{color:#65748b;background:rgb(244 246 252 / 96%)}:root:not([data-theme="dark"]) .management-workspace .purchase-order-table td{border-color:#e6e9f2}:root:not([data-theme="dark"]) .management-workspace .purchase-order-table td>strong{color:#27334d}:root:not([data-theme="dark"]) .management-workspace .purchase-order-table input{color:#303854;border-color:#dcdfea;background:#fff}:root:not([data-theme="dark"]) .purchase-confirm-dialog{border-color:rgb(255 255 255 / 88%);background:linear-gradient(135deg,rgb(244 224 255 / 96%),rgb(225 229 255 / 95%) 52%,rgb(196 223 255 / 94%));box-shadow:inset 0 1px #fff,0 28px 72px rgb(103 92 188 / 24%);color:#25304a}:root:not([data-theme="dark"]) .purchase-confirm-dialog header small,:root:not([data-theme="dark"]) .purchase-confirm-dialog p{color:#66708b}:root:not([data-theme="dark"]) .purchase-confirm-dialog header>button{color:#34405d;border-color:rgb(95 92 160 / 18%);background:rgb(255 255 255 / 55%)}:root:not([data-theme="dark"]) .purchase-confirm-dialog .dialog-cancel{color:#4b5570;border-color:#d5d7e6;background:rgb(255 255 255 / 58%)}:root:not([data-theme="dark"]) .purchase-confirm-dialog .dialog-confirm{color:#fff;background:linear-gradient(135deg,#8e6dde,#6f9fe8)}
+@media(max-width:720px){.purchase-order-table{min-width:760px}.purchase-confirm-dialog{padding:20px}.purchase-order-table-wrap{max-height:62dvh}}
+@media(max-width:900px){.sync-control-row{grid-template-columns:1fr}.sync-control-row .primary-sync-controls{grid-template-columns:minmax(0,1fr) minmax(130px,.55fr)}}
+@media(prefers-reduced-motion:reduce){.page-guide-fab img,.page-guide-fab span{animation:none}}
+@media(max-width:720px){.page-guide-fab{top:58%;right:12px;bottom:auto}.page-guide-popover{top:50%;right:16px;bottom:auto;transform:translateY(-50%)}}
 </style>
 
 <style scoped src="./management-decision.css"></style>

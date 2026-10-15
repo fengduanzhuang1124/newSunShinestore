@@ -145,6 +145,133 @@ export class ManagementController {
     };
   }
 
+  @Get('purchase-suggestions')
+  async purchaseSuggestions(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue?: string) {
+    const storeId = this.storeId(storeIdValue);
+    const user = request.inventoryUser!;
+    return { code: 200, message: '进货建议查询成功', data: await this.management.purchaseSuggestions(user.organizationId, user.id, storeId) };
+  }
+
+  @Post('inventory-operations/minimum-stock')
+  async setMinimumStock(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue: string | undefined,
+    @Body() input: { productId?: string; minimumStock?: number },
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    if (input.productId && !/^\d+$/.test(input.productId)) throw new BadRequestException('商品参数无效');
+    if (!Number.isInteger(input.minimumStock) || Number(input.minimumStock) < 0 || Number(input.minimumStock) > 100000) throw new BadRequestException('最低库存必须是0至100000之间的整数');
+    const user = request.inventoryUser!;
+    return { code: 200, message: input.productId ? '商品最低库存已更新' : '门店最低库存已统一更新', data: await this.management.setMinimumStock(user.organizationId, user.id, storeId, { productId: input.productId ? BigInt(input.productId) : undefined, minimumStock: Number(input.minimumStock) }) };
+  }
+
+  @Post('inventory-operations/visibility')
+  async setInventoryVisibility(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue: string | undefined,
+    @Body() input: { productId?: string; mode?: 'IGNORE' | 'NEXT_WEEK' },
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.productId || !/^\d+$/.test(input.productId)) throw new BadRequestException('商品参数无效');
+    if (input.mode !== 'IGNORE' && input.mode !== 'NEXT_WEEK') throw new BadRequestException('库存提醒处理方式无效');
+    const hiddenUntil = input.mode === 'NEXT_WEEK' ? new Date(Date.now() + 7 * 86_400_000) : undefined;
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: input.mode === 'NEXT_WEEK' ? '该商品将在下周重新显示' : '该商品已从补货提醒中忽略',
+      data: await this.management.setPurchaseSuggestionIgnored(
+        user.organizationId,
+        user.id,
+        storeId,
+        BigInt(input.productId),
+        true,
+        input.mode === 'NEXT_WEEK' ? '下周继续显示' : '无需补货提醒',
+        hiddenUntil,
+      ),
+    };
+  }
+
+  @Get('purchase-orders/current')
+  async currentPurchaseOrder(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue?: string) {
+    const storeId = this.storeId(storeIdValue);
+    const user = request.inventoryUser!;
+    return { code: 200, message: '本周进货单查询成功', data: await this.management.currentPurchaseOrder(user.organizationId, user.id, storeId) };
+  }
+
+  @Post('purchase-suggestions/ignore')
+  async ignorePurchaseSuggestion(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue: string | undefined,
+    @Body() input: { productId?: string; reason?: string },
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.productId || !/^\d+$/.test(input.productId)) throw new BadRequestException('商品参数无效');
+    if (input.reason && input.reason.trim().length > 255) throw new BadRequestException('忽略原因不能超过255个字符');
+    const user = request.inventoryUser!;
+    return { code: 200, message: '进货建议已忽略', data: await this.management.setPurchaseSuggestionIgnored(user.organizationId, user.id, storeId, BigInt(input.productId), true, input.reason) };
+  }
+
+  @Post('purchase-suggestions/restore')
+  async restorePurchaseSuggestion(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue: string | undefined,
+    @Body() input: { productId?: string },
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.productId || !/^\d+$/.test(input.productId)) throw new BadRequestException('商品参数无效');
+    const user = request.inventoryUser!;
+    return { code: 200, message: '进货建议已恢复', data: await this.management.setPurchaseSuggestionIgnored(user.organizationId, user.id, storeId, BigInt(input.productId), false) };
+  }
+
+  @Post('purchase-orders/items')
+  async addPurchaseOrderItem(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue: string | undefined,
+    @Body() input: { productId?: string; quantity?: number; source?: string },
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.productId || !/^\d+$/.test(input.productId)) throw new BadRequestException('商品参数无效');
+    const source = input.source ?? 'MANUAL';
+    if (!['MANUAL', 'OUT_OF_STOCK', 'LOW_STOCK', 'HOT_SALES', 'WEEKLY_FORECAST'].includes(source)) throw new BadRequestException('加入来源无效');
+    if (input.quantity !== undefined && (!Number.isInteger(input.quantity) || input.quantity <= 0)) throw new BadRequestException('进货数量必须是正整数');
+    const user = request.inventoryUser!;
+    return {
+      code: 200, message: '商品已加入本周进货单',
+      data: await this.management.addPurchaseOrderItem(user.organizationId, user.id, storeId, { productId: BigInt(input.productId), quantity: input.quantity, source: source as 'MANUAL' | 'OUT_OF_STOCK' | 'LOW_STOCK' | 'HOT_SALES' | 'WEEKLY_FORECAST' }),
+    };
+  }
+
+  @Post('purchase-orders/items/update')
+  async updatePurchaseOrderItem(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue: string | undefined,
+    @Body() input: { itemId?: string; orderedQuantity?: number; supplierName?: string; unitCostCents?: number | null; caseSize?: number | null; notes?: string },
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.itemId || !/^\d+$/.test(input.itemId)) throw new BadRequestException('进货单商品参数无效');
+    if (!Number.isInteger(input.orderedQuantity) || Number(input.orderedQuantity) <= 0) throw new BadRequestException('进货数量必须是正整数');
+    if (input.supplierName && input.supplierName.trim().length > 120) throw new BadRequestException('供应商名称不能超过120个字符');
+    if (input.notes && input.notes.trim().length > 255) throw new BadRequestException('备注不能超过255个字符');
+    const user = request.inventoryUser!;
+    return { code: 200, message: '进货商品已更新', data: await this.management.updatePurchaseOrderItem(user.organizationId, user.id, storeId, BigInt(input.itemId), { orderedQuantity: Number(input.orderedQuantity), supplierName: input.supplierName, unitCostCents: input.unitCostCents, caseSize: input.caseSize, notes: input.notes }) };
+  }
+
+  @Post('purchase-orders/items/remove')
+  async removePurchaseOrderItem(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue: string | undefined, @Body() input: { itemId?: string }) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.itemId || !/^\d+$/.test(input.itemId)) throw new BadRequestException('进货单商品参数无效');
+    const user = request.inventoryUser!;
+    return { code: 200, message: '商品已从本周进货单移除', data: await this.management.removePurchaseOrderItem(user.organizationId, user.id, storeId, BigInt(input.itemId)) };
+  }
+
+  @Post('purchase-orders/status')
+  async transitionPurchaseOrder(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue: string | undefined, @Body() input: { status?: string }) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.status || !['DRAFT', 'CONFIRMED', 'ORDERED', 'CANCELLED'].includes(input.status)) throw new BadRequestException('进货单状态无效');
+    const user = request.inventoryUser!;
+    return { code: 200, message: '进货单状态已更新', data: await this.management.transitionPurchaseOrder(user.organizationId, user.id, storeId, input.status as 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'CANCELLED') };
+  }
+
   @Get('store-comparison')
   async storeComparison(
     @Req() request: AuthenticatedRequest,
@@ -261,15 +388,15 @@ export class ManagementController {
   async overview(
     @Req() request: AuthenticatedRequest,
     @Query('storeId') storeIdValue?: string,
-    @Query('month') month?: string,
+    @Query('date') date?: string,
   ) {
     if (!storeIdValue || !/^\d+$/.test(storeIdValue)) throw new BadRequestException('门店参数无效');
-    if (month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new BadRequestException('月份格式应为 YYYY-MM');
+    if (date && !this.isCalendarDate(date)) throw new BadRequestException('日期格式应为 YYYY-MM-DD');
     const user = request.inventoryUser!;
     return {
       code: 200,
       message: '经营数据查询成功',
-      data: await this.management.overview(user.organizationId, user.id, BigInt(storeIdValue), month),
+      data: await this.management.overview(user.organizationId, user.id, BigInt(storeIdValue), date),
     };
   }
 

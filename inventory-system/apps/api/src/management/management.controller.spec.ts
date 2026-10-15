@@ -14,6 +14,16 @@ describe('ManagementController POS sync', () => {
     expect(management.access).toHaveBeenCalledWith(2n, 1n, 3n);
   });
 
+  it('loads the daily overview for a validated business date', async () => {
+    const management = { overview: jest.fn().mockResolvedValue({ period: { date: '2026-10-13' } } as never) };
+    const controller = new ManagementController(management as never);
+    await expect(controller.overview(request as never, '3', '2026-10-13')).resolves.toEqual({
+      code: 200, message: '经营数据查询成功', data: { period: { date: '2026-10-13' } },
+    });
+    expect(management.overview).toHaveBeenCalledWith(2n, 1n, 3n, '2026-10-13');
+    await expect(controller.overview(request as never, '3', '2026-02-30')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('runs an observation-only manual sync for the selected store and date', async () => {
     const management = { runPosSync: jest.fn().mockResolvedValue({ inventoryChanged: false } as never) };
     const controller = new ManagementController(management as never);
@@ -85,6 +95,39 @@ describe('ManagementController POS sync', () => {
     });
     expect(management.inventoryOperations).toHaveBeenCalledWith(2n, 1n, 3n, 90, '蜂蜜');
     await expect(controller.inventoryOperations(request as never, '3', '20')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('validates a product before adding it to the weekly purchase order', async () => {
+    const management = { addPurchaseOrderItem: jest.fn().mockResolvedValue({ id: '12', status: 'DRAFT' } as never) };
+    const controller = new ManagementController(management as never);
+    await expect(controller.addPurchaseOrderItem(request as never, '3', { productId: '9', quantity: 12, source: 'LOW_STOCK' })).resolves.toEqual({
+      code: 200, message: '商品已加入本周进货单', data: { id: '12', status: 'DRAFT' },
+    });
+    expect(management.addPurchaseOrderItem).toHaveBeenCalledWith(2n, 1n, 3n, { productId: 9n, quantity: 12, source: 'LOW_STOCK' });
+    await expect(controller.addPurchaseOrderItem(request as never, '3', { productId: '9', quantity: 0, source: 'LOW_STOCK' })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('ignores and restores a purchase suggestion with an audit-ready reason', async () => {
+    const management = { setPurchaseSuggestionIgnored: jest.fn().mockResolvedValue({ productId: '9', ignored: true } as never) };
+    const controller = new ManagementController(management as never);
+    await expect(controller.ignorePurchaseSuggestion(request as never, '3', { productId: '9', reason: '现有库存足够' })).resolves.toEqual({
+      code: 200, message: '进货建议已忽略', data: { productId: '9', ignored: true },
+    });
+    expect(management.setPurchaseSuggestionIgnored).toHaveBeenCalledWith(2n, 1n, 3n, 9n, true, '现有库存足够');
+    await controller.restorePurchaseSuggestion(request as never, '3', { productId: '9' });
+    expect(management.setPurchaseSuggestionIgnored).toHaveBeenLastCalledWith(2n, 1n, 3n, 9n, false);
+  });
+
+  it('hides inventory reminders permanently or until next week', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-14T00:00:00.000Z'));
+    const management = { setPurchaseSuggestionIgnored: jest.fn().mockResolvedValue({ productId: '9', ignored: true } as never) };
+    const controller = new ManagementController(management as never);
+    await controller.setInventoryVisibility(request as never, '3', { productId: '9', mode: 'IGNORE' });
+    expect(management.setPurchaseSuggestionIgnored).toHaveBeenLastCalledWith(2n, 1n, 3n, 9n, true, '无需补货提醒', undefined);
+    await controller.setInventoryVisibility(request as never, '3', { productId: '9', mode: 'NEXT_WEEK' });
+    expect(management.setPurchaseSuggestionIgnored).toHaveBeenLastCalledWith(2n, 1n, 3n, 9n, true, '下周继续显示', new Date('2026-10-21T00:00:00.000Z'));
+    await expect(controller.setInventoryVisibility(request as never, '3', { productId: '9', mode: 'LATER' as never })).rejects.toBeInstanceOf(BadRequestException);
+    jest.useRealTimers();
   });
 
   it('passes a validated period to store comparison', async () => {

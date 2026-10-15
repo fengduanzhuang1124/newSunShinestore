@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
-import { calendarDateStart, dateTimeInZone, nextCalendarDateStart } from '../pos/application/pos-date.js';
+import { calendarDateStart, nextCalendarDateStart } from '../pos/application/pos-date.js';
 import { PosObservationService } from '../pos/application/pos-observation.service.js';
 
-type SalesLine = { productName: string; brandName: string; quantity: number; revenue: number };
+type SalesLine = { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number };
 type SalesAnalysisInput = { from: string; to: string; dimension: 'DAY' | 'WEEK' | 'MONTH'; brand?: string; category?: string };
 type ProductsBrandsInput = { from: string; to: string; query?: string; brand?: string; category?: string };
+const DEFAULT_MINIMUM_STOCK = 20;
 const MANAGEMENT_PERMISSIONS = {
   overview: 'management.overview.view', sales: 'management.sales.view', inventory: 'management.inventory.view',
   posSync: 'management.pos.sync', posIssues: 'management.pos.issues', permissions: 'management.permissions.manage',
@@ -34,9 +35,10 @@ export class ManagementService {
 
   async posDataCheck(organizationId: bigint, userId: bigint, storeId: bigint) {
     const store = await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.posIssues);
-    const [orderCount, itemCount, mappedItems, unmappedItems, reviewItems, inactiveItems, refundReviews, failedRuns, dateRange] = await Promise.all([
+    const [orderCount, itemCount, nonInventoryItems, mappedItems, unmappedItems, reviewItems, inactiveItems, refundReviews, failedRuns, dateRange] = await Promise.all([
       this.prisma.client.posOrder.count({ where: { organizationId, storeId } }),
       this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', order: { organizationId, storeId } } }),
+      this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', disposition: 'NON_INVENTORY', order: { organizationId, storeId } } }),
       this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', productId: { not: null }, order: { organizationId, storeId } } }),
       this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', disposition: 'UNMAPPED', order: { organizationId, storeId } } }),
       this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', disposition: 'REVIEW_REQUIRED', order: { organizationId, storeId } } }),
@@ -45,7 +47,8 @@ export class ManagementService {
       this.prisma.client.posSyncRun.count({ where: { organizationId, storeId, status: 'FAILED' } }),
       this.prisma.client.posOrder.aggregate({ where: { organizationId, storeId }, _min: { orderedAt: true }, _max: { orderedAt: true } }),
     ]);
-    const mappingCoveragePercent = itemCount === 0 ? 0 : Math.round((mappedItems / itemCount) * 10000) / 100;
+    const mappableItemCount = Math.max(0, itemCount - nonInventoryItems);
+    const mappingCoveragePercent = mappableItemCount === 0 ? 0 : Math.round((mappedItems / mappableItemCount) * 10000) / 100;
     const issueCount = unmappedItems + reviewItems + refundReviews;
     return {
       store: { id: store.id.toString(), name: store.name },
@@ -57,12 +60,12 @@ export class ManagementService {
         firstOrderedAt: dateRange._min.orderedAt?.toISOString() ?? null,
         lastOrderedAt: dateRange._max.orderedAt?.toISOString() ?? null,
       },
-      items: { total: itemCount, mapped: mappedItems, unmapped: unmappedItems, reviewRequired: reviewItems, inactive: inactiveItems, mappingCoveragePercent },
+      items: { total: itemCount, mappable: mappableItemCount, nonInventory: nonInventoryItems, mapped: mappedItems, unmapped: unmappedItems, reviewRequired: reviewItems, inactive: inactiveItems, mappingCoveragePercent },
       issues: { total: issueCount, pendingRefundReviews: refundReviews, failedSyncRuns: failedRuns },
       readiness: orderCount === 0 ? 'WAITING_FOR_DATA' : issueCount > 0 ? 'NEEDS_REVIEW' : 'READY',
       checks: [
         { code: 'ORDERS_PRESENT', passed: orderCount > 0, message: orderCount > 0 ? `已有 ${orderCount} 张订单` : '尚未同步POS订单' },
-        { code: 'ITEM_MAPPING', passed: itemCount > 0 && unmappedItems === 0, message: itemCount === 0 ? '尚无销售明细' : `商品映射覆盖率 ${mappingCoveragePercent}%` },
+        { code: 'ITEM_MAPPING', passed: mappableItemCount > 0 && unmappedItems === 0 && reviewItems === 0, message: mappableItemCount === 0 ? '尚无需要映射的商品销售明细' : `商品映射覆盖率 ${mappingCoveragePercent}%` },
         { code: 'REFUND_REVIEW', passed: refundReviews === 0, message: refundReviews === 0 ? '没有待处理退款' : `${refundReviews} 笔退款需要确认商品` },
         { code: 'INVENTORY_SAFETY', passed: true, message: '当前接口只观察POS数据，不会直接扣减库存' },
       ],
@@ -257,7 +260,7 @@ export class ManagementService {
         where: { status: 'ACTIVE', product: productWhere, order: { organizationId, storeId, orderedAt: { gte: start, lt: end } } },
         select: { productId: true, quantity: true, unitPrice: true, isMinus: true },
       }),
-      this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', order: { organizationId, storeId, orderedAt: { gte: start, lt: end } } } }),
+      this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', disposition: { not: 'NON_INVENTORY' }, order: { organizationId, storeId, orderedAt: { gte: start, lt: end } } } }),
       this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', productId: { not: null }, order: { organizationId, storeId, orderedAt: { gte: start, lt: end } } } }),
     ]);
     const inventory = new Map<string, number>();
@@ -277,7 +280,7 @@ export class ManagementService {
       const key = product.id.toString();
       const sold = sales.get(key) ?? { units: 0, revenue: 0 };
       const currentInventory = inventory.get(key) ?? 0;
-      const minimumStock = product.storeProducts[0]?.minimumStock ?? null;
+      const minimumStock = product.storeProducts[0]?.minimumStock ?? DEFAULT_MINIMUM_STOCK;
       return {
         productId: key, sku: product.sku,
         productName: product.chineseName || product.name || product.englishName || '未命名商品',
@@ -285,7 +288,7 @@ export class ManagementService {
         barcode: product.barcodes[0]?.barcode ?? null,
         unitsSold: this.money(sold.units), salesRevenue: this.money(sold.revenue), currentInventory, minimumStock,
         sellingPriceCents: product.storeProducts[0]?.sellingPriceCents ?? product.storeProducts[0]?.level4PriceCents ?? null,
-        stockStatus: currentInventory <= 0 ? 'OUT_OF_STOCK' : minimumStock !== null && currentInventory <= minimumStock ? 'LOW' : 'IN_STOCK',
+        stockStatus: currentInventory <= 0 ? 'OUT_OF_STOCK' : currentInventory < minimumStock ? 'LOW' : 'IN_STOCK',
         salesToStockRatio: currentInventory > 0 ? this.money(sold.units / currentInventory) : null,
       };
     }).sort((a, b) => b.salesRevenue - a.salesRevenue || b.unitsSold - a.unitsSold || b.currentInventory - a.currentInventory);
@@ -308,7 +311,10 @@ export class ManagementService {
         unitsSold: this.money(productRows.reduce((sum, row) => sum + row.unitsSold, 0)),
         salesRevenue: this.money(productRows.reduce((sum, row) => sum + row.salesRevenue, 0)),
         currentInventory: productRows.reduce((sum, row) => sum + row.currentInventory, 0),
-        lowStockProducts: productRows.filter((row) => row.stockStatus !== 'IN_STOCK').length,
+        inStockProducts: productRows.filter((row) => row.currentInventory > 0).length,
+        outOfStockProducts: productRows.filter((row) => row.stockStatus === 'OUT_OF_STOCK').length,
+        lowStockProducts: productRows.filter((row) => row.stockStatus === 'LOW').length,
+        minimumStockConfiguredProducts: productRows.length,
       },
       products: productRows, brands: group('brandName'), categories: group('categoryName'),
       catalogQuality: {
@@ -332,6 +338,7 @@ export class ManagementService {
     });
     const now = new Date();
     const start = new Date(now.getTime() - lookbackDays * 86_400_000);
+    const shortageHistoryStart = new Date(now.getTime() - 120 * 86_400_000);
     const textFilter = query ? {
       OR: [
         { sku: { contains: query } }, { name: { contains: query } },
@@ -343,7 +350,7 @@ export class ManagementService {
     const productWhere = {
       organizationId, status: 'ACTIVE' as const, storeProducts: { some: { storeId, enabled: true } }, ...textFilter,
     };
-    const [products, balances, salesItems, movements, salesRange] = await Promise.all([
+    const [products, balances, salesItems, movements, salesRange, hiddenRows] = await Promise.all([
       this.prisma.client.product.findMany({
         where: productWhere, orderBy: { name: 'asc' },
         select: {
@@ -356,7 +363,7 @@ export class ManagementService {
         select: { productId: true, quantity: true, updatedAt: true },
       }),
       this.prisma.client.posOrderItem.findMany({
-        where: { status: 'ACTIVE', product: productWhere, order: { organizationId, storeId, orderedAt: { gte: start, lte: now } } },
+        where: { status: 'ACTIVE', product: productWhere, order: { organizationId, storeId, orderedAt: { gte: shortageHistoryStart, lte: now } } },
         select: { productId: true, quantity: true, isMinus: true, order: { select: { orderedAt: true } } },
       }),
       this.prisma.client.stockMovement.findMany({
@@ -366,6 +373,10 @@ export class ManagementService {
       this.prisma.client.posOrder.aggregate({
         where: { organizationId, storeId, orderedAt: { gte: start, lte: now } },
         _min: { orderedAt: true }, _max: { orderedAt: true },
+      }),
+      this.prisma.client.purchaseSuggestionIgnore.findMany({
+        where: { organizationId, storeId, OR: [{ restoredAt: null }, { restoredAt: { gt: now } }] },
+        select: { productId: true, reason: true, ignoredAt: true, restoredAt: true },
       }),
     ]);
     const firstObservedSaleAt = salesRange._min.orderedAt;
@@ -390,7 +401,7 @@ export class ManagementService {
       const raw = Math.abs(Number(item.quantity));
       const units = item.isMinus ? -raw : raw;
       const row = sales.get(key) ?? { units: 0, lastSoldAt: null };
-      row.units += units;
+      if (item.order.orderedAt >= start) row.units += units;
       if (!row.lastSoldAt || item.order.orderedAt > row.lastSoldAt) row.lastSoldAt = item.order.orderedAt;
       sales.set(key, row);
     }
@@ -399,26 +410,37 @@ export class ManagementService {
       const key = movement.productId.toString();
       if (!lastMovement.has(key)) lastMovement.set(key, movement.createdAt);
     }
+    const hidden = new Map(hiddenRows.map((row) => [row.productId.toString(), row]));
     const rows = products.map((product) => {
       const key = product.id.toString();
+      const productName = product.chineseName || product.name || product.englishName || '未命名商品';
+      const directShipExcluded = /\bstag(?:e)?\s*\d*\b/i.test(productName) || /\b\d+\s*(?:tins?|bags?)\b/i.test(productName);
+      const hiddenRow = hidden.get(key);
       const currentInventory = inventory.get(key)?.quantity ?? 0;
-      const minimumStock = product.storeProducts[0]?.minimumStock ?? null;
+      const configuredMinimumStock = product.storeProducts[0]?.minimumStock ?? null;
+      const minimumStock = configuredMinimumStock ?? DEFAULT_MINIMUM_STOCK;
       const soldUnits = this.money(sales.get(key)?.units ?? 0);
       const dailyVelocity = soldUnits > 0 && observedDays > 0 ? soldUnits / observedDays : 0;
       const coverageDays = salesCoverageReliable && dailyVelocity > 0 ? this.money(currentInventory / dailyVelocity) : null;
       const daysSinceLastSale = sales.get(key)?.lastSoldAt ? Math.floor((now.getTime() - sales.get(key)!.lastSoldAt!.getTime()) / 86_400_000) : null;
-      const stockStatus = currentInventory <= 0 ? 'OUT_OF_STOCK' : minimumStock !== null && currentInventory <= minimumStock ? 'LOW' : 'IN_STOCK';
+      const shortageVisible = currentInventory > 0 || (daysSinceLastSale !== null && daysSinceLastSale <= 120);
+      const stockStatus = currentInventory <= 0 ? 'OUT_OF_STOCK' : currentInventory < minimumStock ? 'LOW' : 'IN_STOCK';
       const slowMoving = salesCoverageReliable && currentInventory > 0 && (soldUnits <= 0 || (daysSinceLastSale !== null && daysSinceLastSale >= Math.min(observedDays, 60)) || (coverageDays !== null && coverageDays > 180));
       return {
-        productId: key, sku: product.sku, productName: product.chineseName || product.name || product.englishName || '未命名商品',
+        productId: key, sku: product.sku, productName,
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName), categoryName: product.categoryName || '未标注品类',
-        currentInventory, minimumStock, soldUnits, dailyVelocity: this.money(dailyVelocity), coverageDays,
+        currentInventory, minimumStock, configuredMinimumStock, minimumStockSource: configuredMinimumStock === null ? 'DEFAULT' : 'MANUAL',
+        soldUnits, dailyVelocity: this.money(dailyVelocity), coverageDays, shortageVisible,
         lastSoldAt: sales.get(key)?.lastSoldAt?.toISOString() ?? null, daysSinceLastSale,
         lastMovementAt: lastMovement.get(key)?.toISOString() ?? null,
         inventoryUpdatedAt: inventory.get(key)?.updatedAt?.toISOString() ?? null, stockStatus, slowMoving,
+        replenishmentHidden: Boolean(hiddenRow),
+        replenishmentHiddenUntil: hiddenRow?.restoredAt?.toISOString() ?? null,
+        directShipExcluded,
       };
     });
     const stocked = rows.filter((row) => row.currentInventory > 0);
+    const actionableRows = rows.filter((row) => !row.replenishmentHidden && !row.directShipExcluded);
     const coverageBuckets = {
       noSales: stocked.filter((row) => row.coverageDays === null).length,
       under30: stocked.filter((row) => row.coverageDays !== null && row.coverageDays < 30).length,
@@ -437,20 +459,218 @@ export class ManagementService {
       summary: {
         productCount: rows.length, stockedProducts: stocked.length,
         totalInventory: rows.reduce((sum, row) => sum + row.currentInventory, 0),
-        outOfStockProducts: rows.filter((row) => row.stockStatus === 'OUT_OF_STOCK').length,
-        lowStockProducts: rows.filter((row) => row.stockStatus === 'LOW').length,
-        slowMovingProducts: rows.filter((row) => row.slowMoving).length,
+        outOfStockProducts: actionableRows.filter((row) => row.stockStatus === 'OUT_OF_STOCK' && row.shortageVisible).length,
+        lowStockProducts: actionableRows.filter((row) => row.stockStatus === 'LOW').length,
+        slowMovingProducts: actionableRows.filter((row) => row.slowMoving).length,
       },
       coverageBuckets,
-      alerts: rows.filter((row) => row.stockStatus !== 'IN_STOCK').sort((a, b) => a.currentInventory - b.currentInventory),
-      slowMoving: rows.filter((row) => row.slowMoving).sort((a, b) => b.currentInventory - a.currentInventory),
+      alerts: actionableRows.filter((row) => row.stockStatus === 'LOW' || (row.stockStatus === 'OUT_OF_STOCK' && row.shortageVisible)).sort((a, b) => a.currentInventory - b.currentInventory),
+      slowMoving: actionableRows.filter((row) => row.slowMoving).sort((a, b) => b.currentInventory - a.currentInventory),
       products: rows.sort((a, b) => b.currentInventory - a.currentInventory),
       turnoverAvailable: false,
       turnoverNotice: '当前数据库没有连续历史库存快照，不能用当前库存代替平均库存，因此暂不计算标准库存周转率。',
+      defaultMinimumStock: DEFAULT_MINIMUM_STOCK,
+      shortageNotice: '缺货仅显示最近120天有销售记录的零库存商品；无单独配置时最低库存默认按20件判断。',
       coverageNotice: salesCoverageReliable
         ? `库存覆盖天数按实际已有的${observedDays}天POS销售跨度与当前库存估算；无销量商品不生成虚假天数。`
         : `当前只有${observedDays}天POS销售跨度，少于${minimumReliableDays}天；暂不生成库存覆盖天数或滞销结论。`,
     };
+  }
+
+  async purchaseSuggestions(organizationId: bigint, userId: bigint, storeId: bigint) {
+    const store = await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
+    const today = this.dateInZone(new Date(), organization.timezone);
+    const end = nextCalendarDateStart(today, organization.timezone);
+    const start = new Date(calendarDateStart(today, organization.timezone).getTime() - 27 * 86_400_000);
+    const productWhere = { organizationId, status: 'ACTIVE' as const, storeProducts: { some: { storeId, enabled: true } } };
+    const [products, balances, salesItems, currentOrder, ignoredRows] = await Promise.all([
+      this.prisma.client.product.findMany({
+        where: productWhere, orderBy: { name: 'asc' },
+        select: {
+          id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
+          barcodes: { where: { status: 'ACTIVE' }, orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }], select: { barcode: true }, take: 1 },
+          storeProducts: { where: { storeId, enabled: true }, select: { minimumStock: true }, take: 1 },
+        },
+      }),
+      this.prisma.client.inventoryBalance.findMany({ where: { organizationId, warehouse: { storeId, status: 'ACTIVE' }, product: productWhere }, select: { productId: true, quantity: true } }),
+      this.prisma.client.posOrderItem.findMany({
+        where: { status: 'ACTIVE', productId: { not: null }, product: productWhere, order: { organizationId, storeId, orderedAt: { gte: start, lt: end } } },
+        select: { productId: true, quantity: true, isMinus: true },
+      }),
+      this.findCurrentPurchaseOrder(organizationId, storeId, organization.timezone),
+      this.prisma.client.purchaseSuggestionIgnore.findMany({
+        where: { organizationId, storeId, OR: [{ restoredAt: null }, { restoredAt: { gt: new Date() } }] },
+        select: { productId: true, reason: true, ignoredAt: true },
+      }),
+    ]);
+    const inventory = new Map<string, number>();
+    for (const row of balances) inventory.set(row.productId.toString(), (inventory.get(row.productId.toString()) ?? 0) + row.quantity);
+    const sales = new Map<string, number>();
+    for (const row of salesItems) {
+      if (!row.productId) continue;
+      const key = row.productId.toString();
+      const quantity = Math.abs(Number(row.quantity)) * (row.isMinus ? -1 : 1);
+      sales.set(key, (sales.get(key) ?? 0) + quantity);
+    }
+    const included = new Set(currentOrder?.items.map((item) => item.productId.toString()) ?? []);
+    const ignored = new Map(ignoredRows.map((row) => [row.productId.toString(), row]));
+    const rows = products.map((product) => {
+      const productId = product.id.toString();
+      const currentInventory = inventory.get(productId) ?? 0;
+      const recent28DayQty = Math.max(0, Math.round(sales.get(productId) ?? 0));
+      const weeklyVelocity = Math.round((recent28DayQty / 4) * 100) / 100;
+      const minimumStock = product.storeProducts[0]?.minimumStock ?? null;
+      const targetWeeks = weeklyVelocity >= 30 ? 4 : weeklyVelocity >= 10 ? 5 : weeklyVelocity >= 1 ? 6 : null;
+      const targetInventory = targetWeeks === null ? 0 : Math.ceil(weeklyVelocity * targetWeeks);
+      const suggestedQuantity = targetWeeks === null ? 0 : Math.max(0, targetInventory - currentInventory);
+      const coverageWeeks = weeklyVelocity > 0 ? Math.round((currentInventory / weeklyVelocity) * 10) / 10 : null;
+      const source = currentInventory <= 0 ? 'OUT_OF_STOCK' : 'WEEKLY_FORECAST';
+      const ignoredRow = ignored.get(productId);
+      return {
+        productId, sku: product.sku, barcode: product.barcodes[0]?.barcode ?? null,
+        productName: product.chineseName || product.name || product.englishName || '未命名商品',
+        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
+        categoryName: product.categoryName || '未标注品类', currentInventory, minimumStock,
+        recent28DayQty, weeklyVelocity, coverageWeeks, targetWeeks, targetInventory,
+        suggestedQuantity, source, alreadyIncluded: included.has(productId),
+        ignored: Boolean(ignoredRow), ignoredReason: ignoredRow?.reason ?? null,
+        ignoredAt: ignoredRow?.ignoredAt.toISOString() ?? null,
+      };
+    }).filter((row) => row.suggestedQuantity > 0);
+    const suggestions = rows.filter((row) => !row.ignored)
+      .sort((a, b) => b.suggestedQuantity - a.suggestedQuantity || a.currentInventory - b.currentInventory);
+    const ignoredSuggestions = rows.filter((row) => row.ignored)
+      .sort((a, b) => (b.ignoredAt ?? '').localeCompare(a.ignoredAt ?? ''));
+    return {
+      store: { id: store.id.toString(), name: store.name }, period: { from: this.dateInZone(start, organization.timezone), to: today },
+      calculation: '按最近28天销量折算周均：低于1件/周不建议；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。建议量为目标库存减当前库存。',
+      summary: { products: suggestions.length, suggestedUnits: suggestions.reduce((sum, row) => sum + row.suggestedQuantity, 0), alreadyIncluded: suggestions.filter((row) => row.alreadyIncluded).length, ignored: ignoredSuggestions.length },
+      suggestions, ignoredSuggestions,
+    };
+  }
+
+  async setMinimumStock(organizationId: bigint, userId: bigint, storeId: bigint, input: { productId?: bigint; minimumStock: number }) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
+    if (!Number.isInteger(input.minimumStock) || input.minimumStock < 0 || input.minimumStock > 100000) throw new BadRequestException('最低库存必须是0至100000之间的整数');
+    if (input.productId) {
+      const storeProduct = await this.prisma.client.storeProduct.findFirst({ where: { storeId, productId: input.productId, enabled: true, product: { organizationId, status: 'ACTIVE' } }, select: { productId: true, minimumStock: true } });
+      if (!storeProduct) throw new NotFoundException('商品不存在或未在当前门店启用');
+      await this.prisma.client.$transaction([
+        this.prisma.client.storeProduct.update({ where: { storeId_productId: { storeId, productId: input.productId } }, data: { minimumStock: input.minimumStock } }),
+        this.prisma.client.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.minimum_stock.update', entityType: 'Product', entityId: input.productId.toString(), requestId: randomUUID(), beforeSummary: { minimumStock: storeProduct.minimumStock }, afterSummary: { minimumStock: input.minimumStock } } }),
+      ]);
+      return { scope: 'PRODUCT', updated: 1, minimumStock: input.minimumStock };
+    }
+    const result = await this.prisma.client.$transaction(async (tx) => {
+      const updated = await tx.storeProduct.updateMany({ where: { storeId, enabled: true, product: { organizationId, status: 'ACTIVE' } }, data: { minimumStock: input.minimumStock } });
+      await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.minimum_stock.bulk_update', entityType: 'Store', entityId: storeId.toString(), requestId: randomUUID(), afterSummary: { minimumStock: input.minimumStock, updated: updated.count } } });
+      return updated;
+    });
+    return { scope: 'STORE', updated: result.count, minimumStock: input.minimumStock };
+  }
+
+  async setPurchaseSuggestionIgnored(organizationId: bigint, userId: bigint, storeId: bigint, productId: bigint, ignored: boolean, reason?: string, hiddenUntil?: Date) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
+    const product = await this.prisma.client.product.findFirst({ where: { id: productId, organizationId, status: 'ACTIVE', storeProducts: { some: { storeId, enabled: true } } }, select: { id: true } });
+    if (!product) throw new NotFoundException('商品不存在或未在当前门店启用');
+    const now = new Date();
+    const record = await this.prisma.client.$transaction(async (tx) => {
+      const updated = await tx.purchaseSuggestionIgnore.upsert({
+        where: { organizationId_storeId_productId: { organizationId, storeId, productId } },
+        create: { organizationId, storeId, productId, reason: reason?.trim() || null, ignoredById: userId, ignoredAt: now, restoredById: ignored ? null : userId, restoredAt: ignored ? hiddenUntil ?? null : now },
+        update: ignored
+          ? { reason: reason?.trim() || null, ignoredById: userId, ignoredAt: now, restoredById: null, restoredAt: hiddenUntil ?? null }
+          : { restoredById: userId, restoredAt: now },
+      });
+      await tx.auditLog.create({ data: { organizationId, userId, storeId, action: ignored ? (hiddenUntil ? 'management.purchase_suggestion.snooze' : 'management.purchase_suggestion.ignore') : 'management.purchase_suggestion.restore', entityType: 'Product', entityId: productId.toString(), requestId: randomUUID(), afterSummary: { ignored, reason: reason?.trim() || null, hiddenUntil: hiddenUntil?.toISOString() ?? null } } });
+      return updated;
+    });
+    return { productId: productId.toString(), ignored, reason: record.reason, ignoredAt: record.ignoredAt.toISOString(), hiddenUntil: hiddenUntil?.toISOString() ?? null, restoredAt: ignored ? null : record.restoredAt?.toISOString() ?? null };
+  }
+
+  async currentPurchaseOrder(organizationId: bigint, userId: bigint, storeId: bigint) {
+    const store = await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true, currency: true } });
+    const order = await this.findCurrentPurchaseOrder(organizationId, storeId, organization.timezone);
+    return { store: { id: store.id.toString(), name: store.name }, currency: organization.currency, order: order ? this.serializePurchaseOrder(order) : null };
+  }
+
+  async addPurchaseOrderItem(organizationId: bigint, userId: bigint, storeId: bigint, input: { productId: bigint; quantity?: number; source: 'MANUAL' | 'OUT_OF_STOCK' | 'LOW_STOCK' | 'HOT_SALES' | 'WEEKLY_FORECAST' }) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
+    const product = await this.prisma.client.product.findFirst({ where: { id: input.productId, organizationId, status: 'ACTIVE', storeProducts: { some: { storeId, enabled: true } } }, select: { id: true } });
+    if (!product) throw new NotFoundException('商品不存在或未在当前门店启用');
+    const suggestion = await this.purchaseProductSnapshot(organizationId, storeId, input.productId, organization.timezone);
+    const orderedQuantity = input.quantity ?? suggestion.suggestedQuantity;
+    if (!Number.isInteger(orderedQuantity) || orderedQuantity <= 0) throw new BadRequestException('进货数量必须是正整数');
+    const weekStart = this.purchaseWeekStart(organization.timezone);
+    const order = await this.prisma.client.$transaction(async (tx) => {
+      const purchaseOrder = await tx.purchaseOrder.upsert({
+        where: { organizationId_storeId_weekStart: { organizationId, storeId, weekStart } },
+        create: { orderNo: `PO-${this.dateInZone(weekStart, organization.timezone).replaceAll('-', '')}-${storeId}`, organizationId, storeId, weekStart, createdById: userId },
+        update: {}, include: { items: true },
+      });
+      if (purchaseOrder.status !== 'DRAFT') throw new ConflictException('本周进货单已确认，不能再添加商品');
+      const item = await tx.purchaseOrderItem.upsert({
+        where: { purchaseOrderId_productId: { purchaseOrderId: purchaseOrder.id, productId: input.productId } },
+        create: { purchaseOrderId: purchaseOrder.id, productId: input.productId, source: input.source, currentInventory: suggestion.currentInventory, recentSevenDayQty: suggestion.recentSevenDayQty, suggestedQuantity: suggestion.suggestedQuantity, orderedQuantity },
+        update: { source: input.source, currentInventory: suggestion.currentInventory, recentSevenDayQty: suggestion.recentSevenDayQty, suggestedQuantity: suggestion.suggestedQuantity, orderedQuantity },
+      });
+      await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.purchase_order.item.upsert', entityType: 'PurchaseOrderItem', entityId: item.id.toString(), requestId: randomUUID(), afterSummary: { purchaseOrderId: purchaseOrder.id.toString(), productId: input.productId.toString(), source: input.source, orderedQuantity } } });
+      return tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrder.id }, include: this.purchaseOrderInclude() });
+    });
+    return this.serializePurchaseOrder(order);
+  }
+
+  async updatePurchaseOrderItem(organizationId: bigint, userId: bigint, storeId: bigint, itemId: bigint, input: { orderedQuantity: number; supplierName?: string; unitCostCents?: number | null; caseSize?: number | null; notes?: string }) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
+    if (!Number.isInteger(input.orderedQuantity) || input.orderedQuantity <= 0) throw new BadRequestException('进货数量必须是正整数');
+    if (input.unitCostCents !== undefined && input.unitCostCents !== null && (!Number.isInteger(input.unitCostCents) || input.unitCostCents < 0)) throw new BadRequestException('进价不能小于0');
+    if (input.caseSize !== undefined && input.caseSize !== null && (!Number.isInteger(input.caseSize) || input.caseSize <= 0)) throw new BadRequestException('整箱规格必须是正整数');
+    const order = await this.prisma.client.$transaction(async (tx) => {
+      const existing = await tx.purchaseOrderItem.findFirst({ where: { id: itemId, purchaseOrder: { organizationId, storeId } }, include: { purchaseOrder: true } });
+      if (!existing) throw new NotFoundException('进货单商品不存在');
+      if (existing.purchaseOrder.status !== 'DRAFT') throw new ConflictException('只有草稿进货单可以修改');
+      const item = await tx.purchaseOrderItem.update({ where: { id: itemId }, data: { orderedQuantity: input.orderedQuantity, supplierName: input.supplierName?.trim() || null, unitCostCents: input.unitCostCents ?? null, caseSize: input.caseSize ?? null, notes: input.notes?.trim() || null } });
+      await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.purchase_order.item.update', entityType: 'PurchaseOrderItem', entityId: item.id.toString(), requestId: randomUUID(), beforeSummary: { orderedQuantity: existing.orderedQuantity }, afterSummary: { orderedQuantity: item.orderedQuantity, supplierName: item.supplierName, unitCostCents: item.unitCostCents, caseSize: item.caseSize } } });
+      return tx.purchaseOrder.findUniqueOrThrow({ where: { id: existing.purchaseOrderId }, include: this.purchaseOrderInclude() });
+    });
+    return this.serializePurchaseOrder(order);
+  }
+
+  async removePurchaseOrderItem(organizationId: bigint, userId: bigint, storeId: bigint, itemId: bigint) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
+    const order = await this.prisma.client.$transaction(async (tx) => {
+      const existing = await tx.purchaseOrderItem.findFirst({ where: { id: itemId, purchaseOrder: { organizationId, storeId } }, include: { purchaseOrder: true } });
+      if (!existing) throw new NotFoundException('进货单商品不存在');
+      if (existing.purchaseOrder.status !== 'DRAFT') throw new ConflictException('只有草稿进货单可以移除商品');
+      await tx.purchaseOrderItem.delete({ where: { id: itemId } });
+      await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.purchase_order.item.remove', entityType: 'PurchaseOrderItem', entityId: itemId.toString(), requestId: randomUUID(), beforeSummary: { productId: existing.productId.toString(), orderedQuantity: existing.orderedQuantity } } });
+      return tx.purchaseOrder.findUniqueOrThrow({ where: { id: existing.purchaseOrderId }, include: this.purchaseOrderInclude() });
+    });
+    return this.serializePurchaseOrder(order);
+  }
+
+  async transitionPurchaseOrder(organizationId: bigint, userId: bigint, storeId: bigint, status: 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'CANCELLED') {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
+    const existing = await this.findCurrentPurchaseOrder(organizationId, storeId, organization.timezone);
+    if (!existing) throw new NotFoundException('本周还没有进货单');
+    const transitions: Record<string, string[]> = { DRAFT: ['CONFIRMED', 'CANCELLED'], CONFIRMED: ['DRAFT', 'ORDERED', 'CANCELLED'], ORDERED: ['CANCELLED'], PARTIALLY_RECEIVED: [], RECEIVED: [], CANCELLED: [] };
+    if (!transitions[existing.status]?.includes(status)) throw new ConflictException(`不能从${existing.status}变更为${status}`);
+    if (status === 'CONFIRMED' && existing.items.length === 0) throw new BadRequestException('空进货单不能确认');
+    const now = new Date();
+    const data = status === 'CONFIRMED' ? { status, confirmedById: userId, confirmedAt: now }
+      : status === 'ORDERED' ? { status, orderedById: userId, orderedAt: now }
+        : status === 'CANCELLED' ? { status, cancelledById: userId, cancelledAt: now }
+          : { status, confirmedById: null, confirmedAt: null };
+    const order = await this.prisma.client.$transaction(async (tx) => {
+      const updated = await tx.purchaseOrder.update({ where: { id: existing.id }, data, include: this.purchaseOrderInclude() });
+      await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.purchase_order.status.update', entityType: 'PurchaseOrder', entityId: existing.id.toString(), requestId: randomUUID(), beforeSummary: { status: existing.status }, afterSummary: { status } } });
+      return updated;
+    });
+    return this.serializePurchaseOrder(order);
   }
 
   async storeComparison(organizationId: bigint, userId: bigint, selectedStoreId: bigint, from: string, to: string) {
@@ -786,7 +1006,7 @@ export class ManagementService {
     };
   }
 
-  async overview(organizationId: bigint, userId: bigint, storeId: bigint, requestedMonth?: string) {
+  async overview(organizationId: bigint, userId: bigint, storeId: bigint, requestedDate?: string) {
     await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.overview);
     const [store, organization] = await Promise.all([
       this.prisma.client.store.findFirst({ where: { id: storeId, organizationId, status: 'ACTIVE' }, select: { id: true, name: true } }),
@@ -797,16 +1017,26 @@ export class ManagementService {
     ]);
     if (!store || !organization) throw new NotFoundException('门店不存在');
 
-    const currentMonth = requestedMonth ?? this.monthInZone(new Date(), organization.timezone);
-    const previousMonth = this.shiftMonth(currentMonth, -1);
-    const currentRange = this.monthRange(currentMonth, organization.timezone);
-    const previousRange = this.monthRange(previousMonth, organization.timezone);
+    const currentDate = requestedDate ?? new Intl.DateTimeFormat('en-CA', {
+      timeZone: organization.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    const currentRange = {
+      start: calendarDateStart(currentDate, organization.timezone),
+      end: nextCalendarDateStart(currentDate, organization.timezone),
+    };
+    const previousDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: organization.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(currentRange.start.getTime() - 1));
+    const previousRange = {
+      start: calendarDateStart(previousDate, organization.timezone),
+      end: currentRange.start,
+    };
 
     const [currentOrders, previousOrders, balances, expiryPolicy, lastSync, openReceipts, stocktakeAdjustments, movementCount, latestMovement] = await Promise.all([
       this.loadOrders(organizationId, storeId, currentRange.start, currentRange.end),
       this.loadOrders(organizationId, storeId, previousRange.start, previousRange.end),
       this.prisma.client.inventoryBalance.findMany({
-        where: { organizationId, quantity: { gt: 0 }, warehouse: { storeId, status: 'ACTIVE' } },
+        where: { organizationId, quantity: { not: 0 }, warehouse: { storeId, status: 'ACTIVE' } },
         select: { quantity: true, productId: true, batchId: true, batch: { select: { expiryDate: true } } },
       }),
       this.prisma.client.expiryAlertSetting.findUnique({ where: { organizationId } }),
@@ -831,8 +1061,8 @@ export class ManagementService {
       }),
     ]);
 
-    const current = this.summarizeSales(currentOrders, organization.timezone, currentMonth);
-    const previous = this.summarizeSales(previousOrders, organization.timezone, previousMonth);
+    const current = this.summarizeSales(currentOrders, organization.timezone, currentDate);
+    const previous = this.summarizeSales(previousOrders, organization.timezone, previousDate);
     const now = new Date();
     const policy = {
       urgentMonths: expiryPolicy?.urgentMonths ?? 2,
@@ -846,6 +1076,7 @@ export class ManagementService {
       return date;
     };
     for (const balance of balances) {
+      if (balance.quantity <= 0) continue;
       const date = balance.batch.expiryDate;
       if (date < now) expiry.expired += balance.quantity;
       else if (date <= addMonths(policy.urgentMonths)) expiry.urgent += balance.quantity;
@@ -856,7 +1087,7 @@ export class ManagementService {
     return {
       store: { id: store.id.toString(), name: store.name },
       currency: organization.currency,
-      period: { month: currentMonth, previousMonth },
+      period: { date: currentDate, previousDate },
       salesAvailable: currentOrders.length > 0 || previousOrders.length > 0,
       lastPosSyncAt: lastSync?.finishedAt?.toISOString() ?? null,
       sales: { current, previous, comparison: this.comparison(current, previous) },
@@ -868,8 +1099,8 @@ export class ManagementService {
         expiryAttentionQuantity: Object.values(expiry).reduce((sum, quantity) => sum + quantity, 0),
         activity: {
           openReceiptCount: openReceipts,
-          stocktakeAdjustmentsThisMonth: stocktakeAdjustments,
-          movementCountThisMonth: movementCount,
+          stocktakeAdjustmentsToday: stocktakeAdjustments,
+          movementCountToday: movementCount,
           latestMovement: latestMovement ? {
             createdAt: latestMovement.createdAt.toISOString(),
             movementType: latestMovement.movementType,
@@ -889,14 +1120,14 @@ export class ManagementService {
         orderedAt: true,
         items: {
           where: { status: 'ACTIVE' },
-          select: { quantity: true, unitPrice: true, isMinus: true, sourceName: true, product: { select: { name: true, chineseName: true, brandName: true } } },
+          select: { productId: true, quantity: true, unitPrice: true, isMinus: true, sourceName: true, product: { select: { name: true, chineseName: true, brandName: true } } },
         },
       },
       orderBy: { orderedAt: 'asc' },
     });
   }
 
-  private summarizeSales(orders: Awaited<ReturnType<ManagementService['loadOrders']>>, timeZone: string, month: string) {
+  private summarizeSales(orders: Awaited<ReturnType<ManagementService['loadOrders']>>, timeZone: string, period: string) {
     const daily = new Map<string, { revenue: number; orders: number }>();
     const products = new Map<string, SalesLine>();
     const brands = new Map<string, { brandName: string; quantity: number; revenue: number }>();
@@ -919,10 +1150,11 @@ export class ManagementService {
         unitsSold += quantity;
         const name = item.product?.chineseName || item.product?.name || item.sourceName || '未命名商品';
         const brandName = this.displayBrand(item.product?.brandName, item.sourceName, item.product?.chineseName, item.product?.name);
-        const product = products.get(name) ?? { productName: name, brandName, quantity: 0, revenue: 0 };
+        const productKey = item.productId ? `product:${item.productId.toString()}` : `name:${name}`;
+        const product = products.get(productKey) ?? { productId: item.productId?.toString() ?? null, productName: name, brandName, quantity: 0, revenue: 0 };
         product.quantity += quantity;
         product.revenue += itemRevenue;
-        products.set(name, product);
+        products.set(productKey, product);
         const brand = brands.get(brandName) ?? { brandName, quantity: 0, revenue: 0 };
         brand.quantity += quantity;
         brand.revenue += itemRevenue;
@@ -931,7 +1163,7 @@ export class ManagementService {
     }
     const netRevenue = revenue - refunds;
     return {
-      month,
+      period,
       revenue: this.money(revenue),
       refunds: this.money(refunds),
       netRevenue: this.money(netRevenue),
@@ -952,26 +1184,6 @@ export class ManagementService {
       unitsSoldPercent: rate(current.unitsSold, previous.unitsSold),
       averageOrderValuePercent: rate(current.averageOrderValue, previous.averageOrderValue),
     };
-  }
-
-  private monthRange(month: string, timeZone: string) {
-    const [year, monthValue] = month.split('-').map(Number);
-    const next = monthValue === 12 ? { year: year + 1, month: 1 } : { year, month: monthValue + 1 };
-    return {
-      start: dateTimeInZone(year, monthValue, 1, 0, 0, 0, timeZone),
-      end: dateTimeInZone(next.year, next.month, 1, 0, 0, 0, timeZone),
-    };
-  }
-
-  private monthInZone(date: Date, timeZone: string) {
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit' }).formatToParts(date);
-    return `${parts.find((part) => part.type === 'year')?.value}-${parts.find((part) => part.type === 'month')?.value}`;
-  }
-
-  private shiftMonth(month: string, delta: number) {
-    const [year, value] = month.split('-').map(Number);
-    const date = new Date(Date.UTC(year, value - 1 + delta, 1));
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
   }
 
   private loadAnalysisOrders(organizationId: bigint, storeId: bigint, start: Date, end: Date, input: SalesAnalysisInput) {
@@ -1008,7 +1220,7 @@ export class ManagementService {
     const trend = new Map<string, { period: string; revenue: number; orders: Set<string>; units: number }>();
     const hourly = new Map<number, { hour: number; revenue: number; orders: Set<string> }>();
     const weekdays = new Map<number, { weekday: number; revenue: number; orders: Set<string> }>();
-    const products = new Map<string, { productName: string; brandName: string; categoryName: string; quantity: number; revenue: number }>();
+    const products = new Map<string, { productId: string | null; productName: string; brandName: string; categoryName: string; quantity: number; revenue: number }>();
     const brands = new Map<string, { brandName: string; quantity: number; revenue: number }>();
     const categories = new Map<string, { categoryName: string; quantity: number; revenue: number }>();
     let grossRevenue = 0;
@@ -1027,7 +1239,7 @@ export class ManagementService {
         const brandName = this.displayBrand(item.product?.brandName, item.sourceName, item.product?.chineseName, item.product?.name);
         const categoryName = item.product?.categoryName || '未标注品类';
         const productKey = item.productId ? `product:${item.productId.toString()}` : `pos:${item.externalProductId}`;
-        const product = products.get(productKey) ?? { productName, brandName, categoryName, quantity: 0, revenue: 0 };
+        const product = products.get(productKey) ?? { productId: item.productId?.toString() ?? null, productName, brandName, categoryName, quantity: 0, revenue: 0 };
         product.quantity += quantity; product.revenue += revenue; products.set(productKey, product);
         const brand = brands.get(brandName) ?? { brandName, quantity: 0, revenue: 0 };
         brand.quantity += quantity; brand.revenue += revenue; brands.set(brandName, brand);
@@ -1083,6 +1295,74 @@ export class ManagementService {
 
   private money(value: number) {
     return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  private purchaseOrderInclude() {
+    return {
+      items: {
+        orderBy: { createdAt: 'desc' as const },
+        include: {
+          product: {
+            select: {
+              sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
+              barcodes: { where: { status: 'ACTIVE' as const }, orderBy: [{ isPrimary: 'desc' as const }, { id: 'asc' as const }], select: { barcode: true }, take: 1 },
+            },
+          },
+        },
+      },
+    };
+  }
+
+  private async findCurrentPurchaseOrder(organizationId: bigint, storeId: bigint, timezone: string) {
+    const weekStart = this.purchaseWeekStart(timezone);
+    return this.prisma.client.purchaseOrder.findUnique({
+      where: { organizationId_storeId_weekStart: { organizationId, storeId, weekStart } }, include: this.purchaseOrderInclude(),
+    });
+  }
+
+  private purchaseWeekStart(timezone: string) {
+    const today = this.dateInZone(new Date(), timezone);
+    const noon = new Date(`${today}T12:00:00Z`);
+    const weekday = noon.getUTCDay();
+    noon.setUTCDate(noon.getUTCDate() - (weekday === 0 ? 6 : weekday - 1));
+    return calendarDateStart(noon.toISOString().slice(0, 10), timezone);
+  }
+
+  private async purchaseProductSnapshot(organizationId: bigint, storeId: bigint, productId: bigint, timezone: string) {
+    const today = this.dateInZone(new Date(), timezone);
+    const end = nextCalendarDateStart(today, timezone);
+    const start = new Date(calendarDateStart(today, timezone).getTime() - 27 * 86_400_000);
+    const [balances, salesItems] = await Promise.all([
+      this.prisma.client.inventoryBalance.findMany({ where: { organizationId, productId, warehouse: { storeId, status: 'ACTIVE' } }, select: { quantity: true } }),
+      this.prisma.client.posOrderItem.findMany({ where: { status: 'ACTIVE', productId, order: { organizationId, storeId, orderedAt: { gte: start, lt: end } } }, select: { quantity: true, isMinus: true } }),
+    ]);
+    const currentInventory = balances.reduce((sum, row) => sum + row.quantity, 0);
+    const recent28DayQty = Math.max(0, Math.round(salesItems.reduce((sum, row) => sum + Math.abs(Number(row.quantity)) * (row.isMinus ? -1 : 1), 0)));
+    const weeklyVelocity = Math.round((recent28DayQty / 4) * 100) / 100;
+    const targetWeeks = weeklyVelocity >= 30 ? 4 : weeklyVelocity >= 10 ? 5 : weeklyVelocity >= 1 ? 6 : null;
+    const targetInventory = targetWeeks === null ? 0 : Math.ceil(weeklyVelocity * targetWeeks);
+    const forecastGap = targetWeeks === null ? 0 : Math.max(0, targetInventory - currentInventory);
+    return { currentInventory, recentSevenDayQty: Math.round(weeklyVelocity), suggestedQuantity: Math.max(1, forecastGap) };
+  }
+
+  private serializePurchaseOrder(order: NonNullable<Awaited<ReturnType<ManagementService['findCurrentPurchaseOrder']>>>) {
+    const totalCostCents = order.items.reduce((sum, item) => sum + (item.unitCostCents ?? 0) * item.orderedQuantity, 0);
+    return {
+      id: order.id.toString(), orderNo: order.orderNo, weekStart: order.weekStart.toISOString().slice(0, 10), status: order.status,
+      notes: order.notes, createdAt: order.createdAt.toISOString(), updatedAt: order.updatedAt.toISOString(),
+      confirmedAt: order.confirmedAt?.toISOString() ?? null, orderedAt: order.orderedAt?.toISOString() ?? null,
+      summary: { productCount: order.items.length, suggestedUnits: order.items.reduce((sum, item) => sum + item.suggestedQuantity, 0), orderedUnits: order.items.reduce((sum, item) => sum + item.orderedQuantity, 0), receivedUnits: order.items.reduce((sum, item) => sum + item.receivedQuantity, 0), totalCostCents },
+      items: order.items.map((item) => ({
+        id: item.id.toString(), productId: item.productId.toString(), sku: item.product.sku,
+        barcode: item.product.barcodes[0]?.barcode ?? null,
+        productName: item.product.chineseName || item.product.name || item.product.englishName || '未命名商品',
+        brandName: this.displayBrand(item.product.brandName, item.product.chineseName, item.product.name, item.product.englishName),
+        categoryName: item.product.categoryName || '未标注品类', source: item.source,
+        currentInventory: item.currentInventory, recentSevenDayQty: item.recentSevenDayQty, suggestedQuantity: item.suggestedQuantity,
+        orderedQuantity: item.orderedQuantity, receivedQuantity: item.receivedQuantity, supplierName: item.supplierName,
+        unitCostCents: item.unitCostCents, caseSize: item.caseSize, notes: item.notes,
+      })),
+    };
   }
 
   private displayBrand(explicitBrand: string | null | undefined, ...names: (string | null | undefined)[]) {

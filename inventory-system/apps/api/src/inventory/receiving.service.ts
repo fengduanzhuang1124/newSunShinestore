@@ -42,6 +42,7 @@ export class ReceivingService {
   }>) {
     const grouped = new Map<string, {
       itemId: string;
+      batchId: string;
       barcodes: string[];
       productName: string;
       expiryDate: string;
@@ -64,6 +65,7 @@ export class ReceivingService {
       }
       grouped.set(key, {
         itemId: item.id.toString(),
+        batchId: item.batchId.toString(),
         barcodes: [item.barcode],
         productName: item.product.name,
         expiryDate: item.batch.expiryPrecision === 'MONTH'
@@ -413,7 +415,7 @@ export class ReceivingService {
 
   async completeCurrentReceipt(organizationId: bigint, userId: bigint) {
     const permission = await this.permissions.warehousePermission(organizationId, userId, 'canReceive');
-    const receipt = await this.prisma.client.stockReceipt.findFirst({
+    let receipt = await this.prisma.client.stockReceipt.findFirst({
       where: {
         organizationId,
         warehouseId: permission.warehouseId,
@@ -423,6 +425,22 @@ export class ReceivingService {
       orderBy: { createdAt: 'desc' },
       include: { items: true },
     });
+    if (!receipt) {
+      const warehouseReceipts = await this.prisma.client.stockReceipt.findMany({
+        where: {
+          organizationId,
+          warehouseId: permission.warehouseId,
+          status: 'OPEN',
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 2,
+        include: { items: true },
+      });
+      if (warehouseReceipts.length > 1) {
+        throw new ConflictException('仓库有多张待处理入库单，请先进入对应入库单后再完成');
+      }
+      receipt = warehouseReceipts[0] ?? null;
+    }
     if (!receipt || receipt.items.length === 0) {
       throw new NotFoundException('当前没有可完成的入库单');
     }

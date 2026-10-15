@@ -6,9 +6,9 @@ import ManagementDashboard from './ManagementDashboard.vue';
 const capabilities = { overviewView: true, salesView: true, inventoryView: true, posSync: true, posIssues: true, permissionsManage: true };
 const salesSummary = { revenue: 100, refunds: 0, netRevenue: 100, orderCount: 2, unitsSold: 3, averageOrderValue: 50, dailySales: [{ date: '2026-09-01', revenue: 100, orders: 2 }], topProducts: Array.from({ length: 8 }, (_, i) => ({ productName: `商品${i}`, brandName: '品牌', quantity: 1, revenue: 10 })), topBrands: [] };
 const overview = {
-  store: { id: '1', name: '测试门店' }, currency: 'NZD', period: { month: '2026-09', previousMonth: '2026-08' }, salesAvailable: true, lastPosSyncAt: null,
+  store: { id: '1', name: '测试门店' }, currency: 'NZD', period: { date: '2026-09-28', previousDate: '2026-09-27' }, salesAvailable: true, lastPosSyncAt: null,
   sales: { current: salesSummary, previous: salesSummary, comparison: { netRevenuePercent: null, orderCountPercent: null, unitsSoldPercent: null, averageOrderValuePercent: null } },
-  inventory: { totalQuantity: 20, productCount: 2, batchCount: 3, expiryAttentionQuantity: 1, expiry: { expired: 1, urgent: 0, warning: 0, early: 0 }, activity: { movementCountThisMonth: 4, stocktakeAdjustmentsThisMonth: 0, openReceiptCount: 1, latestMovement: null } },
+  inventory: { totalQuantity: 20, productCount: 2, batchCount: 3, expiryAttentionQuantity: 1, expiry: { expired: 1, urgent: 0, warning: 0, early: 0 }, activity: { movementCountToday: 4, stocktakeAdjustmentsToday: 0, openReceiptCount: 1, latestMovement: null } },
 };
 const foundation = { generatedAt: '2026-10-01T00:00:00Z', overallStatus: 'PARTIALLY_READY', quality: { inventory: { productCount: 2, latestUpdatedAt: null }, catalog: { productCount: 3, brandCoveragePercent: 0, categoryCoveragePercent: 0, barcodeCoveragePercent: 100, sellingPriceCoveragePercent: 100, minimumStockCoveragePercent: 0 }, sales: { mappingCoveragePercent: 50, mappedOrderItemCount: 1, orderItemCount: 2 } }, domains: [] };
 const product = { productId: '1', productName: '商品A', sku: 'A', brandName: '品牌A', categoryName: '奶粉', barcode: null, unitsSold: 2, salesRevenue: 100, currentInventory: 20, minimumStock: null, salesToStockRatio: .1, stockStatus: 'IN_STOCK' };
@@ -55,7 +55,8 @@ describe('经营管理页面组织', () => {
     const { wrapper, fetchSpy } = setup(); await flushPromises();
     expect(wrapper.findAll('.navigation-group h3').map(item => item.text())).toEqual(['经营分析', '资料维护', '系统支持']);
     expect(wrapper.findAll('.management-mobile-nav button').map(item => item.text().replace(/^[^\u4e00-\u9fff]+/, ''))).toEqual(['总览', '销售', '商品', '库存', '更多']);
-    expect(wrapper.findAll('.hot-product-table-wrap tbody tr')).toHaveLength(8);
+    expect(wrapper.findAll('.hot-products-grid article')).toHaveLength(8);
+    expect(wrapper.text()).toContain('热销产品 20');
     expect(wrapper.find('.foundation-check').exists()).toBe(false);
     expect(wrapper.text()).toContain('只有 1 个有记录的日期');
     await click(wrapper, '查看数据检查');
@@ -67,13 +68,15 @@ describe('经营管理页面组织', () => {
   it('introduces the purpose and contents of every management page', async () => {
     const { wrapper } = setup(); await flushPromises();
     const expected: Record<string, string> = {
-      '经营总览': '销售与上期比较', '销售分析': '商品及品牌排行', '商品分析': '品牌结构',
+      '经营总览': '今日销售与昨日比较', '销售分析': '商品及品牌排行', '商品分析': '品牌结构',
       '库存经营': '覆盖天数', '分类与标签': '人工判断依据', '门店对比': '单店销售基线', '数据中心': '异常与同步历史',
     };
     for (const [section, content] of Object.entries(expected)) {
       await go(wrapper, section);
-      expect(wrapper.find('.page-guide').text()).toContain('本页包含什么');
-      expect(wrapper.find('.page-guide').text()).toContain(content);
+      await wrapper.find('.page-guide-fab').trigger('click');
+      expect(wrapper.find('.page-guide-popover').text()).toContain('本页包含什么');
+      expect(wrapper.find('.page-guide-popover').text()).toContain(content);
+      await wrapper.find('.page-guide-popover header button').trigger('click');
     }
   });
 
@@ -83,12 +86,21 @@ describe('经营管理页面组织', () => {
     expect(wrapper.emitted('open-report')).toEqual([['receipts'], ['expiry'], ['movements']]);
   });
 
-  it('carries the overview month into sales analysis and shows the actual comparison period', async () => {
+  it('carries the overview date into sales analysis and shows the actual comparison period', async () => {
     const { wrapper, fetchSpy } = setup(); await flushPromises();
     await click(wrapper, '销售详情 →');
-    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('from=2026-09-01&to=2026-09-30'))).toBe(true);
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('from=2026-09-28&to=2026-09-28'))).toBe(true);
     expect(wrapper.text()).toContain('2026-08-02 至 2026-08-31');
     expect(wrapper.text()).not.toContain('暂无上月基数');
+  });
+
+  it('opens sales analysis on the current Auckland business date by default', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises();
+    await go(wrapper, '销售分析');
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes(`from=${today}&to=${today}`))).toBe(true);
+    expect(wrapper.get('.period-shortcuts').text()).toContain('默认显示今天');
+    expect((wrapper.get('.sales-filter-panel input[type="date"]').element as HTMLInputElement).value).toBe(today);
   });
 
   it('keeps product analysis read-only with three separate views', async () => {
@@ -108,7 +120,8 @@ describe('经营管理页面组织', () => {
     expect(wrapper.text()).toContain('查询商品范围'); expect(wrapper.text()).toContain('筛选当前结果');
     await wrapper.get('[aria-label="筛选缺货商品"]').trigger('click');
     expect(wrapper.findAll('.inventory-scroll-table tbody tr')).toHaveLength(0);
-    await click(wrapper, '清除表格筛选');
+    expect(wrapper.text()).not.toContain('库存覆盖结构');
+    await click(wrapper, '清除筛选');
     expect(wrapper.findAll('.inventory-scroll-table tbody tr')).toHaveLength(1);
   });
 

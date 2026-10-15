@@ -76,6 +76,9 @@ export class PosObservationService {
       const barcode = source.barcode;
       const externalProductId = source.externalProductId;
       const sourceName = source.name;
+      const sellingPriceCents = source.salePrice === null || source.salePrice < 0
+        ? null
+        : Math.round(source.salePrice * 100);
 
       await this.prisma.client.$transaction(async (transaction) => {
         const existingBarcode = await transaction.productBarcode.findUnique({
@@ -117,13 +120,11 @@ export class PosObservationService {
           create: {
             storeId,
             productId,
-            sellingPriceCents:
-              source.salePrice === null ? null : Math.round(source.salePrice * 100),
+            sellingPriceCents,
           },
           update: {
             enabled: true,
-            sellingPriceCents:
-              source.salePrice === null ? null : Math.round(source.salePrice * 100),
+            sellingPriceCents,
           },
         });
 

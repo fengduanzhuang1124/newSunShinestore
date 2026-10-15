@@ -123,6 +123,23 @@ enum ProductInsightReviewStatus {
   REJECTED
 }
 
+enum PurchaseOrderStatus {
+  DRAFT
+  CONFIRMED
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum PurchaseOrderItemSource {
+  MANUAL
+  OUT_OF_STOCK
+  LOW_STOCK
+  HOT_SALES
+  WEEKLY_FORECAST
+}
+
 model Organization {
   id                        BigInt                        @id @default(autoincrement()) @db.UnsignedBigInt
   code                      String                        @unique @db.VarChar(32)
@@ -153,6 +170,7 @@ model Organization {
   posSimulations            PosInventorySimulation[]
   productInsightTags        ProductInsightTag[]
   productInsightAssignments ProductInsightTagAssignment[]
+  purchaseOrders            PurchaseOrder[]
 
   @@map("organizations")
 }
@@ -180,6 +198,7 @@ model Store {
   posSyncCursors       PosSyncCursor[]
   posSyncRuns          PosSyncRun[]
   posSimulations       PosInventorySimulation[]
+  purchaseOrders       PurchaseOrder[]
 
   @@unique([organizationId, code])
   @@index([organizationId, status])
@@ -221,6 +240,8 @@ model Warehouse {
   outgoingTransfers    StockTransfer[]           @relation("TransferFromWarehouse")
   incomingTransfers    StockTransfer[]           @relation("TransferToWarehouse")
   auditLogs            AuditLog[]
+  warehouseLocations   WarehouseLocation[]
+  inventoryPlacements  InventoryPlacement[]
 
   @@unique([storeId, code])
   @@index([storeId, status])
@@ -228,33 +249,35 @@ model Warehouse {
 }
 
 model Product {
-  id                 BigInt                        @id @default(autoincrement()) @db.UnsignedBigInt
-  organizationId     BigInt                        @map("organization_id") @db.UnsignedBigInt
-  sku                String                        @db.VarChar(64)
-  name               String                        @db.VarChar(255)
-  englishName        String?                       @map("english_name") @db.VarChar(255)
-  chineseName        String?                       @map("chinese_name") @db.VarChar(255)
-  brandName          String?                       @map("brand_name") @db.VarChar(80)
-  categoryName       String?                       @map("category_name") @db.VarChar(120)
-  description        String?                       @db.Text
-  unit               String                        @default("piece") @db.VarChar(20)
-  status             RecordStatus                  @default(ACTIVE)
-  createdById        BigInt?                       @map("created_by") @db.UnsignedBigInt
-  createdAt          DateTime                      @default(now()) @map("created_at")
-  updatedAt          DateTime                      @updatedAt @map("updated_at")
-  organization       Organization                  @relation(fields: [organizationId], references: [id])
-  createdBy          User?                         @relation("ProductCreatedBy", fields: [createdById], references: [id])
-  storeProducts      StoreProduct[]
-  barcodes           ProductBarcode[]
-  batches            ProductBatch[]
-  stockMovements     StockMovement[]
-  inventoryBalances  InventoryBalance[]
-  transferItems      StockTransferItem[]
-  receiptItems       StockReceiptItem[]
-  posProductMappings PosProductMapping[]
-  posOrderItems      PosOrderItem[]
-  posSimulationItems PosInventorySimulationItem[]
-  insightAssignments ProductInsightTagAssignment[]
+  id                  BigInt                        @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId      BigInt                        @map("organization_id") @db.UnsignedBigInt
+  sku                 String                        @db.VarChar(64)
+  name                String                        @db.VarChar(255)
+  englishName         String?                       @map("english_name") @db.VarChar(255)
+  chineseName         String?                       @map("chinese_name") @db.VarChar(255)
+  brandName           String?                       @map("brand_name") @db.VarChar(80)
+  categoryName        String?                       @map("category_name") @db.VarChar(120)
+  description         String?                       @db.Text
+  unit                String                        @default("piece") @db.VarChar(20)
+  status              RecordStatus                  @default(ACTIVE)
+  createdById         BigInt?                       @map("created_by") @db.UnsignedBigInt
+  createdAt           DateTime                      @default(now()) @map("created_at")
+  updatedAt           DateTime                      @updatedAt @map("updated_at")
+  organization        Organization                  @relation(fields: [organizationId], references: [id])
+  createdBy           User?                         @relation("ProductCreatedBy", fields: [createdById], references: [id])
+  storeProducts       StoreProduct[]
+  barcodes            ProductBarcode[]
+  batches             ProductBatch[]
+  stockMovements      StockMovement[]
+  inventoryBalances   InventoryBalance[]
+  transferItems       StockTransferItem[]
+  receiptItems        StockReceiptItem[]
+  posProductMappings  PosProductMapping[]
+  posOrderItems       PosOrderItem[]
+  posSimulationItems  PosInventorySimulationItem[]
+  insightAssignments  ProductInsightTagAssignment[]
+  purchaseOrderItems  PurchaseOrderItem[]
+  inventoryPlacements InventoryPlacement[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, name])
@@ -315,22 +338,23 @@ model ProductBarcode {
 }
 
 model ProductBatch {
-  id                BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
-  organizationId    BigInt              @map("organization_id") @db.UnsignedBigInt
-  productId         BigInt              @map("product_id") @db.UnsignedBigInt
-  expiryDate        DateTime            @map("expiry_date") @db.Date
-  expiryPrecision   ExpiryPrecision     @default(DATE) @map("expiry_precision")
-  supplierBatchNo   String?             @map("supplier_batch_no") @db.VarChar(100)
-  status            ProductBatchStatus  @default(ACTIVE)
-  createdById       BigInt?             @map("created_by") @db.UnsignedBigInt
-  createdAt         DateTime            @default(now()) @map("created_at")
-  organization      Organization        @relation(fields: [organizationId], references: [id])
-  product           Product             @relation(fields: [productId], references: [id])
-  createdBy         User?               @relation("BatchCreatedBy", fields: [createdById], references: [id])
-  stockMovements    StockMovement[]
-  inventoryBalances InventoryBalance[]
-  transferItems     StockTransferItem[]
-  receiptItems      StockReceiptItem[]
+  id                  BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId      BigInt               @map("organization_id") @db.UnsignedBigInt
+  productId           BigInt               @map("product_id") @db.UnsignedBigInt
+  expiryDate          DateTime             @map("expiry_date") @db.Date
+  expiryPrecision     ExpiryPrecision      @default(DATE) @map("expiry_precision")
+  supplierBatchNo     String?              @map("supplier_batch_no") @db.VarChar(100)
+  status              ProductBatchStatus   @default(ACTIVE)
+  createdById         BigInt?              @map("created_by") @db.UnsignedBigInt
+  createdAt           DateTime             @default(now()) @map("created_at")
+  organization        Organization         @relation(fields: [organizationId], references: [id])
+  product             Product              @relation(fields: [productId], references: [id])
+  createdBy           User?                @relation("BatchCreatedBy", fields: [createdById], references: [id])
+  stockMovements      StockMovement[]
+  inventoryBalances   InventoryBalance[]
+  transferItems       StockTransferItem[]
+  receiptItems        StockReceiptItem[]
+  inventoryPlacements InventoryPlacement[]
 
   @@unique([organizationId, productId, expiryDate, expiryPrecision], map: "product_batches_org_product_expiry_precision_key")
   @@index([expiryDate, status])
@@ -361,6 +385,12 @@ model User {
   auditLogs                  AuditLog[]
   resolvedPosRefundReviews   PosRefundReview[]             @relation("PosRefundReviewResolvedBy")
   assignedProductInsightTags ProductInsightTagAssignment[] @relation("ProductInsightAssignedBy")
+  createdPurchaseOrders      PurchaseOrder[]               @relation("PurchaseOrderCreatedBy")
+  confirmedPurchaseOrders    PurchaseOrder[]               @relation("PurchaseOrderConfirmedBy")
+  orderedPurchaseOrders      PurchaseOrder[]               @relation("PurchaseOrderOrderedBy")
+  cancelledPurchaseOrders    PurchaseOrder[]               @relation("PurchaseOrderCancelledBy")
+  createdWarehouseLocations  WarehouseLocation[]           @relation("WarehouseLocationCreatedBy")
+  updatedWarehouseLocations  WarehouseLocation[]           @relation("WarehouseLocationUpdatedBy")
 
   @@unique([organizationId, username])
   @@map("users")
@@ -559,6 +589,79 @@ model StockReceiptItem {
   @@map("stock_receipt_items")
 }
 
+model PurchaseOrder {
+  id             BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  orderNo        String              @unique @map("order_no") @db.VarChar(40)
+  organizationId BigInt              @map("organization_id") @db.UnsignedBigInt
+  storeId        BigInt              @map("store_id") @db.UnsignedBigInt
+  weekStart      DateTime            @map("week_start") @db.Date
+  status         PurchaseOrderStatus @default(DRAFT)
+  notes          String?             @db.VarChar(500)
+  createdById    BigInt              @map("created_by") @db.UnsignedBigInt
+  confirmedById  BigInt?             @map("confirmed_by") @db.UnsignedBigInt
+  confirmedAt    DateTime?           @map("confirmed_at")
+  orderedById    BigInt?             @map("ordered_by") @db.UnsignedBigInt
+  orderedAt      DateTime?           @map("ordered_at")
+  cancelledById  BigInt?             @map("cancelled_by") @db.UnsignedBigInt
+  cancelledAt    DateTime?           @map("cancelled_at")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  store          Store               @relation(fields: [storeId], references: [id])
+  createdBy      User                @relation("PurchaseOrderCreatedBy", fields: [createdById], references: [id])
+  confirmedBy    User?               @relation("PurchaseOrderConfirmedBy", fields: [confirmedById], references: [id])
+  orderedBy      User?               @relation("PurchaseOrderOrderedBy", fields: [orderedById], references: [id])
+  cancelledBy    User?               @relation("PurchaseOrderCancelledBy", fields: [cancelledById], references: [id])
+  items          PurchaseOrderItem[]
+
+  @@unique([organizationId, storeId, weekStart])
+  @@index([storeId, status, weekStart])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id                BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  purchaseOrderId   BigInt                  @map("purchase_order_id") @db.UnsignedBigInt
+  productId         BigInt                  @map("product_id") @db.UnsignedBigInt
+  source            PurchaseOrderItemSource @default(MANUAL)
+  currentInventory  Int                     @map("current_inventory")
+  recentSevenDayQty Int                     @default(0) @map("recent_seven_day_qty")
+  suggestedQuantity Int                     @map("suggested_quantity")
+  orderedQuantity   Int                     @map("ordered_quantity")
+  receivedQuantity  Int                     @default(0) @map("received_quantity")
+  supplierName      String?                 @map("supplier_name") @db.VarChar(120)
+  unitCostCents     Int?                    @map("unit_cost_cents")
+  caseSize          Int?                    @map("case_size")
+  notes             String?                 @db.VarChar(255)
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+  purchaseOrder     PurchaseOrder           @relation(fields: [purchaseOrderId], references: [id])
+  product           Product                 @relation(fields: [productId], references: [id])
+
+  @@unique([purchaseOrderId, productId])
+  @@index([productId, createdAt])
+  @@map("purchase_order_items")
+}
+
+model PurchaseSuggestionIgnore {
+  id             BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt    @map("organization_id") @db.UnsignedBigInt
+  storeId        BigInt    @map("store_id") @db.UnsignedBigInt
+  productId      BigInt    @map("product_id") @db.UnsignedBigInt
+  reason         String?   @db.VarChar(255)
+  ignoredById    BigInt    @map("ignored_by") @db.UnsignedBigInt
+  ignoredAt      DateTime  @default(now()) @map("ignored_at")
+  restoredById   BigInt?   @map("restored_by") @db.UnsignedBigInt
+  restoredAt     DateTime? @map("restored_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, storeId, productId], map: "purchase_ignore_org_store_product_key")
+  @@index([storeId, restoredAt, ignoredAt], map: "purchase_ignore_store_active_idx")
+  @@index([productId, restoredAt], map: "purchase_ignore_product_active_idx")
+  @@map("purchase_suggestion_ignores")
+}
+
 model InventoryBalance {
   organizationId BigInt       @map("organization_id") @db.UnsignedBigInt
   warehouseId    BigInt       @map("warehouse_id") @db.UnsignedBigInt
@@ -575,6 +678,49 @@ model InventoryBalance {
   @@id([organizationId, warehouseId, productId, batchId])
   @@index([warehouseId, productId, batchId])
   @@map("inventory_balances")
+}
+
+model WarehouseLocation {
+  id          BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  warehouseId BigInt               @map("warehouse_id") @db.UnsignedBigInt
+  code        String               @db.VarChar(40)
+  name        String               @db.VarChar(120)
+  zone        String?              @db.VarChar(40)
+  aisle       String?              @db.VarChar(40)
+  shelf       String?              @db.VarChar(40)
+  level       String?              @db.VarChar(40)
+  status      RecordStatus         @default(ACTIVE)
+  createdById BigInt               @map("created_by") @db.UnsignedBigInt
+  updatedById BigInt               @map("updated_by") @db.UnsignedBigInt
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+  warehouse   Warehouse            @relation(fields: [warehouseId], references: [id])
+  createdBy   User                 @relation("WarehouseLocationCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User                 @relation("WarehouseLocationUpdatedBy", fields: [updatedById], references: [id])
+  placements  InventoryPlacement[]
+
+  @@unique([warehouseId, code])
+  @@index([warehouseId, status, name])
+  @@map("warehouse_locations")
+}
+
+model InventoryPlacement {
+  organizationId BigInt            @map("organization_id") @db.UnsignedBigInt
+  warehouseId    BigInt            @map("warehouse_id") @db.UnsignedBigInt
+  locationId     BigInt            @map("location_id") @db.UnsignedBigInt
+  productId      BigInt            @map("product_id") @db.UnsignedBigInt
+  batchId        BigInt            @map("batch_id") @db.UnsignedBigInt
+  quantity       Int               @default(0)
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+  warehouse      Warehouse         @relation(fields: [warehouseId], references: [id])
+  location       WarehouseLocation @relation(fields: [locationId], references: [id])
+  product        Product           @relation(fields: [productId], references: [id])
+  batch          ProductBatch      @relation(fields: [batchId], references: [id])
+
+  @@id([organizationId, warehouseId, locationId, productId, batchId])
+  @@index([warehouseId, productId, batchId])
+  @@index([locationId, productId])
+  @@map("inventory_placements")
 }
 
 model StockTransfer {
@@ -632,6 +778,35 @@ model ExpiryAlertSetting {
   organization       Organization @relation(fields: [organizationId], references: [id])
 
   @@map("expiry_alert_settings")
+}
+
+model ExpiryAlertAction {
+  id                BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId    BigInt    @map("organization_id") @db.UnsignedBigInt
+  storeId           BigInt    @map("store_id") @db.UnsignedBigInt
+  warehouseId       BigInt    @map("warehouse_id") @db.UnsignedBigInt
+  productId         BigInt    @map("product_id") @db.UnsignedBigInt
+  batchId           BigInt    @map("batch_id") @db.UnsignedBigInt
+  handlingMethod    String    @map("handling_method") @db.VarChar(500)
+  status            String    @default("OPEN") @db.VarChar(20)
+  createdById       BigInt    @map("created_by") @db.UnsignedBigInt
+  updatedById       BigInt    @map("updated_by") @db.UnsignedBigInt
+  completedById     BigInt?   @map("completed_by") @db.UnsignedBigInt
+  completedAt       DateTime? @map("completed_at")
+  ignoredAt         DateTime? @map("ignored_at")
+  alertHiddenReason String?   @map("alert_hidden_reason") @db.VarChar(255)
+  alertHiddenById   BigInt?   @map("alert_hidden_by") @db.UnsignedBigInt
+  alertHiddenAt     DateTime? @map("alert_hidden_at")
+  deletedById       BigInt?   @map("deleted_by") @db.UnsignedBigInt
+  deletedAt         DateTime? @map("deleted_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, warehouseId, batchId], map: "expiry_alert_actions_org_warehouse_batch_key")
+  @@index([warehouseId, status, deletedAt])
+  @@index([batchId, deletedAt])
+  @@index([warehouseId, alertHiddenAt])
+  @@map("expiry_alert_actions")
 }
 
 model AuditLog {

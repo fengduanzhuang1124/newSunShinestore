@@ -12,6 +12,7 @@ const prisma = testDatabaseUrl ? createPrismaClient(testDatabaseUrl) : undefined
 
 const tablesToReset = [
   'audit_logs',
+  'expiry_alert_actions',
   'pos_inventory_simulation_items',
   'pos_inventory_simulations',
   'pos_refund_reviews',
@@ -305,19 +306,19 @@ describeWithDatabase('MySQL inventory integration', () => {
     await expect(prisma?.stockMovement.count()).resolves.toBe(0);
   });
 
-  it('rejects a negative inventory balance', async () => {
+  it('preserves a negative inventory balance for controlled reconciliation', async () => {
     const fixture = await seedTestFixture();
 
-    await expect(
-      prisma?.inventoryBalance.create({
-        data: {
-          organizationId: fixture.organization.id,
-          warehouseId: fixture.warehouse.id,
-          productId: fixture.product.id,
-          batchId: fixture.batch.id,
-          quantity: -1,
-        },
-      }),
-    ).rejects.toThrow();
+    const balance = await prisma?.inventoryBalance.create({
+      data: {
+        organizationId: fixture.organization.id,
+        warehouseId: fixture.warehouse.id,
+        productId: fixture.product.id,
+        batchId: fixture.batch.id,
+        quantity: -1,
+      },
+    });
+
+    expect(balance?.quantity).toBe(-1);
   });
 });

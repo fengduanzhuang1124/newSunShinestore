@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-07",
+  "updatedAt": "2026-10-14",
   "direction": "Compact dark decision cockpit based on the supplied dashboard reference",
   "decisions": [
     "Management uses its own persisted theme preference and defaults to dark.",
@@ -14,6 +14,14 @@
     "All motion honors prefers-reduced-motion and does not alter business state or delay operator actions.",
     "Overview now uses a six-item compact metric strip, period-switchable sales trend, earnings-style expiry watch, inventory action rail, and Top 10 sales table.",
     "At tablet and compact desktop widths, the left management navigation becomes one horizontal rail instead of wrapping into a tall, disordered card.",
-    "Overview period switches reuse the existing read-only sales-analysis API; no backend routes, write paths, or inventory facts were changed for the redesign."
+    "Overview period switches reuse the existing read-only sales-analysis API; no backend routes, write paths, or inventory facts were changed for the redesign.",
+    "Inventory reports now use a visible native date field; expiry review is a compact action queue with cumulative month filters, auditable batch-date correction, and manager-to-employee handling tasks.",
+    "Expiry alert rows expose separate Modify and Delete Alert controls; deletion requires a reason, preserves inventory facts, and is stored as an auditable soft hide.",
+    "Sales shortcuts now bind date range and aggregation dimension together; product stock alerts separate out-of-stock from threshold-based low stock and jump directly to the corresponding inventory filter.",
+    "Product analysis explicitly exposes incomplete POS mapping instead of presenting zero sales as a trustworthy business result.",
+    "Procurement uses one weekly order per store: suggestions, contextual add actions, editable draft lines, explicit confirmation and ordered states, while formal inventory remains unchanged until the existing receiving workflow is completed.",
+    "Replenishment suggestions expose 28-day sales, weekly velocity, current and target coverage; unsuitable rows can be ignored with a reason and restored without changing inventory.",
+    "Management density was tightened with compact headers, floating contextual help, six-column procurement cards, and a low-saturation blue-grey light theme; minimum-stock controls remain explicit operator actions.",
+    "Overview actions and product KPIs stay on one row at desktop widths; procurement cards use stronger theme-specific contrast, POS sync controls share one compact row, sales ranking amounts are legible in light mode, and procurement writes confirm through a one-second floating toast."
   ]
 }

@@ -45,6 +45,10 @@ export class InventoryQueryService {
     return result;
   }
 
+  private endOfUtcMonth(value: Date) {
+    return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + 1, 0));
+  }
+
   private normalizeSearchText(value: string) {
     return value.normalize('NFKC').toLocaleLowerCase()
       .replace(/[^\p{L}\p{N}+]+/gu, ' ')
@@ -230,7 +234,7 @@ export class InventoryQueryService {
       where: {
         organizationId,
         status: 'ACTIVE',
-        inventoryBalances: { some: { warehouseId: permission.warehouseId, quantity: { gt: 0 } } },
+        inventoryBalances: { some: { warehouseId: permission.warehouseId, quantity: { not: 0 } } },
       },
       orderBy: { name: 'asc' },
       include: {
@@ -238,11 +242,11 @@ export class InventoryQueryService {
         batches: {
           where: {
             inventoryBalances: {
-              some: { warehouseId: permission.warehouseId, quantity: { gt: 0 } },
+              some: { warehouseId: permission.warehouseId, quantity: { not: 0 } },
             },
           },
           orderBy: { expiryDate: 'asc' },
-          include: { inventoryBalances: { where: { warehouseId: permission.warehouseId, quantity: { gt: 0 } } } },
+          include: { inventoryBalances: { where: { warehouseId: permission.warehouseId, quantity: { not: 0 } } } },
         },
       },
     });
@@ -282,9 +286,9 @@ export class InventoryQueryService {
     }
     const todayText = this.localDate(organization.timezone);
     const today = this.dateValue(todayText);
-    const urgentEnd = this.addUtcMonths(today, settings.urgentMonths);
-    const warningEnd = this.addUtcMonths(today, settings.warningMonths);
-    const earlyEnd = this.addUtcMonths(today, settings.earlyWarningMonths);
+    const urgentEnd = this.endOfUtcMonth(this.addUtcMonths(today, settings.urgentMonths));
+    const warningEnd = this.endOfUtcMonth(this.addUtcMonths(today, settings.warningMonths));
+    const earlyEnd = this.endOfUtcMonth(this.addUtcMonths(today, settings.earlyWarningMonths));
     const query = rawQuery.trim();
     const balances = await this.prisma.client.inventoryBalance.findMany({
       where: {
@@ -319,7 +323,13 @@ export class InventoryQueryService {
       WARNING: settings.warningLabel,
       EARLY: settings.earlyWarningLabel,
     };
-    const classifiedItems = balances.map((balance) => {
+    const actions = await this.prisma.client.expiryAlertAction.findMany({
+      where: { organizationId, warehouseId: permission.warehouseId, batchId: { in: balances.map(({ batchId }) => batchId) }, deletedAt: null },
+    });
+    const visibleActions = actions.filter((action) => !action.alertHiddenAt);
+    const hiddenBatchIds = new Set(actions.filter((action) => action.alertHiddenAt).map((action) => action.batchId.toString()));
+    const actionsByBatch = new Map(visibleActions.map((action) => [action.batchId.toString(), action]));
+    const classifiedItems = balances.filter((balance) => !hiddenBatchIds.has(balance.batchId.toString())).map((balance) => {
       const expiryDate = balance.batch.expiryDate;
       const level = expiryDate < today
         ? 'EXPIRED'
@@ -341,9 +351,22 @@ export class InventoryQueryService {
         level,
         levelLabel: labels[level],
         daysRemaining: Math.ceil((expiryDate.getTime() - today.getTime()) / 86_400_000),
+        action: (() => {
+          const action = actionsByBatch.get(balance.batchId.toString());
+          return action ? {
+            actionId: action.id.toString(), handlingMethod: action.handlingMethod, status: action.status,
+            completedAt: action.completedAt?.toISOString() ?? null, updatedAt: action.updatedAt.toISOString(),
+          } : null;
+        })(),
       };
     });
-    const items = classifiedItems.filter((item) => !levelFilter || item.level === levelFilter);
+    const cumulativeLevels: Record<string, string[]> = {
+      EXPIRED: ['EXPIRED'],
+      URGENT: ['EXPIRED', 'URGENT'],
+      WARNING: ['EXPIRED', 'URGENT', 'WARNING'],
+      EARLY: ['EXPIRED', 'URGENT', 'WARNING', 'EARLY'],
+    };
+    const items = classifiedItems.filter((item) => !levelFilter || cumulativeLevels[levelFilter].includes(item.level));
     return {
       today: todayText,
       warehouseName: permission.warehouse.name,

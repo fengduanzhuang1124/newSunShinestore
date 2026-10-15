@@ -4,8 +4,57 @@ import { MovementService } from './movement.service.js';
 import { InventoryQueryService } from './inventory-query.service.js';
 import { ReceivingService } from './receiving.service.js';
 import { StocktakeService } from './stocktake.service.js';
+import { InventoryMaintenanceService } from './inventory-maintenance.service.js';
 
 describe('InventoryQueryService', () => {
+  it('includes negative reconciliation batches in the inventory ledger and total', async () => {
+    const client = {
+      product: { findMany: jest.fn().mockResolvedValue([
+        {
+          id: 1n, name: '待核对商品', sku: 'AUDIT-1', englishName: null, chineseName: null,
+          barcodes: [{ barcode: '9400000000001' }],
+          batches: [{ id: 11n, expiryDate: new Date('2099-12-31T00:00:00.000Z'), expiryPrecision: 'DATE', inventoryBalances: [{ quantity: -3 }] }],
+        },
+        {
+          id: 2n, name: '正常库存商品', sku: 'STOCK-2', englishName: null, chineseName: null,
+          barcodes: [{ barcode: '9400000000002' }],
+          batches: [{ id: 12n, expiryDate: new Date('2028-12-31T00:00:00.000Z'), expiryPrecision: 'MONTH', inventoryBalances: [{ quantity: 10 }] }],
+        },
+      ] as never) },
+    };
+    const permissions = { warehousePermission: jest.fn().mockResolvedValue({ warehouseId: 7n, warehouse: { name: '主仓库' } } as never) };
+    const service = new InventoryQueryService({ client } as never, permissions as never);
+
+    const result = await service.inventoryReport(1n, 9n);
+
+    expect(result).toMatchObject({ productCount: 2, totalQuantity: 7 });
+    expect(result.products[0]).toMatchObject({ productName: '待核对商品', totalQuantity: -3 });
+    expect(client.product.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ inventoryBalances: { some: { warehouseId: 7n, quantity: { not: 0 } } } }),
+    }));
+  });
+
+  it('treats the six-month filter as a cumulative range through the end of that month', async () => {
+    const client = {
+      organization: { findUniqueOrThrow: jest.fn().mockResolvedValue({ timezone: 'Pacific/Auckland', expiryAlertSettings: null } as never) },
+      inventoryBalance: { findMany: jest.fn().mockResolvedValue([
+        { productId: 1n, batchId: 11n, quantity: 2, product: { name: '已过期商品', barcodes: [] }, batch: { expiryDate: new Date('2026-09-30T00:00:00.000Z'), expiryPrecision: 'DATE' } },
+        { productId: 2n, batchId: 12n, quantity: 3, product: { name: '两个月商品', barcodes: [] }, batch: { expiryDate: new Date('2026-12-31T00:00:00.000Z'), expiryPrecision: 'DATE' } },
+        { productId: 3n, batchId: 13n, quantity: 4, product: { name: '第六个月月底商品', barcodes: [] }, batch: { expiryDate: new Date('2027-04-30T00:00:00.000Z'), expiryPrecision: 'DATE' } },
+      ] as never) },
+      expiryAlertAction: { findMany: jest.fn().mockResolvedValue([] as never) },
+    };
+    const permissions = { warehousePermission: jest.fn().mockResolvedValue({ warehouseId: 7n, warehouse: { name: '主仓库' } } as never) };
+    const service = new InventoryQueryService({ client } as never, permissions as never);
+
+    const result = await service.expiryAlerts(1n, 9n, '', 'EARLY');
+
+    expect(result.items.map((item) => item.productName)).toEqual(['已过期商品', '两个月商品', '第六个月月底商品']);
+    expect(client.inventoryBalance.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ batch: { expiryDate: { lte: new Date('2027-04-30T00:00:00.000Z') } } }),
+    }));
+  });
+
   it('expands nearby brand words and ranks an UMF grade match first', async () => {
     const products = [
       {
@@ -64,6 +113,58 @@ describe('InventoryQueryService', () => {
       expect.objectContaining({ movementLabel: '库存增加', quantityDelta: 5, reason: '后续发现库存', performedBy: '员工1' }),
       expect.objectContaining({ movementLabel: '库存减少', quantityDelta: -2, reason: '破损', performedBy: '员工1' }),
     ]);
+  });
+});
+
+describe('InventoryMaintenanceService', () => {
+  it('soft-hides an expiry alert without changing its inventory balance', async () => {
+    const transaction = {
+      inventoryBalance: { findFirst: jest.fn().mockResolvedValue({ productId: 2n } as never) },
+      expiryAlertAction: { upsert: jest.fn().mockResolvedValue({ id: 8n } as never) },
+      auditLog: { create: jest.fn().mockResolvedValue({ id: 9n } as never) },
+    };
+    const client = { $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)) };
+    const permissions = {
+      warehousePermission: jest.fn().mockResolvedValue({ warehouseId: 1n, warehouse: { storeId: 3n } } as never),
+      requireStoreAdmin: jest.fn(async () => undefined),
+    };
+    const service = new InventoryMaintenanceService({ client } as never, permissions as never);
+
+    const result = await service.hideExpiryAlert(1n, 7n, '4', { reason: '测试记录删除' });
+
+    expect(result).toMatchObject({ batchId: '4', hidden: true, inventoryChanged: false });
+    expect(transaction.expiryAlertAction.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ batchId: 4n, alertHiddenReason: '测试记录删除' }),
+    }));
+    expect(transaction.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: 'inventory.expiry_alert.hide' }),
+    }));
+  });
+
+  it('corrects a batch expiry date and writes an audit record without changing movements', async () => {
+    const batch = {
+      id: 3n, productId: 2n, expiryDate: new Date('2027-08-31T00:00:00.000Z'), expiryPrecision: 'MONTH',
+      product: { name: '测试商品' },
+    };
+    const transaction = {
+      productBatch: {
+        findFirst: jest.fn().mockResolvedValueOnce(batch as never).mockResolvedValueOnce(null as never),
+        update: jest.fn().mockResolvedValue({} as never),
+      },
+      expiryAlertAction: { updateMany: jest.fn().mockResolvedValue({ count: 0 } as never) },
+      auditLog: { create: jest.fn().mockResolvedValue({ id: 1n } as never) },
+    };
+    const client = { $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)) };
+    const permissions = { warehousePermission: jest.fn().mockResolvedValue({ warehouseId: 1n, warehouse: { storeId: 1n } } as never) };
+    const service = new InventoryMaintenanceService({ client } as never, permissions as never);
+
+    const result = await service.correctBatchExpiry(1n, 1n, '3', { expiryMonth: '2027-09', reason: '员工录入月份错误' });
+
+    expect(result).toMatchObject({ previousExpiryDate: '2027-08', expiryDate: '2027-09' });
+    expect(transaction.productBatch.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 3n } }));
+    expect(transaction.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: 'inventory.batch_expiry.correct', beforeSummary: expect.any(Object), afterSummary: expect.any(Object) }),
+    }));
   });
 });
 

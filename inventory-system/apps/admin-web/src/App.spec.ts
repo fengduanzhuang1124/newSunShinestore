@@ -153,6 +153,25 @@ describe('App', () => {
     expect(wrapper.text()).toContain('删除');
   });
 
+  it('keeps the newest receiving item at the top and opens a numeric mobile keypad for barcodes', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const wrapper = mount(App);
+    const barcodeInput = wrapper.get('input[placeholder="扫描条码"]');
+    expect(barcodeInput.attributes('inputmode')).toBe('numeric');
+
+    for (const [code, name] of [['9400000000001', '先录入商品'], ['9400000000002', '后录入商品']]) {
+      await barcodeInput.setValue(code);
+      await wrapper.get('input[required][maxlength="255"]').setValue(name);
+      await wrapper.get('input[type="month"]').setValue('2027-09');
+      await wrapper.get('form.receive-form').trigger('submit');
+    }
+
+    const rows = wrapper.findAll('.receive-draft-table tbody tr');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].text()).toContain('后录入商品');
+    expect(rows[1].text()).toContain('先录入商品');
+  });
+
   it('submits the selected warehouse and reuses the draft id as the idempotency key', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
@@ -367,7 +386,7 @@ describe('App', () => {
         data: {
           warehouseName: '主仓库', thresholds: { urgentMonths: 2, warningMonths: 3, earlyWarningMonths: 6 },
           summary: { EXPIRED: 1, URGENT: 2, WARNING: 3, EARLY: 4 },
-          items: [{ productId: '1', productName: '临期测试商品', barcodes: ['9400000000002'], batchId: '9', expiryDate: '2026-09', quantity: 7, level: 'URGENT', levelLabel: '紧急临期', daysRemaining: 31 }],
+          items: [{ productId: '1', productName: '临期测试商品', barcodes: ['9400000000002'], batchId: '9', expiryDate: '2026-09', quantity: 7, level: 'URGENT', levelLabel: '紧急临期', daysRemaining: 31, action: { actionId: '2', handlingMethod: '移至临期专区优先销售', status: 'OPEN', completedAt: null, updatedAt: '2026-10-12T01:00:00.000Z' } }],
         },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
@@ -383,7 +402,15 @@ describe('App', () => {
     expect(wrapper.text()).toContain('临期测试商品');
     expect(wrapper.text()).toContain('紧急临期');
     expect(wrapper.text()).toContain('剩余 31 天');
+    expect(wrapper.text()).toContain('移至临期专区优先销售');
+    expect(wrapper.text()).toContain('完成');
+    expect(wrapper.text()).toContain('修改');
+    expect(wrapper.text()).toContain('删除预警');
+    expect(wrapper.text()).toContain('已过期及6个月内');
     expect(wrapper.text()).toContain('导出 CSV');
+    await wrapper.findAll('button').find((button) => button.text() === '删除预警')!.trigger('click');
+    expect(wrapper.text()).toContain('删除后该批次不再出现在临期预警中');
+    expect(wrapper.text()).toContain('不会删除库存、入库记录或库存流水');
   });
 
   it('keeps stocktake with the inventory ledger', async () => {
@@ -396,17 +423,38 @@ describe('App', () => {
     await wrapper.get('nav').findAll('button')[1].trigger('click');
     await flushPromises();
     const inventoryButtons = wrapper.findAll('.inventory-section-tabs button');
-    expect(inventoryButtons).toHaveLength(2);
-    expect(inventoryButtons.map((button) => button.text())).toEqual(['库存台账', '库存盘点']);
+    expect(inventoryButtons).toHaveLength(3);
+    expect(inventoryButtons.map((button) => button.text())).toEqual(['库存台账', '库存盘点', '仓位管理']);
     await inventoryButtons[1].trigger('click');
 
     expect(wrapper.text()).toContain('库存盘点');
+    expect(wrapper.get('button[aria-label="打开手机相机扫码筛选盘点商品"]')).toBeTruthy();
     expect(wrapper.get('input[aria-label="筛选盘点商品"]')).toBeTruthy();
     expect(wrapper.text()).toContain('确认调整');
     expect(wrapper.text()).toContain('确认盘点');
     expect(wrapper.text()).toContain('测试商品');
     await wrapper.get('input[aria-label="筛选盘点商品"]').setValue('不存在商品');
     expect(wrapper.text()).toContain('没有找到匹配的盘点商品');
+  });
+
+  it('clamps an invalid expiry day when the corrected month has fewer days', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      data: { warehouseName: '主仓库', productCount: 1, totalQuantity: 10, products: [{ productId: '1', productName: '日期测试商品', barcodes: ['9400000000031'], batches: [{ batchId: '1', expiryDate: '2026-10-31', expiryPrecision: 'DATE', quantity: 10 }], totalQuantity: 10 }] },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
+    await flushPromises();
+    expect(wrapper.get('button[aria-label="打开手机相机扫码查询库存"]')).toBeTruthy();
+    await wrapper.findAll('button').find((button) => button.text() === '修正')!.trigger('click');
+    await wrapper.get('.expiry-correction-sheet input[type="month"]').setValue('2038-06');
+    await flushPromises();
+
+    const dayInput = wrapper.get('.expiry-correction-sheet input[type="number"]');
+    expect(dayInput.attributes('max')).toBe('30');
+    expect(dayInput.element).toHaveProperty('value', '30');
+    expect(wrapper.text()).toContain('所选月份最多 30 天');
   });
 
   it('increases an existing inventory batch from the inventory page', async () => {
@@ -417,6 +465,7 @@ describe('App', () => {
     }] };
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: inventory }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { warehouseName: '主仓库', canManage: true, unassignedTotal: 10, locations: [] } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: {
         productName: '测试商品', expiryDate: '2027-08', quantityAdded: 5, previousQuantity: 10, currentQuantity: 15,
       } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
@@ -448,6 +497,7 @@ describe('App', () => {
     }] };
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: inventory }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { warehouseName: '主仓库', canManage: true, unassignedTotal: 10, locations: [] } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: {
         productName: '测试商品', expiryDate: '2027-08', quantityDecreased: 3, previousQuantity: 10, currentQuantity: 7,
       } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))

@@ -30,12 +30,27 @@ describe('MoniAuthService', () => {
     await auth.ensureLoggedIn();
 
     expect(post).toHaveBeenCalledTimes(2);
-    expect(post).toHaveBeenCalledWith('Weblogin/accountLogin', {
+  });
+
+  it('uses the configured shop ID when token login returns an empty shop ID', async () => {
+    const config = {
       account: 'synthetic-account',
       password: 'synthetic-password',
-    });
-    expect(post).toHaveBeenCalledWith('Weblogin/tokenLogin', {
-      login_token: 'synthetic-token',
+      shopId: '1497',
+    } as MoniConfigService;
+    const post = jest
+      .fn<MoniHttpClient['post']>()
+      .mockResolvedValueOnce({ login_token: 'account-token' })
+      .mockResolvedValueOnce({
+        login_token: 'store-token',
+        shop: { shop_id: '', shop_name: 'Synthetic Shop', store_list: [] },
+      });
+    const auth = new MoniAuthService(config, { post } as unknown as MoniHttpClient);
+
+    await expect(auth.login()).resolves.toMatchObject({ shopId: '1497' });
+    expect(post).toHaveBeenLastCalledWith('Weblogin/tokenLogin', {
+      login_token: 'account-token',
+      shop_id: '1497',
     });
   });
 });
