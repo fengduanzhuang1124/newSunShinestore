@@ -2,8 +2,8 @@
 
 ## 当前范围
 
-本阶段仅保存 Moni POS 商品映射、订单、订单明细、同步游标、同步运行记录和退款审核记录。
-不会创建 `stock_movements`，不会修改 `inventory_balances`，也不会向 Moni 写入数据。
+Moni 同步本身只保存商品映射、订单、订单明细、同步游标、同步运行记录和退款审核记录，不直接修改库存。
+正式扣库必须经过独立的预览与确认接口，确保库存基准、异常订单和批次数量均已核对。
 
 ## 表
 
@@ -131,6 +131,19 @@ corepack pnpm --filter @sunshine/inventory-api pos:simulate:inventory:test -- 20
 - 两次运行前后 `stock_movements = 0`、`inventory_balances = 0`。
 
 对应迁移：`202608230002_pos_inventory_simulation/migration.sql`。回滚仅允许用于可丢弃的模拟数据，并按“先明细、后订单模拟”的顺序删除两张表。
+
+## 正式销售扣库
+
+迁移 `202610160001_pos_inventory_application` 增加 `SALE_OUT` 流水类型和 POS 订单正式扣库审计字段。
+
+- 只处理 `Paid + refund_amount = 0 + ACTIVE + INVENTORY` 的整数商品明细。
+- `POS_INVENTORY_BASELINE_AT` 是正式库存快照时间；早于基准的销售永远不会被重复扣减。
+- 先调用 `GET /api/v1/management/pos-inventory/preview` 预览可扣订单、预计件数和库存不足问题。
+- 正式执行使用 `POST /api/v1/management/pos-inventory/apply`，请求体必须显式携带 `confirm: true`。
+- 每张订单在同一个事务中按到期日期优先分配批次，同时写入 `stock_movements`、更新 `inventory_balances`、写入 `audit_logs` 并把订单更新为 `APPLIED`。
+- 流水幂等键包含订单、明细、仓库和批次；重复请求不会重复扣库。
+- 退款、Deleted、Unpaid、负数、小数、未映射或库存不足订单不会自动扣库，必须人工复核。
+- 已经 `APPLIED` 的订单若在后续全量核对中发生来源变化，会改为 `REVIEW_REQUIRED`，不得静默覆盖已落库事实。
 
 ## 2026-08-24 逻辑修正验证
 

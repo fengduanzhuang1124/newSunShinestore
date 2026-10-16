@@ -25,6 +25,7 @@ enum ExpiryPrecision {
 enum MovementType {
   INITIAL_STOCK
   RECEIPT
+  SALE_OUT
   MANUAL_ISSUE
   TRANSFER_OUT
   TRANSFER_IN
@@ -384,6 +385,7 @@ model User {
   receivedTransfers          StockTransfer[]               @relation("TransferReceivedBy")
   auditLogs                  AuditLog[]
   resolvedPosRefundReviews   PosRefundReview[]             @relation("PosRefundReviewResolvedBy")
+  appliedPosOrders           PosOrder[]                    @relation("PosInventoryAppliedBy")
   assignedProductInsightTags ProductInsightTagAssignment[] @relation("ProductInsightAssignedBy")
   createdPurchaseOrders      PurchaseOrder[]               @relation("PurchaseOrderCreatedBy")
   confirmedPurchaseOrders    PurchaseOrder[]               @relation("PurchaseOrderConfirmedBy")
@@ -895,35 +897,39 @@ model PosMilkProductCandidate {
 }
 
 model PosOrder {
-  id                  BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
-  organizationId      BigInt                  @map("organization_id") @db.UnsignedBigInt
-  storeId             BigInt                  @map("store_id") @db.UnsignedBigInt
-  syncRunId           BigInt?                 @map("sync_run_id") @db.UnsignedBigInt
-  externalOrderNo     String                  @map("external_order_no") @db.VarChar(64)
-  externalInvoiceNo   String?                 @map("external_invoice_no") @db.VarChar(64)
-  sourceStatus        String                  @map("source_status") @db.VarChar(32)
-  orderType           String?                 @map("order_type") @db.VarChar(32)
-  paymentType         String?                 @map("payment_type") @db.VarChar(50)
-  orderAmount         Decimal?                @map("order_amount") @db.Decimal(14, 2)
-  refundAmount        Decimal                 @default(0) @map("refund_amount") @db.Decimal(14, 2)
-  orderedAt           DateTime                @map("ordered_at")
-  inventoryStatus     PosInventoryStatus      @default(OBSERVED) @map("inventory_status")
-  sourceFingerprint   String                  @map("source_fingerprint") @db.Char(64)
-  firstSeenAt         DateTime                @default(now()) @map("first_seen_at")
-  lastSeenAt          DateTime                @default(now()) @map("last_seen_at")
-  createdAt           DateTime                @default(now()) @map("created_at")
-  updatedAt           DateTime                @updatedAt @map("updated_at")
-  organization        Organization            @relation(fields: [organizationId], references: [id])
-  store               Store                   @relation(fields: [storeId], references: [id])
-  syncRun             PosSyncRun?             @relation(fields: [syncRunId], references: [id])
-  items               PosOrderItem[]
-  refundReview        PosRefundReview?
-  inventorySimulation PosInventorySimulation?
+  id                   BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId       BigInt                  @map("organization_id") @db.UnsignedBigInt
+  storeId              BigInt                  @map("store_id") @db.UnsignedBigInt
+  syncRunId            BigInt?                 @map("sync_run_id") @db.UnsignedBigInt
+  externalOrderNo      String                  @map("external_order_no") @db.VarChar(64)
+  externalInvoiceNo    String?                 @map("external_invoice_no") @db.VarChar(64)
+  sourceStatus         String                  @map("source_status") @db.VarChar(32)
+  orderType            String?                 @map("order_type") @db.VarChar(32)
+  paymentType          String?                 @map("payment_type") @db.VarChar(50)
+  orderAmount          Decimal?                @map("order_amount") @db.Decimal(14, 2)
+  refundAmount         Decimal                 @default(0) @map("refund_amount") @db.Decimal(14, 2)
+  orderedAt            DateTime                @map("ordered_at")
+  inventoryStatus      PosInventoryStatus      @default(OBSERVED) @map("inventory_status")
+  inventoryAppliedAt   DateTime?               @map("inventory_applied_at")
+  inventoryAppliedById BigInt?                 @map("inventory_applied_by") @db.UnsignedBigInt
+  sourceFingerprint    String                  @map("source_fingerprint") @db.Char(64)
+  firstSeenAt          DateTime                @default(now()) @map("first_seen_at")
+  lastSeenAt           DateTime                @default(now()) @map("last_seen_at")
+  createdAt            DateTime                @default(now()) @map("created_at")
+  updatedAt            DateTime                @updatedAt @map("updated_at")
+  organization         Organization            @relation(fields: [organizationId], references: [id])
+  store                Store                   @relation(fields: [storeId], references: [id])
+  syncRun              PosSyncRun?             @relation(fields: [syncRunId], references: [id])
+  items                PosOrderItem[]
+  refundReview         PosRefundReview?
+  inventorySimulation  PosInventorySimulation?
+  inventoryAppliedBy   User?                   @relation("PosInventoryAppliedBy", fields: [inventoryAppliedById], references: [id])
 
   @@unique([storeId, externalOrderNo])
   @@index([organizationId, orderedAt])
   @@index([storeId, sourceStatus, orderedAt])
   @@index([syncRunId])
+  @@index([inventoryAppliedById, inventoryAppliedAt])
   @@map("pos_orders")
 }
 

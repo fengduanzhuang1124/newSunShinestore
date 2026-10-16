@@ -53,6 +53,13 @@ describe('ManagementController POS sync', () => {
     await expect(controller.posSyncIssues(request as never, '3', '1', '101')).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('loads the barcode mapping audit for the selected store', async () => {
+    const management = { barcodeAudit: jest.fn().mockResolvedValue({ duplicateBarcodes: [] } as never) };
+    const controller = new ManagementController(management as never);
+    await controller.barcodeAudit(request as never, '3');
+    expect(management.barcodeAudit).toHaveBeenCalledWith(2n, 1n, 3n);
+  });
+
   it('passes validated sales filters to the sales analysis service', async () => {
     const management = { salesAnalysis: jest.fn().mockResolvedValue({ dataAvailable: true } as never) };
     const controller = new ManagementController(management as never);

@@ -209,6 +209,7 @@ export class PosObservationService {
           sourceStatus: true,
           refundAmount: true,
           inventoryStatus: true,
+          sourceFingerprint: true,
         },
       });
       const existingByOrderNo = new Map(
@@ -292,6 +293,14 @@ export class PosObservationService {
         const orderedAt = parseMoniDate(detail.date ?? summary.date);
         const refundAmount = detail.refundAmount ?? summary.refundAmount ?? 0;
         const sourceStatus = detail.status ?? summary.status ?? 'Unknown';
+        const fingerprint = createHash('sha256')
+          .update(JSON.stringify({
+            orderNo: detail.orderNo,
+            sourceStatus,
+            refundAmount,
+            items: detail.items,
+          }))
+          .digest('hex');
         const requiresReview =
           refundAmount > 0 ||
           sourceStatus.toLowerCase() !== 'paid' ||
@@ -302,16 +311,10 @@ export class PosObservationService {
           ? 'REVIEW_REQUIRED' as const
           : existingOrder?.inventoryStatus === 'APPLIED' ||
               existingOrder?.inventoryStatus === 'REVERSED'
-            ? existingOrder.inventoryStatus
+            ? existingOrder.sourceFingerprint === fingerprint
+              ? existingOrder.inventoryStatus
+              : 'REVIEW_REQUIRED' as const
             : 'OBSERVED' as const;
-        const fingerprint = createHash('sha256')
-          .update(JSON.stringify({
-            orderNo: detail.orderNo,
-            sourceStatus,
-            refundAmount,
-            items: detail.items,
-          }))
-          .digest('hex');
 
         await this.prisma.client.$transaction(async (transaction) => {
           const order = await transaction.posOrder.upsert({

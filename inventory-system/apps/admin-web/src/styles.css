@@ -1107,6 +1107,18 @@ th { color: #667085; background: #f7f9fc; } td { color: var(--ops-text); }
 
 :root[data-theme="dark"] .inventory-search-row,
 :root[data-theme="dark"] .inventory-browser { background: #111a29; border-color: var(--ops-border); }
+
+/* Inventory cards: the action footer belongs to the card and never overlaps the next row. */
+@media (min-width: 1181px) {
+  .inventory-card-list { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.inventory-stock-card { position: relative; display: flex; min-height: 190px; flex-direction: column; overflow: hidden; isolation: isolate; }
+.inventory-batches { flex: 1 1 auto; align-content: flex-start; }
+.inventory-stock-actions { position: relative; z-index: 1; display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 6px; width: 100%; margin-top: auto; padding-top: 9px; border-top: 1px solid #edf1f6; background: inherit; }
+.inventory-stock-actions button { flex: 0 0 auto; min-width: 0; min-height: 32px; padding: 5px 8px; font-size: 10px; line-height: 1.2; white-space: nowrap; }
+:root[data-theme="dark"] .inventory-stock-actions { border-top-color: var(--ops-border); }
+@media (max-width: 1180px) and (min-width: 901px) { .inventory-card-list { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 900px) and (min-width: 721px) { .inventory-card-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 :root[data-theme="dark"] .product-search-dropdown { border-color: var(--ops-border); background: rgb(15 24 39 / 98%); }
 :root[data-theme="dark"] .product-search-dropdown button + button { border-color: #25344b; }
 :root[data-theme="dark"] .product-search-dropdown button:hover,

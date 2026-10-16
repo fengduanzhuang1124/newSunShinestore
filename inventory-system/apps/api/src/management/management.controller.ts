@@ -57,6 +57,13 @@ export class ManagementController {
     return { code: 200, message: 'POS异常记录查询成功', data: await this.management.posSyncIssues(user.organizationId, user.id, storeId, page, pageSize) };
   }
 
+  @Get('barcode-audit')
+  async barcodeAudit(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue?: string) {
+    const storeId = this.storeId(storeIdValue);
+    const user = request.inventoryUser!;
+    return { code: 200, message: '条码与商品映射审计成功', data: await this.management.barcodeAudit(user.organizationId, user.id, storeId) };
+  }
+
   @Post('pos-sync/run')
   async runPosSync(
     @Req() request: AuthenticatedRequest,
@@ -71,6 +78,44 @@ export class ManagementController {
     if (input.reconcile !== undefined && typeof input.reconcile !== 'boolean') throw new BadRequestException('reconcile必须是布尔值');
     const user = request.inventoryUser!;
     return { code: 200, message: 'POS手动同步完成', data: await this.management.runPosSync(user.organizationId, user.id, storeId, input.date, input.reconcile ?? false) };
+  }
+
+  @Get('pos-inventory/preview')
+  async previewPosInventory(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    this.inventoryApplicationRange(from, to);
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: 'POS正式扣库预览生成成功，尚未修改库存',
+      data: await this.management.previewPosInventoryApplication(
+        user.organizationId, user.id, storeId, from!, to!,
+      ),
+    };
+  }
+
+  @Post('pos-inventory/apply')
+  async applyPosInventory(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue: string | undefined,
+    @Body() input: { from?: string; to?: string; confirm?: boolean },
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    this.inventoryApplicationRange(input?.from, input?.to);
+    if (input.confirm !== true) throw new BadRequestException('正式扣库必须明确提交 confirm=true');
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: 'POS正常销售已写入正式库存流水',
+      data: await this.management.applyPosInventory(
+        user.organizationId, user.id, storeId, input.from!, input.to!,
+      ),
+    };
   }
 
   @Get('sales-analysis')
@@ -416,5 +461,13 @@ export class ManagementController {
     const [year, month, day] = value.split('-').map(Number);
     const date = new Date(Date.UTC(year, month - 1, day));
     return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  }
+
+  private inventoryApplicationRange(from?: string, to?: string) {
+    if (!from || !this.isCalendarDate(from)) throw new BadRequestException('扣库开始日期格式应为 YYYY-MM-DD');
+    if (!to || !this.isCalendarDate(to)) throw new BadRequestException('扣库结束日期格式应为 YYYY-MM-DD');
+    if (from > to) throw new BadRequestException('扣库开始日期不能晚于结束日期');
+    const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1;
+    if (days > 31) throw new BadRequestException('单次正式扣库最多处理31天');
   }
 }

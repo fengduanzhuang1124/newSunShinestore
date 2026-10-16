@@ -12,6 +12,7 @@ import { MoniPriceLevelGateway } from './adapters/moni/moni-price-level.gateway.
 import { MoniOrderGateway } from './adapters/moni/moni-order.gateway.js';
 import { PosObservationService } from './application/pos-observation.service.js';
 import { PosInventorySimulationService } from './application/pos-inventory-simulation.service.js';
+import { PosInventoryApplicationService } from './application/pos-inventory-application.service.js';
 import { PosQueryService } from './application/pos-query.service.js';
 import { PosMilkCatalogService } from './application/pos-milk-catalog.service.js';
 import { PosProductCatalogService } from './application/pos-product-catalog.service.js';
@@ -39,6 +40,7 @@ import { PosController } from './pos.controller.js';
     MoniOrderGateway,
     PosObservationService,
     PosInventorySimulationService,
+    PosInventoryApplicationService,
     PosQueryService,
     PosMilkCatalogService,
     PosProductCatalogService,
@@ -54,6 +56,7 @@ import { PosController } from './pos.controller.js';
     MoniOrderGateway,
     PosObservationService,
     PosInventorySimulationService,
+    PosInventoryApplicationService,
     PosQueryService,
     PosMilkCatalogService,
     PosProductCatalogService,

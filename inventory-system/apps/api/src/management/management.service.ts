@@ -3,6 +3,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { PrismaService } from '../database/prisma.service.js';
 import { calendarDateStart, nextCalendarDateStart } from '../pos/application/pos-date.js';
 import { PosObservationService } from '../pos/application/pos-observation.service.js';
+import { PosInventoryApplicationService } from '../pos/application/pos-inventory-application.service.js';
 
 type SalesLine = { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number };
 type SalesAnalysisInput = { from: string; to: string; dimension: 'DAY' | 'WEEK' | 'MONTH'; brand?: string; category?: string };
@@ -16,7 +17,11 @@ type ManagementPermission = typeof MANAGEMENT_PERMISSIONS[keyof typeof MANAGEMEN
 
 @Injectable()
 export class ManagementService {
-  constructor(private readonly prisma: PrismaService, private readonly posObservation: PosObservationService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly posObservation: PosObservationService,
+    private readonly posInventoryApplication: PosInventoryApplicationService,
+  ) {}
 
   async access(organizationId: bigint, userId: bigint, storeId: bigint) {
     const access = await this.storeAccess(organizationId, userId, storeId);
@@ -137,6 +142,119 @@ export class ManagementService {
     };
   }
 
+  async barcodeAudit(organizationId: bigint, userId: bigint, storeId: bigint) {
+    const store = await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.posIssues);
+    const [mappings, issueItems, productCandidates, milkCandidates, observedItems] = await Promise.all([
+      this.prisma.client.posProductMapping.findMany({
+        where: { organizationId, storeId, status: 'ACTIVE' },
+        orderBy: [{ barcode: 'asc' }, { externalProductId: 'asc' }],
+        select: {
+          externalProductId: true, barcode: true, sourceName: true, productId: true,
+          product: {
+            select: {
+              name: true, chineseName: true, englishName: true,
+              barcodes: { where: { status: 'ACTIVE' }, select: { barcode: true } },
+            },
+          },
+        },
+      }),
+      this.prisma.client.posOrderItem.findMany({
+        where: {
+          status: 'ACTIVE', barcode: { not: null },
+          disposition: { in: ['UNMAPPED', 'REVIEW_REQUIRED'] },
+          order: { organizationId, storeId },
+        },
+        select: { externalProductId: true, barcode: true, sourceName: true, quantity: true, disposition: true },
+        orderBy: { updatedAt: 'desc' },
+      }),
+      this.prisma.client.posProductCandidate.findMany({
+        where: { organizationId, storeId, status: 'ACTIVE', barcode: { not: '' } },
+        select: { externalProductId: true, barcode: true, sourceName: true },
+      }),
+      this.prisma.client.posMilkProductCandidate.findMany({
+        where: { organizationId, storeId, status: 'ACTIVE', barcode: { not: null } },
+        select: { externalProductId: true, barcode: true, sourceName: true },
+      }),
+      this.prisma.client.posOrderItem.findMany({
+        where: { status: 'ACTIVE', barcode: { not: null }, order: { organizationId, storeId } },
+        distinct: ['externalProductId'],
+        select: { externalProductId: true, barcode: true, sourceName: true },
+      }),
+    ]);
+
+    const mappingByExternalId = new Map(mappings.map((mapping) => [mapping.externalProductId, mapping]));
+    const sourceProducts = new Map<string, { externalProductId: string; barcode: string; sourceName: string | null }>();
+    for (const candidate of [...productCandidates, ...milkCandidates, ...observedItems]) {
+      if (!candidate.barcode) continue;
+      sourceProducts.set(candidate.externalProductId, { externalProductId: candidate.externalProductId, barcode: candidate.barcode, sourceName: candidate.sourceName });
+    }
+    for (const mapping of mappings) if (!sourceProducts.has(mapping.externalProductId)) sourceProducts.set(mapping.externalProductId, { externalProductId: mapping.externalProductId, barcode: mapping.barcode, sourceName: mapping.sourceName });
+    const mappingGroups = new Map<string, { externalProductId: string; barcode: string; sourceName: string | null }[]>();
+    for (const mapping of sourceProducts.values()) mappingGroups.set(mapping.barcode, [...(mappingGroups.get(mapping.barcode) ?? []), mapping]);
+    const displayProductName = (mapping: typeof mappings[number]) =>
+      mapping.product.chineseName || mapping.product.name || mapping.product.englishName || '未命名商品';
+    const duplicateBarcodes = [...mappingGroups.entries()]
+      .filter(([, rows]) => new Set(rows.map((row) => row.externalProductId)).size > 1)
+      .map(([barcode, rows]) => ({
+        barcode,
+        externalProductCount: new Set(rows.map((row) => row.externalProductId)).size,
+        localProductCount: new Set(rows.map((row) => mappingByExternalId.get(row.externalProductId)?.productId.toString()).filter(Boolean)).size,
+        nameConflict: new Set(rows.map((row) => row.sourceName?.trim().toLocaleLowerCase()).filter(Boolean)).size > 1,
+        mappings: rows.map((row) => {
+          const mapping = mappingByExternalId.get(row.externalProductId);
+          return {
+            externalProductId: row.externalProductId,
+            sourceName: row.sourceName,
+            productId: mapping?.productId.toString() ?? null,
+            productName: mapping ? displayProductName(mapping) : '待人工定义',
+          };
+        }),
+      }))
+      .sort((a, b) => Number(b.nameConflict) - Number(a.nameConflict) || b.externalProductCount - a.externalProductCount);
+    const localBarcodeMismatches = mappings
+      .filter((mapping) => !mapping.product.barcodes.some((barcode) => barcode.barcode === mapping.barcode))
+      .map((mapping) => ({
+        barcode: mapping.barcode,
+        externalProductId: mapping.externalProductId,
+        sourceName: mapping.sourceName,
+        productId: mapping.productId.toString(),
+        productName: displayProductName(mapping),
+        productBarcodes: mapping.product.barcodes.map((barcode) => barcode.barcode),
+      }));
+
+    const issueGroups = new Map<string, typeof issueItems>();
+    for (const item of issueItems) {
+      if (!item.barcode) continue;
+      const rows = issueGroups.get(item.barcode) ?? [];
+      rows.push(item);
+      issueGroups.set(item.barcode, rows);
+    }
+    const unmappedBarcodes = [...issueGroups.entries()].map(([barcode, rows]) => ({
+      barcode,
+      occurrences: rows.length,
+      units: rows.reduce((sum, row) => sum + Math.abs(Number(row.quantity)), 0),
+      dispositions: [...new Set(rows.map((row) => row.disposition))],
+      products: [...new Map(rows.map((row) => [row.externalProductId, {
+        externalProductId: row.externalProductId,
+        sourceName: row.sourceName,
+      }])).values()],
+    })).sort((a, b) => b.occurrences - a.occurrences || a.barcode.localeCompare(b.barcode));
+
+    return {
+      store: { id: store.id.toString(), name: store.name },
+      generatedAt: new Date().toISOString(),
+      summary: {
+        duplicateBarcodes: duplicateBarcodes.length,
+        duplicateNameConflicts: duplicateBarcodes.filter((row) => row.nameConflict).length,
+        localBarcodeMismatches: localBarcodeMismatches.length,
+        unmappedBarcodes: unmappedBarcodes.length,
+      },
+      duplicateBarcodes,
+      localBarcodeMismatches,
+      unmappedBarcodes,
+    };
+  }
+
   async runPosSync(organizationId: bigint, userId: bigint, storeId: bigint, date: string, reconcile: boolean) {
     const store = await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.posSync);
     const staleBefore = new Date(Date.now() - 30 * 60 * 1000);
@@ -162,6 +280,57 @@ export class ManagementService {
       result, inventoryChanged: false,
       message: 'POS订单已写入观察区，未直接扣减正式库存',
     };
+  }
+
+  async previewPosInventoryApplication(
+    organizationId: bigint,
+    userId: bigint,
+    storeId: bigint,
+    fromDate: string,
+    toDate: string,
+  ) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.posSync);
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const from = calendarDateStart(fromDate, organization.timezone);
+    const to = nextCalendarDateStart(toDate, organization.timezone);
+    const baseline = this.posInventoryBaseline();
+    if (to <= baseline) throw new ConflictException('所选日期早于正式库存基准，不能重复扣减历史销量');
+    return this.posInventoryApplication.previewRange(
+      organizationId, storeId, from < baseline ? baseline : from, to,
+    );
+  }
+
+  async applyPosInventory(
+    organizationId: bigint,
+    userId: bigint,
+    storeId: bigint,
+    fromDate: string,
+    toDate: string,
+  ) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.posSync);
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const from = calendarDateStart(fromDate, organization.timezone);
+    const to = nextCalendarDateStart(toDate, organization.timezone);
+    const baseline = this.posInventoryBaseline();
+    if (to <= baseline) throw new ConflictException('所选日期早于正式库存基准，不能重复扣减历史销量');
+    return this.posInventoryApplication.applyRange(
+      organizationId, userId, storeId, from < baseline ? baseline : from, to,
+    );
+  }
+
+  private posInventoryBaseline() {
+    const value = process.env.POS_INVENTORY_BASELINE_AT;
+    const baseline = value ? new Date(value) : null;
+    if (!baseline || Number.isNaN(baseline.getTime())) {
+      throw new ConflictException('尚未配置POS正式扣库基准时间');
+    }
+    return baseline;
   }
 
   async salesAnalysis(organizationId: bigint, userId: bigint, storeId: bigint, input: SalesAnalysisInput) {
@@ -493,9 +662,13 @@ export class ManagementService {
           storeProducts: { where: { storeId, enabled: true }, select: { minimumStock: true }, take: 1 },
         },
       }),
-      this.prisma.client.inventoryBalance.findMany({ where: { organizationId, warehouse: { storeId, status: 'ACTIVE' }, product: productWhere }, select: { productId: true, quantity: true } }),
+      this.prisma.client.inventoryBalance.findMany({ where: { organizationId, warehouse: { storeId, status: 'ACTIVE' }, product: productWhere }, select: { productId: true, quantity: true, updatedAt: true } }),
       this.prisma.client.posOrderItem.findMany({
-        where: { status: 'ACTIVE', productId: { not: null }, product: productWhere, order: { organizationId, storeId, orderedAt: { gte: start, lt: end } } },
+        where: {
+          status: 'ACTIVE', disposition: 'INVENTORY', isMinus: false,
+          productId: { not: null }, product: productWhere,
+          order: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, orderedAt: { gte: start, lt: end } },
+        },
         select: { productId: true, quantity: true, isMinus: true },
       }),
       this.findCurrentPurchaseOrder(organizationId, storeId, organization.timezone),
@@ -506,6 +679,7 @@ export class ManagementService {
     ]);
     const inventory = new Map<string, number>();
     for (const row of balances) inventory.set(row.productId.toString(), (inventory.get(row.productId.toString()) ?? 0) + row.quantity);
+    const latestInventoryUpdatedAt = balances.reduce<Date | null>((latest, row) => !latest || row.updatedAt > latest ? row.updatedAt : latest, null);
     const sales = new Map<string, number>();
     for (const row of salesItems) {
       if (!row.productId) continue;
@@ -526,6 +700,9 @@ export class ManagementService {
       const suggestedQuantity = targetWeeks === null ? 0 : Math.max(0, targetInventory - currentInventory);
       const coverageWeeks = weeklyVelocity > 0 ? Math.round((currentInventory / weeklyVelocity) * 10) / 10 : null;
       const source = currentInventory <= 0 ? 'OUT_OF_STOCK' : 'WEEKLY_FORECAST';
+      const priority = currentInventory <= 0 || (coverageWeeks !== null && coverageWeeks <= 1) || (minimumStock !== null && currentInventory <= minimumStock)
+        ? 'THIS_WEEK' as const
+        : 'FOLLOW_UP' as const;
       const ignoredRow = ignored.get(productId);
       return {
         productId, sku: product.sku, barcode: product.barcodes[0]?.barcode ?? null,
@@ -533,19 +710,28 @@ export class ManagementService {
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
         categoryName: product.categoryName || '未标注品类', currentInventory, minimumStock,
         recent28DayQty, weeklyVelocity, coverageWeeks, targetWeeks, targetInventory,
-        suggestedQuantity, source, alreadyIncluded: included.has(productId),
+        suggestedQuantity, source, priority, alreadyIncluded: included.has(productId),
         ignored: Boolean(ignoredRow), ignoredReason: ignoredRow?.reason ?? null,
         ignoredAt: ignoredRow?.ignoredAt.toISOString() ?? null,
       };
     }).filter((row) => row.suggestedQuantity > 0);
     const suggestions = rows.filter((row) => !row.ignored)
-      .sort((a, b) => b.suggestedQuantity - a.suggestedQuantity || a.currentInventory - b.currentInventory);
+      .sort((a, b) => Number(b.priority === 'THIS_WEEK') - Number(a.priority === 'THIS_WEEK') || b.suggestedQuantity - a.suggestedQuantity || a.currentInventory - b.currentInventory);
     const ignoredSuggestions = rows.filter((row) => row.ignored)
       .sort((a, b) => (b.ignoredAt ?? '').localeCompare(a.ignoredAt ?? ''));
     return {
+      generatedAt: new Date().toISOString(),
+      inventoryLatestUpdatedAt: latestInventoryUpdatedAt?.toISOString() ?? null,
       store: { id: store.id.toString(), name: store.name }, period: { from: this.dateInZone(start, organization.timezone), to: today },
-      calculation: '按最近28天销量折算周均：低于1件/周不建议；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。建议量为目标库存减当前库存。',
-      summary: { products: suggestions.length, suggestedUnits: suggestions.reduce((sum, row) => sum + row.suggestedQuantity, 0), alreadyIncluded: suggestions.filter((row) => row.alreadyIncluded).length, ignored: ignoredSuggestions.length },
+      calculation: '这是备货4–6周的候选清单，不是一周必须买完。按最近28天销量折算周均：低于1件/周不建议；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。',
+      summary: {
+        products: suggestions.length,
+        suggestedUnits: suggestions.reduce((sum, row) => sum + row.suggestedQuantity, 0),
+        thisWeekProducts: suggestions.filter((row) => row.priority === 'THIS_WEEK').length,
+        followUpProducts: suggestions.filter((row) => row.priority === 'FOLLOW_UP').length,
+        alreadyIncluded: suggestions.filter((row) => row.alreadyIncluded).length,
+        ignored: ignoredSuggestions.length,
+      },
       suggestions, ignoredSuggestions,
     };
   }
@@ -593,7 +779,24 @@ export class ManagementService {
     const store = await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
     const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true, currency: true } });
     const order = await this.findCurrentPurchaseOrder(organizationId, storeId, organization.timezone);
-    return { store: { id: store.id.toString(), name: store.name }, currency: organization.currency, order: order ? this.serializePurchaseOrder(order) : null };
+    const balances = await this.prisma.client.inventoryBalance.findMany({
+      where: { organizationId, warehouse: { storeId, status: 'ACTIVE' } },
+      select: { productId: true, quantity: true, updatedAt: true },
+    });
+    const inventory = new Map<string, number>();
+    for (const row of balances) inventory.set(row.productId.toString(), (inventory.get(row.productId.toString()) ?? 0) + row.quantity);
+    const latestInventoryUpdatedAt = balances.reduce<Date | null>((latest, row) => !latest || row.updatedAt > latest ? row.updatedAt : latest, null);
+    const serializedOrder = order ? this.serializePurchaseOrder(order) : null;
+    return {
+      generatedAt: new Date().toISOString(),
+      inventoryLatestUpdatedAt: latestInventoryUpdatedAt?.toISOString() ?? null,
+      store: { id: store.id.toString(), name: store.name },
+      currency: organization.currency,
+      order: serializedOrder ? {
+        ...serializedOrder,
+        items: serializedOrder.items.map((item) => ({ ...item, currentInventory: inventory.get(item.productId) ?? 0 })),
+      } : null,
+    };
   }
 
   async addPurchaseOrderItem(organizationId: bigint, userId: bigint, storeId: bigint, input: { productId: bigint; quantity?: number; source: 'MANUAL' | 'OUT_OF_STOCK' | 'LOW_STOCK' | 'HOT_SALES' | 'WEEKLY_FORECAST' }) {
@@ -657,14 +860,14 @@ export class ManagementService {
     const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
     const existing = await this.findCurrentPurchaseOrder(organizationId, storeId, organization.timezone);
     if (!existing) throw new NotFoundException('本周还没有进货单');
-    const transitions: Record<string, string[]> = { DRAFT: ['CONFIRMED', 'CANCELLED'], CONFIRMED: ['DRAFT', 'ORDERED', 'CANCELLED'], ORDERED: ['CANCELLED'], PARTIALLY_RECEIVED: [], RECEIVED: [], CANCELLED: [] };
+    const transitions: Record<string, string[]> = { DRAFT: ['CONFIRMED', 'CANCELLED'], CONFIRMED: ['DRAFT', 'ORDERED', 'CANCELLED'], ORDERED: ['CANCELLED'], PARTIALLY_RECEIVED: [], RECEIVED: [], CANCELLED: ['DRAFT'] };
     if (!transitions[existing.status]?.includes(status)) throw new ConflictException(`不能从${existing.status}变更为${status}`);
     if (status === 'CONFIRMED' && existing.items.length === 0) throw new BadRequestException('空进货单不能确认');
     const now = new Date();
     const data = status === 'CONFIRMED' ? { status, confirmedById: userId, confirmedAt: now }
       : status === 'ORDERED' ? { status, orderedById: userId, orderedAt: now }
         : status === 'CANCELLED' ? { status, cancelledById: userId, cancelledAt: now }
-          : { status, confirmedById: null, confirmedAt: null };
+          : { status, confirmedById: null, confirmedAt: null, orderedById: null, orderedAt: null, cancelledById: null, cancelledAt: null };
     const order = await this.prisma.client.$transaction(async (tx) => {
       const updated = await tx.purchaseOrder.update({ where: { id: existing.id }, data, include: this.purchaseOrderInclude() });
       await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.purchase_order.status.update', entityType: 'PurchaseOrder', entityId: existing.id.toString(), requestId: randomUUID(), beforeSummary: { status: existing.status }, afterSummary: { status } } });
@@ -1334,7 +1537,13 @@ export class ManagementService {
     const start = new Date(calendarDateStart(today, timezone).getTime() - 27 * 86_400_000);
     const [balances, salesItems] = await Promise.all([
       this.prisma.client.inventoryBalance.findMany({ where: { organizationId, productId, warehouse: { storeId, status: 'ACTIVE' } }, select: { quantity: true } }),
-      this.prisma.client.posOrderItem.findMany({ where: { status: 'ACTIVE', productId, order: { organizationId, storeId, orderedAt: { gte: start, lt: end } } }, select: { quantity: true, isMinus: true } }),
+      this.prisma.client.posOrderItem.findMany({
+        where: {
+          status: 'ACTIVE', disposition: 'INVENTORY', isMinus: false, productId,
+          order: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, orderedAt: { gte: start, lt: end } },
+        },
+        select: { quantity: true, isMinus: true },
+      }),
     ]);
     const currentInventory = balances.reduce((sum, row) => sum + row.quantity, 0);
     const recent28DayQty = Math.max(0, Math.round(salesItems.reduce((sum, row) => sum + Math.abs(Number(row.quantity)) * (row.isMinus ? -1 : 1), 0)));

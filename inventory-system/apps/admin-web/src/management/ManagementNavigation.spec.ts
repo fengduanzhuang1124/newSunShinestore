@@ -23,6 +23,7 @@ const fixtures: Record<string, unknown> = {
   'pos-sync/check': { checkedAt: null, readiness: 'NEEDS_REVIEW', orders: { total: 2, lastOrderedAt: null }, items: { mappingCoveragePercent: 50, mapped: 1, total: 2 }, issues: { total: 1 }, checks: [] },
   'pos-sync/status': { running: false, latestRun: null, cursor: null, history: [] },
   'pos-sync/issues': { summary: { itemIssues: 0, pendingRefunds: 0 }, itemIssues: { items: [], pagination: { total: 0 } }, pendingRefunds: { items: [] } },
+  'pos-inventory/preview': { mode: 'PREVIEW', period: { from: '2026-10-12T05:15:22.401Z', toExclusive: '2026-10-17T11:00:00.000Z' }, summary: { ordersScanned: 178, eligibleOrders: 105, unitsPlanned: 455, reviewRequiredOrders: 6, blockedOrders: 73 }, issues: [{ orderId: '9', orderNo: 'POS-9', reason: 'INSUFFICIENT_INVENTORY', productId: '33', required: 4, available: 0 }] },
   'store-comparison': { storeCount: 1, comparisonAvailable: false, period: { from: '2026-10-01', to: '2026-10-06' }, stores: [{ store: { id: '1', name: '测试门店', code: 'ONE' }, selected: true, sales: salesSummary, inventory: { totalQuantity: 20, outOfStockProducts: 0, lowStockProducts: 0 } }], ranking: { byRevenue: [], byOrders: [], byInventory: [] } },
 };
 
@@ -32,6 +33,7 @@ function setup(options: { failPos?: boolean; limited?: boolean; multipleStores?:
     if (options.failPos && path?.startsWith('pos-sync/')) return new Response(JSON.stringify({ message: 'POS 状态读取失败' }), { status: 500 });
     const data = path === 'access' ? { administrator: !options.limited, roleCodes: ['ADMIN'], capabilities: options.limited ? { ...capabilities, posSync: false, posIssues: false, permissionsManage: false } : capabilities, grantedPermissionCodes: [] }
       : path === 'pos-sync/run' ? { result: { orders: 2, ordersProcessed: 2, ordersSkipped: 0, items: 2, unmappedItems: 0, reviewItems: 0 } }
+        : path === 'pos-inventory/apply' ? { mode: 'APPLIED', period: { from: '2026-10-12T05:15:22.401Z', toExclusive: '2026-10-17T11:00:00.000Z' }, summary: { ordersScanned: 178, appliedOrders: 105, unitsApplied: 455, blockedOrders: 73 }, issues: [] }
         : path === 'store-comparison' && options.multipleStores ? { ...(fixtures[path] as object), comparisonAvailable: true, storeCount: 2 }
           : fixtures[path];
     if (!data) throw new Error(`Unexpected request ${path} ${init?.method || 'GET'}`);
@@ -51,6 +53,15 @@ async function click(wrapper: VueWrapper, label: string) {
 afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ''; });
 
 describe('经营管理页面组织', () => {
+  it('moves the built-in current-page marker with the selected module', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    expect(wrapper.findAll('.nav-current-marker')).toHaveLength(1);
+    expect(wrapper.get('.nav-current-marker').element.closest('button')?.textContent).toContain('经营总览');
+    await go(wrapper, '本周进货');
+    expect(wrapper.findAll('.nav-current-marker')).toHaveLength(1);
+    expect(wrapper.get('.nav-current-marker').element.closest('button')?.textContent).toContain('本周进货');
+  });
+
   it('groups navigation, keeps a read-only overview and moves detailed checks to the data center', async () => {
     const { wrapper, fetchSpy } = setup(); await flushPromises();
     expect(wrapper.findAll('.navigation-group h3').map(item => item.text())).toEqual(['经营分析', '资料维护', '系统支持']);
@@ -171,5 +182,22 @@ describe('经营管理页面组织', () => {
     const call = fetchSpy.mock.calls.find(([url]) => String(url).includes('pos-sync/run'));
     expect(call?.[1]?.method).toBe('POST');
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ date: '2026-10-01', reconcile: false });
+  });
+
+  it('previews POS inventory deductions before requiring an explicit confirmed write', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises(); await go(wrapper, '数据中心');
+    expect(fetchSpy.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    await click(wrapper, '生成扣库预览');
+    expect(wrapper.find('.pos-inventory-preview-summary').text()).toContain('105 张');
+    expect(wrapper.find('.pos-inventory-preview-summary').text()).toContain('455 件商品');
+    expect(wrapper.find('.pos-inventory-preview-summary').text()).toContain('73 张');
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('pos-inventory/apply'))).toBe(false);
+    await click(wrapper, '确认正式扣库');
+    expect(document.body.querySelector('.pos-inventory-confirm-dialog')?.textContent).toContain('库存不足的订单不会部分扣减');
+    const confirm = document.body.querySelector('.morph-submit') as HTMLButtonElement;
+    confirm.click(); await flushPromises();
+    const call = fetchSpy.mock.calls.find(([url]) => String(url).includes('pos-inventory/apply'));
+    expect(call?.[1]?.method).toBe('POST');
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ from: expect.any(String), to: expect.any(String), confirm: true });
   });
 });

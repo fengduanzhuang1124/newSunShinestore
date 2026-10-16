@@ -30,8 +30,12 @@ function isLocalInventoryOrigin(origin: string): boolean {
     const isPrivateIpv4 = /^10\./.test(url.hostname)
       || /^192\.168\./.test(url.hostname)
       || /^172\.(1[6-9]|2\d|3[01])\./.test(url.hostname);
+    const isInventoryTailscaleHost = url.protocol === 'https:'
+      && url.hostname === 'macmacbook-pro.tail10ff0a.ts.net'
+      && (url.port === '' || url.port === '443');
     const isSupportedProtocol = url.protocol === 'http:' || url.protocol === 'https:';
-    return isSupportedProtocol && url.port === '5174' && (isLocalHost || isPrivateIpv4);
+    return isInventoryTailscaleHost
+      || (isSupportedProtocol && url.port === '5174' && (isLocalHost || isPrivateIpv4));
   } catch {
     return false;
   }
