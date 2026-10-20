@@ -28,6 +28,7 @@
     "pos:simulate:inventory:test": "tsx scripts/simulate-pos-inventory-test.ts",
     "pos:inventory:preview": "tsx scripts/preview-pos-inventory-application.ts",
     "pos:inventory:apply": "tsx scripts/apply-pos-inventory-application.ts",
+    "inventory:baseline:preview": "tsx scripts/preview-baseline-reconciliation.ts",
     "pos:audit:barcodes": "tsx scripts/audit-pos-barcodes.ts",
     "pos:check:stores": "tsx scripts/check-moni-stores.ts",
     "pos:check:store-info": "tsx scripts/check-moni-store-info.ts",
