@@ -376,6 +376,48 @@ describe('App', () => {
     expect(wrapper.text()).toContain('导出 CSV');
   });
 
+  it('exports today\'s count with unsubmitted drafts and saved receipts', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    localStorage.setItem('sunshine_inventory_receive_draft:1:3', JSON.stringify({
+      version: 1, receiveDraft: [{ draftId: 'd1', barcode: '9400000000009', productName: '未提交商品', expiryMonth: '2028-01', expiryDisplay: '2028-01', quantity: 4 }],
+    }));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+      data: {
+        warehouseName: '主仓库', summary: { receiptCount: 1, productCount: 1, totalQuantity: 6 },
+        receipts: [{
+          receiptId: '1', receiptNo: 'RK-20261020-ABC123', status: 'OPEN', employeeName: '员工1',
+          createdAt: '2026-10-20T01:00:00.000Z', completedAt: null, productCount: 2, totalQuantity: 6,
+          items: [
+            { itemId: '1', batchId: '1', barcode: '9400000000001', productName: '已入库商品', expiryDate: '2027-08', quantity: 6, reversed: false, createdAt: '2026-10-20T01:00:00.000Z' },
+            { itemId: '2', batchId: '2', barcode: '9400000000002', productName: '已撤销商品', expiryDate: '2027-09', quantity: 2, reversed: true, createdAt: '2026-10-20T01:05:00.000Z' },
+          ],
+        }],
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    let exported: Blob | undefined;
+    URL.createObjectURL = vi.fn((blob: Blob) => { exported = blob; return 'blob:today'; });
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+
+    const wrapper = mount(App);
+    await flushPromises();
+    const button = wrapper.findAll('button').find((candidate) => candidate.text() === '导出今日点货');
+    expect(button).toBeDefined();
+    await button!.trigger('click');
+    await flushPromises();
+
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain('/inventory/receipts?date=');
+    const csv = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(exported!);
+    });
+    expect(csv).toContain('"未提交（本机）","","","9400000000009","未提交商品","2028-01","4"');
+    expect(csv).toContain('"已入库","RK-20261020-ABC123","员工1","9400000000001","已入库商品","2027-08","6"');
+    expect(csv).not.toContain('已撤销商品');
+    expect(wrapper.text()).toContain('已导出今日点货：未提交 1 项，已入库 1 项。');
+  });
+
   it('shows expiry inventory grouped by the 2, 3 and 6 month levels', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch')

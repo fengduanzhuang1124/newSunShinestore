@@ -404,6 +404,7 @@ td { color: #29483e; }
 .draft-heading h3 { margin: 0 0 4px; color: var(--ink); font-size: 20px; }
 .draft-heading p { margin: 0; color: var(--muted); }
 .draft-heading strong { color: var(--ink); white-space: nowrap; }
+.draft-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .confirm-draft { width: 100%; margin-top: 14px; }
 .empty-state.compact { margin: 0; padding: 18px; }
 .milk-review-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }

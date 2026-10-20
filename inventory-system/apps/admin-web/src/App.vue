@@ -1293,6 +1293,34 @@ function downloadCsv(fileName: string, rows: Array<Array<string | number>>) {
   URL.revokeObjectURL(url);
 }
 
+// Unsubmitted drafts live only in this browser, so today's count sheet combines them with every receipt already saved today.
+async function exportTodayCount() {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  loading.value = true;
+  clearStatus();
+  try {
+    const data = await apiRequest(`/inventory/receipts?date=${encodeURIComponent(today)}`);
+    const saved = (data.receipts as Receipt[]).flatMap((receipt) => receipt.items
+      .filter((item) => !item.reversed)
+      .map((item) => ['已入库', receipt.receiptNo, receipt.employeeName, item.barcode, item.productName, item.expiryDate, item.quantity, new Date(item.createdAt).toLocaleString()]));
+    const pending = receiveDraft.value.map((item) => [
+      '未提交（本机）', '', '', item.barcode || '无条码', item.productName, item.expiryDisplay, item.quantity, '',
+    ]);
+    downloadCsv(`${storeName.value}-今日点货-${today}.csv`, [
+      ['状态', '入库单号', '员工', '条码', '商品名称', '到期日期', '数量', '录入时间'],
+      ...pending,
+      ...saved,
+    ]);
+    message.value = `已导出今日点货：未提交 ${pending.length} 项，已入库 ${saved.length} 项。`;
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '今日点货导出失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
 function exportReceipts() {
   downloadCsv(`${storeName.value}-入库记录-${reportDate.value}.csv`, [
     ['入库单号', '状态', '员工', '条码', '商品名称', '到期日期', '数量', '录入时间'],
@@ -1500,7 +1528,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <button class="receive-submit action-secondary" :disabled="loading || !productName.trim() || !expiryMonth">加入本次清单</button>
         </form>
         <section class="receive-draft" aria-label="本次点货清单">
-          <div class="draft-heading"><div><h3>本次点货清单</h3><p>先核对清单，确认后才写入库存；未提交内容会自动保存在本机。</p></div><strong>{{ receiveDraft.length }} 项 · {{ receiveDraft.reduce((sum, item) => sum + item.quantity, 0) }} 件</strong></div>
+          <div class="draft-heading"><div><h3>本次点货清单</h3><p>先核对清单，确认后才写入库存；未提交内容会自动保存在本机。</p></div><div class="draft-heading-actions"><strong>{{ receiveDraft.length }} 项 · {{ receiveDraft.reduce((sum, item) => sum + item.quantity, 0) }} 件</strong><button class="secondary compact-action" type="button" :disabled="loading" @click="exportTodayCount">导出今日点货</button></div></div>
           <div v-if="receiveDraft.length" class="table-wrap receive-draft-table-wrap">
             <table class="receive-draft-table">
               <thead><tr><th>条码</th><th>商品名</th><th>到期日期</th><th>数量</th><th>操作</th></tr></thead>
