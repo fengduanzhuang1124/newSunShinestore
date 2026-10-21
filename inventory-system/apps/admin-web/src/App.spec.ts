@@ -521,6 +521,44 @@ describe('App', () => {
     expect(wrapper.text()).toContain('不会删除库存、入库记录或库存流水');
   });
 
+  it('lists items to review and counts a negative batch back to the real quantity', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const review = (quantity: number) => ({
+      negative: quantity < 0 ? [{ productId: '270', productName: 'BePure儿童多维60粒', barcode: '9421907678405', batchId: '33', expiryDate: '2027-01', quantity }] : [],
+      expired: [{ productId: '7', productName: 'NutraLife 植物消化素60粒', barcode: '9400581003822', batchId: '2148', expiryDate: '2026-01-03', quantity: 28 }],
+      posUnmapped: [{ productId: '3734', productName: '8分钟Pro 精华液', barcode: '9421907711157', quantity: 240 }],
+    });
+    let reviewReads = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/inventory/review-items')) return json(review(reviewReads++ === 0 ? -5 : 0));
+      if (url.includes('/inventory/stocktake-adjustment')) return json({ movementId: '9', productName: 'BePure儿童多维60粒', expiryDate: '2027-01', previousQuantity: -5, actualQuantity: 1, difference: 6 });
+      if (url.includes('/inventory/locations')) return json({ locations: [] });
+      return json({ warehouseName: '主仓库', productCount: 0, totalQuantity: 0, products: [] });
+    });
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.inventory-section-tabs button').find((button) => button.text() === '待核查')!.trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('BePure儿童多维60粒');
+    expect(wrapper.text()).toContain('NutraLife 植物消化素60粒');
+    expect(wrapper.text()).toContain('8分钟Pro 精华液');
+    await wrapper.get('.review-group button.action-primary').trigger('click');
+    expect(wrapper.text()).toContain('负库存实盘');
+    await wrapper.get('form[aria-label="负库存实盘"] input[type="number"]').setValue(1);
+    await wrapper.get('form[aria-label="负库存实盘"]').trigger('submit');
+    await flushPromises();
+
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes('/inventory/stocktake-adjustment'));
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ batchId: '33', actualQuantity: 1, reason: '负库存实盘' });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/inventory/review-items'))).toHaveLength(2);
+    expect(wrapper.text()).toContain('没有负库存');
+  });
+
   it('keeps stocktake with the inventory ledger', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
@@ -531,8 +569,8 @@ describe('App', () => {
     await wrapper.get('nav').findAll('button')[1].trigger('click');
     await flushPromises();
     const inventoryButtons = wrapper.findAll('.inventory-section-tabs button');
-    expect(inventoryButtons).toHaveLength(3);
-    expect(inventoryButtons.map((button) => button.text())).toEqual(['库存台账', '库存盘点', '仓位管理']);
+    expect(inventoryButtons).toHaveLength(4);
+    expect(inventoryButtons.map((button) => button.text())).toEqual(['库存台账', '库存盘点', '仓位管理', '待核查']);
     await inventoryButtons[1].trigger('click');
 
     expect(wrapper.text()).toContain('库存盘点');

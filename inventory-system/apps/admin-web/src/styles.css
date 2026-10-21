@@ -805,6 +805,7 @@ th, td, .batch-list, .batch-row { border-color: var(--line); }
 .sliding-navigation { position:relative; display:grid!important; grid-template-columns:repeat(3,minmax(0,1fr)); isolation:isolate; overflow:hidden; }
 .sliding-navigation::before { position:absolute; z-index:-1; top:4px; bottom:4px; left:4px; width:calc((100% - 8px)/3); border-radius:11px; background:linear-gradient(135deg,rgb(126 102 238 / 78%),rgb(49 192 211 / 68%)); box-shadow:0 8px 24px rgb(85 88 210 / 25%),inset 0 1px rgb(255 255 255 / 45%); content:""; transition:transform 420ms cubic-bezier(.22,1.45,.42,1),width 300ms cubic-bezier(.22,1.2,.42,1); }
 .sliding-navigation.active-stocktake::before { transform:translateX(100%); }.sliding-navigation.active-locations::before { transform:translateX(200%); }
+.sliding-navigation.four-tabs { grid-template-columns:repeat(4,minmax(0,1fr)); }.sliding-navigation.four-tabs::before { width:calc((100% - 8px)/4); }.sliding-navigation.active-review::before { transform:translateX(300%); }
 .sliding-navigation button { position:relative; z-index:1; background:transparent!important; box-shadow:none!important; }.sliding-navigation button.active { color:#fff!important; }
 .location-workspace { display:grid; gap:16px; }
 .location-overview,.location-card,.location-editor,.command-palette { border:1px solid rgb(255 255 255 / 42%); background:linear-gradient(135deg,rgb(246 228 255 / 72%),rgb(213 223 255 / 68%) 54%,rgb(166 207 255 / 62%)); box-shadow:inset 0 1px rgb(255 255 255 / 75%),0 22px 54px rgb(91 80 173 / 17%); backdrop-filter:blur(26px) saturate(130%); -webkit-backdrop-filter:blur(26px) saturate(130%); }
@@ -827,6 +828,12 @@ th, td, .batch-list, .batch-row { border-color: var(--line); }
 
 /* The three inventory destinations always share one row. */
 .inventory-section-tabs.sliding-navigation { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 4px; }
+.inventory-section-tabs.sliding-navigation.four-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+.review-items { display: grid; gap: 16px; }
+.review-group { display: grid; gap: 8px; }
+.review-group h3 { margin: 0; font-size: 17px; }
+.review-group h3 b { margin-left: 6px; padding: 1px 8px; border-radius: 999px; color: #fff; background: #d9822b; font-size: 12px; }
+.review-group > p { margin: 0; color: var(--muted); }
 .inventory-section-tabs.sliding-navigation button { width: auto !important; min-width: 0; color: #667085 !important; font-weight: 800; white-space: nowrap; }
 .inventory-section-tabs.sliding-navigation button.active { color: #fff !important; }
 :root[data-theme="dark"] .inventory-section-tabs.sliding-navigation button { color: #aebbd0 !important; }

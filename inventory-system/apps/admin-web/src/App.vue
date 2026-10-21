@@ -6,6 +6,8 @@ import ManagementDashboard from './management/ManagementDashboard.vue';
 
 type Mode = 'home' | 'receive' | 'issue' | 'query' | 'productReview' | 'milkReview' | 'reports' | 'management';
 type Theme = 'light' | 'dark';
+type ReviewBatch = { productId: string; productName: string; barcode: string | null; batchId: string; expiryDate: string; quantity: number };
+type ReviewItems = { negative: ReviewBatch[]; expired: ReviewBatch[]; posUnmapped: { productId: string; productName: string; barcode: string | null; quantity: number }[] };
 type Batch = { batchId: string; expiryDate: string; expiryPrecision: 'MONTH' | 'DATE'; quantity: number };
 type WarehousePlacement = { productId: string; batchId: string; quantity: number; productName: string; expiryDate: string };
 type WarehouseLocation = { locationId: string; code: string; name: string; zone: string | null; aisle: string | null; shelf: string | null; level: string | null; totalQuantity: number; productCount: number; placements: WarehousePlacement[] };
@@ -126,7 +128,8 @@ let cameraControls: IScannerControls | null = null;
 let lastCameraCode = '';
 let lastCameraCodeAt = 0;
 const reportView = ref<'receipts' | 'inventory' | 'expiry' | 'movements'>('receipts');
-const inventoryView = ref<'ledger' | 'stocktake' | 'locations'>('ledger');
+const inventoryView = ref<'ledger' | 'stocktake' | 'locations' | 'review'>('ledger');
+const reviewItems = ref<ReviewItems | null>(null);
 const warehouseLocations = ref<WarehouseLocation[]>([]);
 const unassignedLocationQuantity = ref(0);
 const canManageLocations = ref(false);
@@ -187,7 +190,7 @@ const correctedExpiryDayMax = computed(() => {
 const expiryCorrectionReason = ref('录入日期修正');
 const deletingExpiryAlert = ref<{ batchId: string; productName: string; expiryDate: string; quantity: number } | null>(null);
 const expiryAlertDeleteReason = ref('预警记录录入错误');
-const countingExpiryBatch = ref<{ batchId: string; productName: string; expiryDate: string; quantity: number; actual: number | null; reason: string } | null>(null);
+const countingExpiryBatch = ref<{ batchId: string; productName: string; expiryDate: string; quantity: number; actual: number | null; reason: string; title: string } | null>(null);
 const receiveDraft = ref<ReceiveDraftItem[]>([]);
 watch(correctedExpiryMonth, () => {
   if (correctedExpiryDay.value && correctedExpiryDay.value > correctedExpiryDayMax.value) {
@@ -1073,11 +1076,23 @@ async function submitBatchExpiryCorrection() {
 }
 
 // A near-expiry batch that was cleared or sold off-system is corrected by counting it, which writes a stocktake movement.
-function openExpiryCount(item: ExpiryItem) {
+function openExpiryCount(item: { batchId: string; productName: string; expiryDate: string; quantity: number }, title = '临期实盘', reason = '临期实盘') {
   countingExpiryBatch.value = {
-    batchId: item.batchId, productName: item.productName, expiryDate: item.expiryDate, quantity: item.quantity, actual: null, reason: '临期实盘',
+    batchId: item.batchId, productName: item.productName, expiryDate: item.expiryDate, quantity: item.quantity, actual: null, reason, title,
   };
   clearStatus();
+}
+
+async function loadReviewItems() {
+  loading.value = true;
+  clearStatus();
+  try {
+    reviewItems.value = await apiRequest('/inventory/review-items');
+  } catch (reasonValue) {
+    error.value = reasonValue instanceof Error ? reasonValue.message : '待核查项目读取失败';
+  } finally {
+    loading.value = false;
+  }
 }
 
 async function submitExpiryCount() {
@@ -1100,8 +1115,10 @@ async function submitExpiryCount() {
       method: 'POST', body: JSON.stringify({ batchId: target.batchId, actualQuantity: target.actual, reason }),
     });
     countingExpiryBatch.value = null;
-    message.value = `实盘完成：${data.productName} ${data.expiryDate}，${data.previousQuantity} → ${data.actualQuantity} 件（${data.difference > 0 ? '盘盈' : '盘亏'} ${Math.abs(data.difference)} 件）。`;
-    await loadExpiryReport();
+    const done = `实盘完成：${data.productName} ${data.expiryDate}，${data.previousQuantity} → ${data.actualQuantity} 件（${data.difference > 0 ? '盘盈' : '盘亏'} ${Math.abs(data.difference)} 件）。`;
+    if (activeMode.value === 'query' && inventoryView.value === 'review') await loadReviewItems();
+    else await loadExpiryReport();
+    message.value = done;
   } catch (reasonValue) {
     error.value = reasonValue instanceof Error ? reasonValue.message : '临期实盘失败';
   } finally {
@@ -1804,11 +1821,26 @@ async function issueBatch(product: ProductResult, batch: Batch) {
       <template v-else>
         <section v-if="activeMode === 'query'" class="inventory-page-header report-header">
           <h2>库存管理</h2>
-          <nav class="inventory-section-tabs secondary-navigation sliding-navigation" :class="`active-${inventoryView}`" aria-label="库存分类">
+          <nav class="inventory-section-tabs secondary-navigation sliding-navigation four-tabs" :class="`active-${inventoryView}`" aria-label="库存分类">
             <button :class="{ active: inventoryView === 'ledger' }" @click="inventoryView = 'ledger'; results = []; clearStatus()">库存台账</button>
             <button :class="{ active: inventoryView === 'stocktake' }" @click="inventoryView = 'stocktake'; results = []; clearStatus()">库存盘点</button>
             <button :class="{ active: inventoryView === 'locations' }" @click="inventoryView = 'locations'; results = []; clearStatus(); loadWarehouseLocations()">仓位管理</button>
+            <button :class="{ active: inventoryView === 'review' }" @click="inventoryView = 'review'; results = []; loadReviewItems()">待核查</button>
           </nav>
+        </section>
+        <section v-if="activeMode === 'query' && inventoryView === 'review'" class="review-items" aria-label="待核查">
+          <p v-if="!reviewItems" class="empty-state">{{ loading ? '正在读取待核查项目…' : '点击“待核查”读取。' }}</p>
+          <template v-else>
+            <section class="review-group"><h3>负库存 <b>{{ reviewItems.negative.length }}</b></h3><p>卖出比记录的多，请清点后填写实际数量。</p>
+              <div v-if="reviewItems.negative.length" class="table-wrap inventory-table"><table><thead><tr><th>商品</th><th>到期日期</th><th>系统数量</th><th>操作</th></tr></thead><tbody><tr v-for="item in reviewItems.negative" :key="item.batchId"><td><strong>{{ item.productName }}</strong><small class="cell-subline">{{ item.barcode || '无条码' }}</small></td><td>{{ expiryLabel(item.expiryDate) }}</td><td>{{ item.quantity }} 件</td><td><button class="action-primary compact-action" type="button" @click="openExpiryCount(item, '负库存实盘', '负库存实盘')">实盘</button></td></tr></tbody></table></div>
+              <p v-else class="empty-state compact">没有负库存。</p></section>
+            <section class="review-group"><h3>已过期仍有库存 <b>{{ reviewItems.expired.length }}</b></h3><p>请下架处理；已卖完或报损的，按实际数量实盘。</p>
+              <div v-if="reviewItems.expired.length" class="table-wrap inventory-table"><table><thead><tr><th>商品</th><th>到期日期</th><th>系统数量</th><th>操作</th></tr></thead><tbody><tr v-for="item in reviewItems.expired" :key="item.batchId"><td><strong>{{ item.productName }}</strong><small class="cell-subline">{{ item.barcode || '无条码' }}</small></td><td>{{ item.expiryDate }}</td><td>{{ item.quantity }} 件</td><td><button class="action-primary compact-action" type="button" @click="openExpiryCount(item, '过期实盘', '过期实盘')">实盘</button></td></tr></tbody></table></div>
+              <p v-else class="empty-state compact">没有过期库存。</p></section>
+            <section class="review-group"><h3>POS 未建档 <b>{{ reviewItems.posUnmapped.length }}</b></h3><p>这些商品卖出后不会自动扣库存，请在 POS 用相同条码建档。</p>
+              <div v-if="reviewItems.posUnmapped.length" class="table-wrap inventory-table"><table><thead><tr><th>商品</th><th>条码</th><th>库存</th></tr></thead><tbody><tr v-for="item in reviewItems.posUnmapped" :key="item.productId"><td><strong>{{ item.productName }}</strong></td><td>{{ item.barcode || '无条码' }}</td><td>{{ item.quantity }} 件</td></tr></tbody></table></div>
+              <p v-else class="empty-state compact">所有有库存的商品都已在 POS 建档。</p></section>
+          </template>
         </section>
         <section v-if="activeMode === 'issue' || inventoryView === 'ledger'" class="section-heading inventory-page-heading" :class="{ 'inventory-summary-heading': activeMode === 'query' }">
           <div><h2 v-if="activeMode === 'issue'">查找要出库的商品</h2><p v-if="activeMode === 'query'">共 {{ inventorySummary.productCount }} 种商品 · {{ inventorySummary.totalQuantity }} 件库存</p></div>
@@ -1966,9 +1998,9 @@ async function issueBatch(product: ProductResult, batch: Batch) {
       </div>
 
       <div v-if="countingExpiryBatch" class="account-overlay" role="presentation" @click.self="countingExpiryBatch = null">
-        <form class="stock-increase-sheet expiry-correction-sheet" role="dialog" aria-modal="true" aria-label="临期实盘" @submit.prevent="submitExpiryCount">
+        <form class="stock-increase-sheet expiry-correction-sheet" role="dialog" aria-modal="true" :aria-label="countingExpiryBatch.title" @submit.prevent="submitExpiryCount">
           <button class="account-close" type="button" aria-label="关闭临期实盘" @click="countingExpiryBatch = null">×</button>
-          <h2>临期实盘</h2><p>{{ countingExpiryBatch.productName }} · {{ countingExpiryBatch.expiryDate }} · 系统 {{ countingExpiryBatch.quantity }} 件</p>
+          <h2>{{ countingExpiryBatch.title }}</h2><p>{{ countingExpiryBatch.productName }} · {{ countingExpiryBatch.expiryDate }} · 系统 {{ countingExpiryBatch.quantity }} 件</p>
           <label>实际数量<input v-model.number="countingExpiryBatch.actual" type="number" min="0" step="1" inputmode="numeric" required placeholder="清点货架上这个日期的实际件数" /></label>
           <button class="secondary compact-action" type="button" @click="countingExpiryBatch.actual = 0">已售完（0 件）</button>
           <label>原因<input v-model="countingExpiryBatch.reason" required minlength="2" maxlength="255" /></label>

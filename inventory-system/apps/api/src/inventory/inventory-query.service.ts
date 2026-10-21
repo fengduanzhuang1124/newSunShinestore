@@ -192,6 +192,61 @@ export class InventoryQueryService {
     };
   }
 
+  // Things a person has to look at: negative balances (sold more than recorded), stock past its expiry date, and
+  // stocked products the POS cannot sell against yet.
+  async reviewItems(organizationId: bigint, userId: bigint) {
+    const permission = await this.permissions.warehousePermission(organizationId, userId, 'canView');
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
+    const today = this.dateValue(this.localDate(organization.timezone));
+    const storeId = permission.warehouse.storeId;
+    const productSelect = {
+      name: true,
+      barcodes: { where: { status: 'ACTIVE' as const }, orderBy: [{ isPrimary: 'desc' as const }, { id: 'asc' as const }], select: { barcode: true }, take: 1 },
+    };
+    const [negative, expired, unmapped] = await Promise.all([
+      this.prisma.client.inventoryBalance.findMany({
+        where: { organizationId, warehouseId: permission.warehouseId, quantity: { lt: 0 } },
+        include: { product: { select: productSelect }, batch: true },
+        orderBy: { quantity: 'asc' },
+      }),
+      this.prisma.client.inventoryBalance.findMany({
+        where: { organizationId, warehouseId: permission.warehouseId, quantity: { gt: 0 }, batch: { expiryDate: { lt: today } }, product: { status: 'ACTIVE' } },
+        include: { product: { select: productSelect }, batch: true },
+        orderBy: { batch: { expiryDate: 'asc' } },
+      }),
+      this.prisma.client.inventoryBalance.groupBy({
+        by: ['productId'],
+        where: {
+          organizationId, warehouseId: permission.warehouseId,
+          product: { status: 'ACTIVE', posProductMappings: { none: { storeId, status: 'ACTIVE' } } },
+        },
+        _sum: { quantity: true },
+      }),
+    ]);
+    const batchRow = (row: (typeof negative)[number]) => ({
+      productId: row.productId.toString(), productName: row.product.name, barcode: row.product.barcodes[0]?.barcode ?? null,
+      batchId: row.batchId.toString(),
+      expiryDate: row.batch.expiryPrecision === 'MONTH' ? row.batch.expiryDate.toISOString().slice(0, 7) : row.batch.expiryDate.toISOString().slice(0, 10),
+      quantity: row.quantity,
+    });
+    const stockedUnmapped = unmapped.filter((row) => (row._sum.quantity ?? 0) > 0);
+    const unmappedProducts = await this.prisma.client.product.findMany({
+      where: { id: { in: stockedUnmapped.map((row) => row.productId) } },
+      select: { id: true, ...productSelect },
+    });
+    const unmappedStock = new Map(stockedUnmapped.map((row) => [row.productId.toString(), row._sum.quantity ?? 0]));
+    return {
+      negative: negative.map(batchRow),
+      expired: expired.map(batchRow),
+      posUnmapped: unmappedProducts
+        .map((product) => ({
+          productId: product.id.toString(), productName: product.name,
+          barcode: product.barcodes[0]?.barcode ?? null, quantity: unmappedStock.get(product.id.toString()) ?? 0,
+        }))
+        .sort((a, b) => b.quantity - a.quantity),
+    };
+  }
+
   async findByBarcode(organizationId: bigint, userId: bigint, barcode: string) {
     const permission = await this.permissions.warehousePermission(organizationId, userId, 'canView');
 

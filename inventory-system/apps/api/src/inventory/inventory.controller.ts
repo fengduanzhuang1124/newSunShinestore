@@ -160,6 +160,12 @@ export class InventoryController {
     };
   }
 
+  @Get('review-items')
+  async reviewItems(@Req() request: AuthenticatedRequest) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '待核查项目查询成功', data: await this.queries.reviewItems(user.organizationId, user.id) };
+  }
+
   @Get('expiry-alerts')
   async expiryAlerts(
     @Req() request: AuthenticatedRequest,
