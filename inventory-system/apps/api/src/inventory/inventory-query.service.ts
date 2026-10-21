@@ -485,7 +485,14 @@ export class InventoryQueryService {
     const labels: Record<string, string> = {
       RECEIPT: '入库', MANUAL_ISSUE: '出库', STOCKTAKE_GAIN: '盘盈', STOCKTAKE_LOSS: '盘亏',
       DAMAGE: '破损', EXPIRED: '过期处理', RETURN_IN: '退货入库', RETURN_TO_SUPPLIER: '退供应商',
-      TRANSFER_IN: '调拨入库', TRANSFER_OUT: '调拨出库', REVERSAL: '冲销', INITIAL_STOCK: '初始库存',
+      TRANSFER_IN: '调拨入库', TRANSFER_OUT: '调拨出库', REVERSAL: '冲销', INITIAL_STOCK: '初始库存', SALE_OUT: 'POS销售',
+    };
+    // System corrections are written as stocktake gain/loss; name them by what produced them so they are not
+    // mistaken for a person's count.
+    const sourceLabels: Record<string, string> = {
+      MANUAL_INCREASE: '库存增加', MANUAL_DECREASE: '库存减少', STOCKTAKE: '盘点',
+      SALES_BACKFILL: '销量补扣', BASELINE_REBUILD: '基准重建', BASELINE_RECON: '基准校准', NEGATIVE_CLEAR: '负库存清理',
+      PRODUCT_MERGE: '档案合并', RECOUNT_TODAY: '点货修正', POS_RECONCILIATION: 'POS核对扣减', POS_NEGATIVE_AUDIT: 'POS核对扣减',
     };
     return {
       warehouseName: permission.warehouse.name,
@@ -493,11 +500,7 @@ export class InventoryQueryService {
         movementId: movement.id.toString(),
         movementNo: movement.movementNo,
         movementType: movement.movementType,
-        movementLabel: movement.referenceType === 'MANUAL_INCREASE'
-          ? '库存增加'
-          : movement.referenceType === 'MANUAL_DECREASE'
-            ? '库存减少'
-            : labels[movement.movementType] ?? movement.movementType,
+        movementLabel: (movement.referenceType && sourceLabels[movement.referenceType]) ?? labels[movement.movementType] ?? movement.movementType,
         productName: movement.product.name,
         barcodes: movement.product.barcodes.map(({ barcode }) => barcode),
         expiryDate: movement.batch.expiryPrecision === 'MONTH'

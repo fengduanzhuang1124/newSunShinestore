@@ -46,8 +46,9 @@ describe('ManagementService.inventoryOperations', () => {
     );
 
     expect(rows.get('1')).toMatchObject({ stockStatus: 'OUT_OF_STOCK', shortageVisible: true });
-    expect(rows.get('2')).toMatchObject({ stockStatus: 'OUT_OF_STOCK', shortageVisible: false });
-    expect(rows.get('3')).toMatchObject({ shortageVisible: false });
+    // Zero stock with no sale in 180 days is catalogue-only: counted nowhere and left out of the list.
+    expect(rows.has('2')).toBe(false);
+    expect(rows.has('3')).toBe(false);
     expect(result.summary.outOfStockProducts).toBe(1);
   });
 

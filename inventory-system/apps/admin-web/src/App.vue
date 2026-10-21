@@ -1593,8 +1593,8 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         </article>
 
         <form class="receive-form" @submit.prevent="addReceiveDraft">
-          <label v-if="!selectedProduct">条码（可不填）<input v-model="barcode" inputmode="numeric" maxlength="128" enterkeyhint="next" placeholder="扫描条码" /></label>
-          <label v-if="!selectedProduct">商品名<input v-model="productName" required maxlength="255" /></label>
+          <label v-if="!selectedProduct">条码（可不填）<input v-model="barcode" :class="{ 'long-value': barcode.length > 14 }" inputmode="numeric" maxlength="128" enterkeyhint="next" placeholder="扫描条码" /></label>
+          <label v-if="!selectedProduct">商品名<input v-model="productName" :class="{ 'long-value': productName.length > 10 }" required maxlength="255" /></label>
           <label class="expiry-label">到期日期
             <span class="expiry-fields">
               <input ref="expiryMonthInput" v-model="expiryMonth" required type="month" aria-label="到期年月" />

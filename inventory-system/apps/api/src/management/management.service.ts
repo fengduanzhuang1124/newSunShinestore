@@ -721,9 +721,11 @@ export class ManagementService {
         expiredUnits: expiredStock._sum.quantity ?? 0,
       },
       coverageBuckets,
-      alerts: actionableRows.filter((row) => row.stockStatus === 'LOW' || (row.stockStatus === 'OUT_OF_STOCK' && row.shortageVisible)).sort((a, b) => a.currentInventory - b.currentInventory),
-      slowMoving: actionableRows.filter((row) => row.slowMoving).sort((a, b) => b.currentInventory - a.currentInventory),
-      products: rows.sort((a, b) => b.currentInventory - a.currentInventory),
+      // Catalogue-only rows (no stock, no sale in 180 days, no minimum) never raise an alert; leaving them out keeps the
+      // phone payload small. A search still returns them.
+      products: rows
+        .filter((row) => query || row.currentInventory !== 0 || row.shortageVisible || row.configuredMinimumStock !== null || row.replenishmentHidden)
+        .sort((a, b) => b.currentInventory - a.currentInventory),
       turnoverAvailable: false,
       turnoverNotice: '当前数据库没有连续历史库存快照，不能用当前库存代替平均库存，因此暂不计算标准库存周转率。',
       defaultMinimumStock: DEFAULT_MINIMUM_STOCK,

@@ -112,7 +112,7 @@ type InventoryOperations = {
   salesCoverage: { observedDays: number; reliable: boolean; firstObservedSaleAt: string | null; lastObservedSaleAt: string | null; minimumReliableDays: number };
   summary: { productCount: number; stockedProducts: number; totalInventory: number; outOfStockProducts: number; lowStockProducts: number; slowMovingProducts: number; expiredBatches?: number; expiredUnits?: number };
   coverageBuckets: { noSales: number; under30: number; days30To90: number; over90: number };
-  alerts: InventoryOperationRow[]; slowMoving: InventoryOperationRow[]; products: InventoryOperationRow[];
+  products: InventoryOperationRow[];
   turnoverAvailable: boolean; turnoverNotice: string; coverageNotice: string;
   defaultMinimumStock: number; shortageNotice: string;
 };

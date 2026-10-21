@@ -1722,3 +1722,20 @@ img, video { max-width: 100%; }
 .location-overview.jelly-location-card .action-primary { min-height:36px;padding:7px 12px; }
 .location-workspace>.empty-state { min-height:110px;align-self:start; }
 @media(max-width:850px){.location-overview.jelly-location-card{grid-template-columns:1fr}.location-overview.jelly-location-card .location-overview-metrics{justify-content:flex-start}}
+
+/* Receive form on phones: earlier layers set 1, 2 and 1fr+92px columns and overlapped; this block is the final say.
+   Two equal columns (barcode | name, expiry | quantity), the add button on its own row, long values shrink. */
+@media (max-width: 720px) {
+  .receive-form { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; align-items: end; }
+  .receive-form > label,
+  .receive-form > label:not(.expiry-label),
+  .receive-form > label:last-of-type,
+  .receive-form .expiry-label { grid-column: auto; min-width: 0; }
+  .receive-form > .receive-submit { grid-column: 1 / -1; width: 100%; }
+  .receive-form .expiry-fields,
+  .receive-form .expiry-fields { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(44px, 1fr); gap: 6px; }
+  .receive-form input { width: 100%; min-width: 0; font-size: 16px; }
+  .receive-form .expiry-fields input { padding-inline: 6px; }
+  .receive-form input.long-value { font-size: 13px; }
+}
+
