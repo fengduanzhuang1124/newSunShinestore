@@ -296,7 +296,7 @@ export class ManagementService {
     });
     const from = calendarDateStart(fromDate, organization.timezone);
     const to = nextCalendarDateStart(toDate, organization.timezone);
-    const baseline = this.posInventoryBaseline();
+    const baseline = await this.posInventoryBaseline(storeId);
     if (to <= baseline) throw new ConflictException('所选日期早于正式库存基准，不能重复扣减历史销量');
     return this.posInventoryApplication.previewRange(
       organizationId, storeId, from < baseline ? baseline : from, to,
@@ -317,19 +317,16 @@ export class ManagementService {
     });
     const from = calendarDateStart(fromDate, organization.timezone);
     const to = nextCalendarDateStart(toDate, organization.timezone);
-    const baseline = this.posInventoryBaseline();
+    const baseline = await this.posInventoryBaseline(storeId);
     if (to <= baseline) throw new ConflictException('所选日期早于正式库存基准，不能重复扣减历史销量');
     return this.posInventoryApplication.applyRange(
       organizationId, userId, storeId, from < baseline ? baseline : from, to,
     );
   }
 
-  private posInventoryBaseline() {
-    const value = process.env.POS_INVENTORY_BASELINE_AT;
-    const baseline = value ? new Date(value) : null;
-    if (!baseline || Number.isNaN(baseline.getTime())) {
-      throw new ConflictException('尚未配置POS正式扣库基准时间');
-    }
+  private async posInventoryBaseline(storeId: bigint) {
+    const baseline = await this.posInventoryApplication.resolveBaseline(storeId);
+    if (!baseline) throw new ConflictException('尚未配置POS正式扣库基准时间');
     return baseline;
   }
 

@@ -53,6 +53,8 @@ describe('PosInventoryApplicationService', () => {
       unitsPlanned: 3,
       reviewRequiredOrders: 2,
       blockedOrders: 0,
+      reviewLines: 0,
+      shortfallUnits: 0,
     });
     expect(client.posOrder.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
@@ -63,25 +65,30 @@ describe('PosInventoryApplicationService', () => {
     }));
   });
 
-  it('writes a SALE_OUT movement and decrements the batch atomically', async () => {
+  function applySetup(order: ReturnType<typeof paidOrder>, balances: ReturnType<typeof balance>[]) {
     const transaction = {
       posOrder: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 } as never),
-        findUniqueOrThrow: jest.fn().mockResolvedValue(paidOrder() as never),
+        findUniqueOrThrow: jest.fn().mockResolvedValue(order as never),
         update: jest.fn().mockResolvedValue({ id: 10n } as never),
       },
+      posOrderItem: { update: jest.fn().mockResolvedValue({} as never) },
       inventoryBalance: {
-        findMany: jest.fn().mockResolvedValue([balance()] as never),
+        findMany: jest.fn().mockResolvedValue(balances as never),
         updateMany: jest.fn().mockResolvedValue({ count: 1 } as never),
       },
       stockMovement: { create: jest.fn().mockResolvedValue({ id: 20n } as never) },
       auditLog: { create: jest.fn().mockResolvedValue({ id: 30n } as never) },
     };
     const client = {
-      posOrder: { findMany: jest.fn().mockResolvedValue([paidOrder()] as never) },
+      posOrder: { findMany: jest.fn().mockResolvedValue([order] as never) },
       $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)),
     };
-    const service = new PosInventoryApplicationService({ client } as never);
+    return { transaction, service: new PosInventoryApplicationService({ client } as never) };
+  }
+
+  it('writes a SALE_OUT movement and decrements the batch atomically', async () => {
+    const { transaction, service } = applySetup(paidOrder(), [balance()]);
 
     const result = await service.applyRange(1n, 7n, 3n, from, to);
 
@@ -90,6 +97,8 @@ describe('PosInventoryApplicationService', () => {
       appliedOrders: 1,
       unitsApplied: 3,
       blockedOrders: 0,
+      reviewLines: 0,
+      shortfallUnits: 0,
     });
     expect(transaction.stockMovement.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -110,6 +119,10 @@ describe('PosInventoryApplicationService', () => {
       }),
       data: { quantity: { decrement: 3 }, version: { increment: 1 } },
     });
+    expect(transaction.posOrderItem.update).toHaveBeenCalledWith({
+      where: { id: 100n },
+      data: { inventoryAppliedQuantity: 3, inventoryReviewReason: null },
+    });
     expect(transaction.posOrder.update).toHaveBeenCalledWith({
       where: { id: 10n },
       data: expect.objectContaining({
@@ -119,24 +132,65 @@ describe('PosInventoryApplicationService', () => {
     });
   });
 
-  it('blocks an order when available stock is insufficient', async () => {
-    const client = {
-      posOrder: {
-        findMany: jest.fn().mockResolvedValue([paidOrder()] as never),
-        count: jest.fn().mockResolvedValue(0 as never),
-      },
-      inventoryBalance: { findMany: jest.fn().mockResolvedValue([balance(2)] as never) },
-    };
-    const service = new PosInventoryApplicationService({ client } as never);
+  it('deducts what is available and records the shortfall for review instead of blocking the order', async () => {
+    const { transaction, service } = applySetup(paidOrder(), [balance(2)]);
 
-    const result = await service.previewRange(1n, 3n, from, to);
+    const result = await service.applyRange(1n, 7n, 3n, from, to);
 
-    expect(result.summary.blockedOrders).toBe(1);
+    expect(result.summary).toMatchObject({ appliedOrders: 1, unitsApplied: 2, blockedOrders: 0, reviewLines: 1, shortfallUnits: 1 });
     expect(result.issues).toEqual([expect.objectContaining({
-      orderNo: 'ORDER-10',
-      reason: 'INSUFFICIENT_INVENTORY',
-      required: 3,
-      available: 2,
+      orderNo: 'ORDER-10', reason: 'INSUFFICIENT_INVENTORY', itemId: '100', required: 3, available: 2,
     })]);
+    expect(transaction.inventoryBalance.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { quantity: { decrement: 2 }, version: { increment: 1 } },
+    }));
+    expect(transaction.posOrderItem.update).toHaveBeenCalledWith({
+      where: { id: 100n },
+      data: { inventoryAppliedQuantity: 2, inventoryReviewReason: 'INSUFFICIENT_INVENTORY' },
+    });
+  });
+
+  it('applies mapped lines even when another line in the order is unmapped or a return', async () => {
+    const order = paidOrder();
+    order.items.push(
+      { id: 101n, productId: null as unknown as bigint, quantity: '1.0000', isMinus: false, disposition: 'UNMAPPED', status: 'ACTIVE' },
+      { id: 102n, productId: 5n, quantity: '1.0000', isMinus: true, disposition: 'INVENTORY', status: 'ACTIVE' },
+      { id: 103n, productId: null as unknown as bigint, quantity: '1.0000', isMinus: false, disposition: 'NON_INVENTORY', status: 'ACTIVE' },
+    );
+    const { transaction, service } = applySetup(order, [balance()]);
+
+    const result = await service.applyRange(1n, 7n, 3n, from, to);
+
+    expect(result.summary).toMatchObject({ appliedOrders: 1, unitsApplied: 3, reviewLines: 2, shortfallUnits: 0 });
+    expect(result.issues.map((issue) => [issue.itemId, issue.reason])).toEqual([['101', 'UNMAPPED'], ['102', 'RETURN_LINE']]);
+    expect(transaction.posOrderItem.update).toHaveBeenCalledTimes(3);
+    expect(transaction.posOrderItem.update).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: 103n } }));
+  });
+
+  it('rolls the order back and reports a conflict when a batch changes mid-transaction', async () => {
+    const { transaction, service } = applySetup(paidOrder(), [balance()]);
+    transaction.inventoryBalance.updateMany.mockResolvedValue({ count: 0 } as never);
+
+    const result = await service.applyRange(1n, 7n, 3n, from, to);
+
+    expect(result.summary).toMatchObject({ appliedOrders: 0, blockedOrders: 1 });
+    expect(result.issues).toEqual([expect.objectContaining({ reason: 'CONCURRENT_CHANGE' })]);
+    expect(transaction.posOrder.update).not.toHaveBeenCalled();
+  });
+
+  it('reads the store baseline before falling back to the environment value', async () => {
+    const findUnique = jest.fn()
+      .mockResolvedValueOnce({ posInventoryBaselineAt: new Date('2026-10-20T10:01:47.000Z') } as never)
+      .mockResolvedValueOnce({ posInventoryBaselineAt: null } as never);
+    const service = new PosInventoryApplicationService({ client: { store: { findUnique } } } as never);
+    const previous = process.env.POS_INVENTORY_BASELINE_AT;
+    process.env.POS_INVENTORY_BASELINE_AT = '2026-10-12T05:15:22.401Z';
+    try {
+      expect(await service.resolveBaseline(3n)).toEqual(new Date('2026-10-20T10:01:47.000Z'));
+      expect(await service.resolveBaseline(3n)).toEqual(new Date('2026-10-12T05:15:22.401Z'));
+    } finally {
+      if (previous === undefined) delete process.env.POS_INVENTORY_BASELINE_AT;
+      else process.env.POS_INVENTORY_BASELINE_AT = previous;
+    }
   });
 });

@@ -141,3 +141,55 @@ describe('PosObservationService reconciliation', () => {
     });
   });
 });
+
+describe('PosObservationService product mappings', () => {
+  function setup(existing: { barcode: string; productId: bigint }[]) {
+    const transaction = {
+      productBarcode: {
+        findMany: jest.fn().mockResolvedValue(existing as never),
+        create: jest.fn().mockResolvedValue({ id: 1n } as never),
+      },
+      product: { findUnique: jest.fn(), create: jest.fn().mockResolvedValue({ id: 99n } as never) },
+      storeProduct: { upsert: jest.fn().mockResolvedValue({} as never) },
+      posProductMapping: { upsert: jest.fn().mockResolvedValue({} as never) },
+    };
+    const client = {
+      $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)),
+    };
+    const products = {
+      listAll: jest.fn().mockResolvedValue([{
+        externalProductId: '108348', name: 'heorshe sippy cup', barcode: '735940885232', sku: null, salePrice: 12.5,
+      }] as never),
+    };
+    const service = new PosObservationService({ client } as never, products as never, {} as never);
+    return { service, transaction };
+  }
+
+  it('maps a POS barcode to the product holding the same code with a leading zero', async () => {
+    const { service, transaction } = setup([{ barcode: '0735940885232', productId: 760n }]);
+
+    const result = await service.importProductMappings(1n, 2n);
+
+    expect(result).toMatchObject({ mapped: 1, skippedAmbiguous: 0 });
+    expect(transaction.product.create).not.toHaveBeenCalled();
+    expect(transaction.productBarcode.create).toHaveBeenCalledWith({
+      data: { organizationId: 1n, productId: 760n, barcode: '735940885232', isPrimary: false },
+    });
+    expect(transaction.posProductMapping.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ productId: 760n, barcode: '735940885232' }),
+    }));
+  });
+
+  it('leaves a POS barcode unmapped when its normalized code belongs to several products', async () => {
+    const { service, transaction } = setup([
+      { barcode: '0735940885232', productId: 760n },
+      { barcode: '00735940885232', productId: 761n },
+    ]);
+
+    const result = await service.importProductMappings(1n, 2n);
+
+    expect(result).toMatchObject({ mapped: 0, skippedAmbiguous: 1 });
+    expect(transaction.product.create).not.toHaveBeenCalled();
+    expect(transaction.posProductMapping.upsert).not.toHaveBeenCalled();
+  });
+});

@@ -4,12 +4,15 @@ import { PrismaService } from '../../database/prisma.service.js';
 import { MoniOrderGateway } from '../adapters/moni/moni-order.gateway.js';
 import { MoniProductGateway } from '../adapters/moni/moni-product.gateway.js';
 import { dateTimeInZone, nextCalendarDateStart } from './pos-date.js';
+import { barcodeSpellings, pickBarcodeMatch } from '../../inventory/barcode-lookup.js';
 
 export interface PosMappingImportResult {
   observed: number;
   mapped: number;
   skippedWithoutBarcode: number;
   skippedInvalid: number;
+  // POS barcodes whose normalized code belongs to several local products; left unmapped for a person to resolve.
+  skippedAmbiguous: number;
 }
 
 export interface PosOrderObservationResult {
@@ -63,6 +66,7 @@ export class PosObservationService {
     let mapped = 0;
     let skippedWithoutBarcode = 0;
     let skippedInvalid = 0;
+    let skippedAmbiguous = 0;
 
     for (const source of sourceProducts) {
       if (!source.barcode) {
@@ -80,17 +84,22 @@ export class PosObservationService {
         ? null
         : Math.round(source.salePrice * 100);
 
-      await this.prisma.client.$transaction(async (transaction) => {
-        const existingBarcode = await transaction.productBarcode.findUnique({
-          where: {
-            organizationId_barcode: {
-              organizationId,
-              barcode,
-            },
-          },
+      const linked = await this.prisma.client.$transaction(async (transaction) => {
+        const candidates = await transaction.productBarcode.findMany({
+          where: { organizationId, barcode: { in: barcodeSpellings(barcode) } },
+          select: { barcode: true, productId: true },
         });
+        const match = pickBarcodeMatch(barcode, candidates);
+        if (match.kind === 'ambiguous') return false;
 
-        let productId = existingBarcode?.productId;
+        let productId = match.kind === 'none' ? undefined : match.row.productId;
+        if (match.kind === 'normalized') {
+          // Same code with different leading zeros: record the POS spelling on the existing product instead of
+          // creating a duplicate product that would never receive the stock already counted.
+          await transaction.productBarcode.create({
+            data: { organizationId, productId: match.row.productId, barcode, isPrimary: false },
+          });
+        }
         if (!productId) {
           let sku = source.sku || `MONI-${externalProductId}`;
           const skuOwner = await transaction.product.findUnique({
@@ -151,8 +160,10 @@ export class PosObservationService {
             lastSeenAt: new Date(),
           },
         });
+        return true;
       });
-      mapped += 1;
+      if (linked) mapped += 1;
+      else skippedAmbiguous += 1;
     }
 
     return {
@@ -160,6 +171,7 @@ export class PosObservationService {
       mapped,
       skippedWithoutBarcode,
       skippedInvalid,
+      skippedAmbiguous,
     };
   }
 

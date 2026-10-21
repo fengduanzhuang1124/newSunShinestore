@@ -183,6 +183,7 @@ model Store {
   name                 String                    @db.VarChar(120)
   address              String?                   @db.VarChar(255)
   status               RecordStatus              @default(ACTIVE)
+  posInventoryBaselineAt DateTime?               @map("pos_inventory_baseline_at")
   createdAt            DateTime                  @default(now()) @map("created_at")
   updatedAt            DateTime                  @updatedAt @map("updated_at")
   organization         Organization              @relation(fields: [organizationId], references: [id])
@@ -948,6 +949,8 @@ model PosOrderItem {
   disposition       PosItemDisposition          @default(UNMAPPED)
   status            RecordStatus                @default(ACTIVE)
   exclusionReason   String?                     @map("exclusion_reason") @db.VarChar(120)
+  inventoryAppliedQuantity Int?                 @map("inventory_applied_quantity")
+  inventoryReviewReason String?                 @map("inventory_review_reason") @db.VarChar(40)
   createdAt         DateTime                    @default(now()) @map("created_at")
   updatedAt         DateTime                    @updatedAt @map("updated_at")
   order             PosOrder                    @relation(fields: [orderId], references: [id])
@@ -960,6 +963,7 @@ model PosOrderItem {
   @@index([externalProductId])
   @@index([productId, disposition])
   @@index([mappingId])
+  @@index([inventoryReviewReason])
   @@map("pos_order_items")
 }
 

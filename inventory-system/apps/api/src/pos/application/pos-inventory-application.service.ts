@@ -2,10 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service.js';
 
+// Why a sale line was not (fully) deducted. The rest of the order is still applied; these lines wait for review.
+export type LineReviewReason = 'UNMAPPED' | 'REVIEW_REQUIRED' | 'RETURN_LINE' | 'INVALID_QUANTITY' | 'INSUFFICIENT_INVENTORY';
+
 type ApplicationIssue = {
   orderId: string;
   orderNo: string;
-  reason: 'INVALID_ITEMS' | 'INSUFFICIENT_INVENTORY' | 'ALREADY_APPLIED';
+  reason: LineReviewReason | 'ALREADY_APPLIED' | 'CONCURRENT_CHANGE';
+  itemId?: string;
   productId?: string;
   required?: number;
   available?: number;
@@ -48,6 +52,16 @@ type Allocation = {
   expectedVersion: number;
 };
 
+type LinePlan = {
+  itemId: bigint;
+  productId: bigint | null;
+  required: number;
+  applied: number;
+  reviewReason: LineReviewReason | null;
+};
+
+type OrderPlan = { allocations: Allocation[]; lines: LinePlan[] };
+
 class InventoryApplicationConflict extends Error {
   constructor(readonly issue: ApplicationIssue) {
     super(issue.reason);
@@ -57,6 +71,19 @@ class InventoryApplicationConflict extends Error {
 @Injectable()
 export class PosInventoryApplicationService {
   constructor(private readonly prisma: PrismaService) {}
+
+  // Sales before this instant are already reflected in the counted stock. The store setting wins; the
+  // POS_INVENTORY_BASELINE_AT environment value is only the fallback for stores not yet configured.
+  async resolveBaseline(storeId: bigint): Promise<Date | null> {
+    const store = await this.prisma.client.store.findUnique({
+      where: { id: storeId },
+      select: { posInventoryBaselineAt: true },
+    });
+    if (store?.posInventoryBaselineAt) return store.posInventoryBaselineAt;
+    const value = process.env.POS_INVENTORY_BASELINE_AT;
+    const fallback = value ? new Date(value) : null;
+    return fallback && !Number.isNaN(fallback.getTime()) ? fallback : null;
+  }
 
   async previewRange(
     organizationId: bigint,
@@ -78,18 +105,14 @@ export class PosInventoryApplicationService {
     ]);
     const projected = balances.map((balance) => ({ ...balance }));
     const issues: ApplicationIssue[] = [];
-    let eligibleOrders = 0;
     let unitsPlanned = 0;
+    let shortfallUnits = 0;
 
     for (const order of orders) {
-      try {
-        const allocations = this.planOrder(order, projected);
-        eligibleOrders += 1;
-        unitsPlanned += allocations.reduce((sum, row) => sum + row.quantity, 0);
-      } catch (error) {
-        if (!(error instanceof InventoryApplicationConflict)) throw error;
-        issues.push(error.issue);
-      }
+      const plan = this.planOrder(order, projected);
+      unitsPlanned += plan.allocations.reduce((sum, row) => sum + row.quantity, 0);
+      shortfallUnits += this.shortfall(plan);
+      issues.push(...this.reviewIssues(order, plan));
     }
 
     return {
@@ -97,10 +120,12 @@ export class PosInventoryApplicationService {
       period: { from: from.toISOString(), toExclusive: to.toISOString() },
       summary: {
         ordersScanned: orders.length,
-        eligibleOrders,
+        eligibleOrders: orders.length,
         unitsPlanned,
         reviewRequiredOrders: reviewRequired,
-        blockedOrders: issues.length,
+        blockedOrders: 0,
+        reviewLines: issues.length,
+        shortfallUnits,
       },
       issues,
     };
@@ -117,6 +142,9 @@ export class PosInventoryApplicationService {
     const issues: ApplicationIssue[] = [];
     let appliedOrders = 0;
     let unitsApplied = 0;
+    let blockedOrders = 0;
+    let reviewLines = 0;
+    let shortfallUnits = 0;
 
     for (const candidate of orders) {
       try {
@@ -128,8 +156,12 @@ export class PosInventoryApplicationService {
         );
         appliedOrders += 1;
         unitsApplied += result.unitsApplied;
+        reviewLines += result.reviewIssues.length;
+        shortfallUnits += result.shortfallUnits;
+        issues.push(...result.reviewIssues);
       } catch (error) {
         if (!(error instanceof InventoryApplicationConflict)) throw error;
+        blockedOrders += 1;
         issues.push(error.issue);
       }
     }
@@ -141,7 +173,9 @@ export class PosInventoryApplicationService {
         ordersScanned: orders.length,
         appliedOrders,
         unitsApplied,
-        blockedOrders: issues.length,
+        blockedOrders,
+        reviewLines,
+        shortfallUnits,
       },
       issues,
     };
@@ -192,64 +226,30 @@ export class PosInventoryApplicationService {
     });
   }
 
-  private planOrder(order: OrderSnapshot, balances: BalanceSnapshot[]): Allocation[] {
-    const inventoryItems = order.items.filter((item) => item.disposition === 'INVENTORY');
-    const invalid = order.items.some((item) =>
-      item.status !== 'ACTIVE' ||
-      (item.disposition !== 'INVENTORY' && item.disposition !== 'NON_INVENTORY') ||
-      (item.disposition === 'INVENTORY' && (
-        item.productId === null ||
-        item.isMinus ||
-        !Number.isInteger(Number(item.quantity)) ||
-        Number(item.quantity) <= 0
-      )),
-    );
-    if (invalid) {
-      throw new InventoryApplicationConflict({
-        orderId: order.id.toString(),
-        orderNo: order.externalOrderNo,
-        reason: 'INVALID_ITEMS',
-      });
-    }
-
-    const requiredByProduct = new Map<bigint, number>();
-    for (const item of inventoryItems) {
-      const productId = item.productId!;
-      requiredByProduct.set(
-        productId,
-        (requiredByProduct.get(productId) ?? 0) + Number(item.quantity),
-      );
-    }
-    for (const [productId, required] of requiredByProduct) {
-      const available = balances
-        .filter((balance) => balance.productId === productId && balance.quantity > 0)
-        .reduce((sum, balance) => sum + balance.quantity, 0);
-      if (available < required) {
-        throw new InventoryApplicationConflict({
-          orderId: order.id.toString(),
-          orderNo: order.externalOrderNo,
-          reason: 'INSUFFICIENT_INVENTORY',
-          productId: productId.toString(),
-          required,
-          available,
-        });
-      }
-    }
-
+  // Each inventory line is deducted on its own, first-expiry-first. A line that cannot be (fully) deducted is
+  // recorded with a review reason instead of blocking the whole order; stock is never driven below zero.
+  private planOrder(order: OrderSnapshot, balances: BalanceSnapshot[]): OrderPlan {
     const allocations: Allocation[] = [];
-    for (const item of inventoryItems) {
-      const productId = item.productId!;
+    const lines: LinePlan[] = [];
+    for (const item of order.items) {
+      if (item.status !== 'ACTIVE' || item.disposition === 'NON_INVENTORY') continue;
       const required = Number(item.quantity);
-      const candidates = balances.filter((balance) =>
-        balance.productId === productId && balance.quantity > 0,
-      );
+      const line: LinePlan = { itemId: item.id, productId: item.productId, required, applied: 0, reviewReason: null };
+      lines.push(line);
+      if (item.disposition === 'REVIEW_REQUIRED') line.reviewReason = 'REVIEW_REQUIRED';
+      else if (item.disposition !== 'INVENTORY' || item.productId === null) line.reviewReason = 'UNMAPPED';
+      else if (item.isMinus) line.reviewReason = 'RETURN_LINE';
+      else if (!Number.isInteger(required) || required <= 0) line.reviewReason = 'INVALID_QUANTITY';
+      if (line.reviewReason) continue;
+
       let remaining = required;
-      for (const balance of candidates) {
+      for (const balance of balances) {
         if (remaining === 0) break;
+        if (balance.productId !== item.productId || balance.quantity <= 0) continue;
         const quantity = Math.min(balance.quantity, remaining);
         allocations.push({
           itemId: item.id,
-          productId,
+          productId: item.productId,
           warehouseId: balance.warehouseId,
           batchId: balance.batchId,
           quantity,
@@ -259,8 +259,30 @@ export class PosInventoryApplicationService {
         balance.version += 1;
         remaining -= quantity;
       }
+      line.applied = required - remaining;
+      if (remaining > 0) line.reviewReason = 'INSUFFICIENT_INVENTORY';
     }
-    return allocations;
+    return { allocations, lines };
+  }
+
+  private shortfall(plan: OrderPlan) {
+    return plan.lines
+      .filter((line) => line.reviewReason === 'INSUFFICIENT_INVENTORY')
+      .reduce((sum, line) => sum + line.required - line.applied, 0);
+  }
+
+  private reviewIssues(order: OrderSnapshot, plan: OrderPlan): ApplicationIssue[] {
+    return plan.lines
+      .filter((line) => line.reviewReason !== null)
+      .map((line) => ({
+        orderId: order.id.toString(),
+        orderNo: order.externalOrderNo,
+        reason: line.reviewReason!,
+        itemId: line.itemId.toString(),
+        productId: line.productId?.toString(),
+        required: line.required,
+        available: line.applied,
+      }));
   }
 
   private applyOrder(
@@ -315,10 +337,10 @@ export class PosInventoryApplicationService {
           batch: { select: { expiryDate: true, status: true } },
         },
       });
-      const allocations = this.planOrder(order, balances);
+      const plan = this.planOrder(order, balances);
       const requestId = randomUUID();
 
-      for (const allocation of allocations) {
+      for (const allocation of plan.allocations) {
         const idempotencyKey = `pos:${order.id}:${allocation.itemId}:${allocation.warehouseId}:${allocation.batchId}`;
         await tx.stockMovement.create({
           data: {
@@ -352,17 +374,26 @@ export class PosInventoryApplicationService {
           },
         });
         if (updated.count !== 1) {
+          // Someone changed this batch mid-transaction; roll the whole order back so the next run retries it.
           throw new InventoryApplicationConflict({
             orderId: order.id.toString(),
             orderNo: order.externalOrderNo,
-            reason: 'INSUFFICIENT_INVENTORY',
+            reason: 'CONCURRENT_CHANGE',
             productId: allocation.productId.toString(),
-            required: allocation.quantity,
-            available: 0,
           });
         }
       }
 
+      for (const line of plan.lines) {
+        await tx.posOrderItem.update({
+          where: { id: line.itemId },
+          data: { inventoryAppliedQuantity: line.applied, inventoryReviewReason: line.reviewReason },
+        });
+      }
+
+      const unitsApplied = plan.allocations.reduce((sum, row) => sum + row.quantity, 0);
+      const reviewIssues = this.reviewIssues(order, plan);
+      const shortfallUnits = this.shortfall(plan);
       await tx.posOrder.update({
         where: { id: order.id },
         data: {
@@ -382,15 +413,19 @@ export class PosInventoryApplicationService {
           requestId,
           afterSummary: {
             externalOrderNo: order.externalOrderNo,
-            unitsApplied: allocations.reduce((sum, row) => sum + row.quantity, 0),
-            movementCount: allocations.length,
+            unitsApplied,
+            movementCount: plan.allocations.length,
+            reviewLines: reviewIssues.map((issue) => ({ itemId: issue.itemId, reason: issue.reason, required: issue.required, applied: issue.available })),
+            shortfallUnits,
           },
         },
       });
 
       return {
         orderId: order.id.toString(),
-        unitsApplied: allocations.reduce((sum, row) => sum + row.quantity, 0),
+        unitsApplied,
+        reviewIssues,
+        shortfallUnits,
       };
     });
   }
