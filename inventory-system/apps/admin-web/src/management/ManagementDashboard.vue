@@ -51,6 +51,7 @@ type PosSyncRun = {
   ordersSkipped: number; itemsObserved: number; exceptionsCount: number; errorCode: string | null; errorMessage: string | null;
 };
 type PosReviewLine = { itemId: string; orderNo: string; orderedAt: string; sourceName: string | null; productId: string | null; productName: string | null; reason: PosInventoryIssue['reason']; required: number; applied: number; remaining: number; availableStock: number; canReapply: boolean };
+type PosUnlistedStock = { products: { productId: string; sku: string; productName: string; englishName: string | null; barcodes: string[]; stock: number; createdAt: string }[]; totalUnits: number };
 type PosReapplyResult = { lines: number; completed: number; stillShort: number; unitsApplied: number; skipped: { itemId: string; reason: string }[] };
 type PosRealtimeStatus = { enabled: boolean; intervalMinutes: number; lastTickAt: string | null; lastSuccessAt: string | null; lastError: string | null; lastApplied: { storeId: string; appliedOrders: number; unitsApplied: number; reviewLines: number; shortfallUnits: number } | null };
 type PosSyncStatus = { running: boolean; realtime?: PosRealtimeStatus; cursor: { lastSourceTimestamp: string | null; updatedAt: string } | null; latestRun: PosSyncRun | null; history: PosSyncRun[] };
@@ -158,6 +159,7 @@ const error = ref('');
 const posCheck = ref<PosDataCheck | null>(null);
 const posStatus = ref<PosSyncStatus | null>(null);
 const posReviewLines = ref<PosReviewLine[] | null>(null);
+const posUnlistedStock = ref<PosUnlistedStock | null>(null);
 const posReapplyLoading = ref(false);
 const posReapplyResult = ref<PosReapplyResult | null>(null);
 const posIssues = ref<PosSyncIssues | null>(null);
@@ -576,7 +578,10 @@ async function loadPosManagement() {
     if (managementAccess.value?.capabilities.posIssues) posCheck.value = await managementRequest<PosDataCheck>(`/management/pos-sync/check?storeId=${store}`);
     if (managementAccess.value?.capabilities.posSync) {
       posStatus.value = await managementRequest<PosSyncStatus>(`/management/pos-sync/status?storeId=${store}`);
-      posReviewLines.value = (await managementRequest<{ lines: PosReviewLine[] }>(`/management/pos-inventory/review-lines?storeId=${store}`)).lines;
+      [posReviewLines.value, posUnlistedStock.value] = await Promise.all([
+        managementRequest<{ lines: PosReviewLine[] }>(`/management/pos-inventory/review-lines?storeId=${store}`).then((data) => data.lines),
+        managementRequest<PosUnlistedStock>(`/management/pos-mapping/unlisted-stock?storeId=${store}`),
+      ]);
     }
     if (managementAccess.value?.capabilities.posIssues) {
       [posIssues.value, barcodeAudit.value] = await Promise.all([
@@ -940,6 +945,17 @@ function exportPurchaseOrderExcel() {
   const url = URL.createObjectURL(new Blob(['\ufeff', xml], { type: 'application/vnd.ms-excel;charset=utf-8' }));
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${order.orderNo}-本周进货单.xls`; anchor.click(); URL.revokeObjectURL(url);
   showPurchaseMessage('进货单 Excel 已生成');
+}
+
+function exportUnlistedStockExcel() {
+  const products = posUnlistedStock.value?.products;
+  if (!products?.length) return;
+  const headers = ['序号', '商品名称', '英文名称', '条码', '本地SKU', '当前库存'];
+  const rows = products.map((item, index) => [index + 1, item.productName, item.englishName || '', item.barcodes.join(' / '), item.sku, item.stock]);
+  const tableRows = [headers, ...rows].map((row) => `<Row>${row.map((cell) => `<Cell><Data ss:Type="${typeof cell === 'number' ? 'Number' : 'String'}">${escapeXml(cell)}</Data></Cell>`).join('')}</Row>`).join('');
+  const xml = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="POS未建档商品"><Table>${tableRows}</Table></Worksheet></Workbook>`;
+  const url = URL.createObjectURL(new Blob(['\ufeff', xml], { type: 'application/vnd.ms-excel;charset=utf-8' }));
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${props.storeName || '门店'}-POS未建档商品.xls`; anchor.click(); URL.revokeObjectURL(url);
 }
 
 function openProcurement(view: 'suggestions' | 'order' = 'order') { purchaseView.value = view; selectSection('procurement'); }
@@ -1316,6 +1332,13 @@ onBeforeUnmount(() => { if (purchaseMessageTimer) clearTimeout(purchaseMessageTi
           <details v-if="posInventoryPreview.issues.length" class="pos-inventory-issues"><summary>查看待复核明细（{{ posInventoryPreview.issues.length }}）</summary><div class="management-detail-scroll"><article v-for="issue in posInventoryPreview.issues" :key="`${issue.orderId}-${issue.itemId ?? ''}`"><span><strong>订单 {{ issue.orderNo }}</strong><small v-if="issue.productId">商品 ID {{ issue.productId }}</small></span><em>{{ posInventoryIssueLabel(issue) }}</em></article></div></details>
         </template>
         <p v-else class="pos-inventory-empty">选择日期并生成预览后，系统会列出可以扣减的订单、件数和被拦截原因。这里不会自动写入库存。</p>
+      </section>
+      <section v-if="managementAccess?.capabilities.posSync" class="system-card pos-unlisted-card">
+        <div class="card-title"><div><h3>POS 未建档商品</h3><p>这些商品有库存，但 POS 里还没有，卖出后不会扣库存。请在 POS 用相同条码建档，系统每小时自动关联。</p></div><button v-if="posUnlistedStock?.products.length" class="table-action" type="button" @click="exportUnlistedStockExcel">导出 Excel</button></div>
+        <p v-if="posUnlistedStock === null" class="system-empty">{{ posLoading ? '正在读取…' : posLoadError ? '读取失败' : '尚未读取' }}</p>
+        <p v-else-if="!posUnlistedStock.products.length" class="system-empty">所有有库存的商品都已在 POS 建档。</p>
+        <template v-else><p class="scope-note">{{ posUnlistedStock.products.length }} 种商品，共 {{ number(posUnlistedStock.totalUnits) }} 件库存。</p>
+        <div class="product-table-wrap management-detail-scroll"><table><thead><tr><th>商品</th><th>条码</th><th>库存</th></tr></thead><tbody><tr v-for="item in posUnlistedStock.products" :key="item.productId"><td><strong>{{ item.productName }}</strong><small v-if="item.englishName">{{ item.englishName }}</small></td><td>{{ item.barcodes.join(' / ') || '无条码' }}</td><td>{{ number(item.stock) }}</td></tr></tbody></table></div></template>
       </section>
       <section v-if="managementAccess?.capabilities.posSync" class="system-card pos-review-card">
         <div class="card-title"><div><h3>复核明细</h3><p>已扣库订单中没扣足的销售行。商品映射补齐后系统会自动补扣；库存不足的行需确认货已到再重扣，不会扣成负数。</p></div><button v-if="posReviewLines?.some((line) => line.canReapply)" class="table-action" type="button" :disabled="posReapplyLoading" @click="reapplyReviewLines(posReviewLines!.filter((line) => line.canReapply).map((line) => line.itemId))">重扣全部可扣明细（{{ posReviewLines!.filter((line) => line.canReapply).length }}）</button></div>

@@ -99,6 +99,13 @@ export class ManagementController {
     };
   }
 
+  @Get('pos-mapping/unlisted-stock')
+  async posUnlistedStock(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue?: string) {
+    const storeId = this.storeId(storeIdValue);
+    const user = request.inventoryUser!;
+    return { code: 200, message: 'POS未建档商品查询成功', data: await this.management.posUnlistedStock(user.organizationId, user.id, storeId) };
+  }
+
   @Get('pos-inventory/review-lines')
   async posInventoryReviewLines(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue?: string) {
     const storeId = this.storeId(storeIdValue);

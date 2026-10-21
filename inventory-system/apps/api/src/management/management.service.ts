@@ -342,6 +342,39 @@ export class ManagementService {
     );
   }
 
+  // Stocked products the POS does not know yet: their sales cannot reduce stock until the POS lists them with the
+  // same barcode, after which the hourly mapping refresh links them automatically.
+  async posUnlistedStock(organizationId: bigint, userId: bigint, storeId: bigint) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.posSync);
+    const productWhere = {
+      organizationId, status: 'ACTIVE' as const,
+      posProductMappings: { none: { storeId, status: 'ACTIVE' as const } },
+    };
+    const [stock, products] = await Promise.all([
+      this.prisma.client.inventoryBalance.groupBy({
+        by: ['productId'], where: { organizationId, warehouse: { storeId, status: 'ACTIVE' }, product: productWhere },
+        _sum: { quantity: true },
+      }),
+      this.prisma.client.product.findMany({
+        where: productWhere,
+        select: {
+          id: true, sku: true, name: true, englishName: true, createdAt: true,
+          barcodes: { where: { status: 'ACTIVE' }, orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }], select: { barcode: true } },
+        },
+      }),
+    ]);
+    const quantity = new Map(stock.map((row) => [row.productId.toString(), row._sum.quantity ?? 0]));
+    const rows = products
+      .map((product) => ({
+        productId: product.id.toString(), sku: product.sku, productName: product.name, englishName: product.englishName,
+        barcodes: product.barcodes.map((row) => row.barcode).filter((barcode) => !barcode.startsWith('LOCAL-')),
+        stock: quantity.get(product.id.toString()) ?? 0, createdAt: product.createdAt.toISOString(),
+      }))
+      .filter((row) => row.stock > 0)
+      .sort((a, b) => b.stock - a.stock);
+    return { products: rows, totalUnits: rows.reduce((sum, row) => sum + row.stock, 0) };
+  }
+
   async posInventoryReviewLines(organizationId: bigint, userId: bigint, storeId: bigint) {
     await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.posSync);
     return { lines: await this.posInventoryApplication.listReviewLines(organizationId, storeId) };

@@ -22,6 +22,7 @@ const fixtures: Record<string, unknown> = {
   'product-insight-tags': { disclaimer: '不代表购买者真实身份', coverage: { productCount: 1, approvedProducts: 0, pendingProducts: 0, untaggedProducts: 1, approvedCoveragePercent: 0 }, tags: [{ id: 't1', code: 'milk', name: '奶粉', dimension: 'BUSINESS_CATEGORY', parentId: null, status: 'ACTIVE', sortOrder: 1 }], tagTree: [{ id: 't1', code: 'milk', name: '奶粉', dimension: 'BUSINESS_CATEGORY', children: [], status: 'ACTIVE', sortOrder: 1 }], dimensions: [{ code: 'BUSINESS_CATEGORY', name: '商品分类' }], products: [{ ...product, assignments: [] }] },
   'pos-sync/check': { checkedAt: null, readiness: 'NEEDS_REVIEW', orders: { total: 2, lastOrderedAt: null }, items: { mappingCoveragePercent: 50, mapped: 1, total: 2 }, issues: { total: 1 }, checks: [] },
   'pos-sync/status': { running: false, latestRun: null, cursor: null, history: [] },
+  'pos-mapping/unlisted-stock': { products: [{ productId: '3734', sku: 'LOCAL-1', productName: '8分钟Pro Xylane玻色因细胞焕活精华液', englishName: null, barcodes: ['9421907711157'], stock: 240, createdAt: '2026-10-20T00:00:00.000Z' }], totalUnits: 240 },
   'pos-inventory/review-lines': { lines: [
     { itemId: '501', orderNo: 'RO-1', orderedAt: '2026-10-21T01:00:00.000Z', sourceName: 'alpine hand cream', productId: '40', productName: 'alpine 蜂蜜护手霜', reason: 'INSUFFICIENT_INVENTORY', required: 2, applied: 0, remaining: 2, availableStock: 12, canReapply: true },
     { itemId: '502', orderNo: 'RO-2', orderedAt: '2026-10-21T02:00:00.000Z', sourceName: 'careline', productId: null, productName: null, reason: 'UNMAPPED', required: 1, applied: 0, remaining: 1, availableStock: 0, canReapply: false },
@@ -187,6 +188,15 @@ describe('经营管理页面组织', () => {
     const call = fetchSpy.mock.calls.find(([url]) => String(url).includes('pos-sync/run'));
     expect(call?.[1]?.method).toBe('POST');
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ date: '2026-10-01', reconcile: false });
+  });
+
+  it('lists stocked products the POS has not listed yet', async () => {
+    const { wrapper } = setup(); await flushPromises(); await go(wrapper, '数据中心');
+    const card = wrapper.find('.pos-unlisted-card');
+    expect(card.text()).toContain('8分钟Pro Xylane玻色因细胞焕活精华液');
+    expect(card.text()).toContain('9421907711157');
+    expect(card.text()).toContain('1 种商品，共 240 件库存');
+    expect(card.text()).toContain('导出 Excel');
   });
 
   it('lists review lines and re-applies a short line only when asked', async () => {

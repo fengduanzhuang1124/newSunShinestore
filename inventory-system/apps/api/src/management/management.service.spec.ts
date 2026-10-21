@@ -160,3 +160,27 @@ describe('ManagementService.posDataCheck', () => {
     expect(result.checks[0]).toEqual(expect.objectContaining({ code: 'NO_MISC_SALES', passed: false }));
   });
 });
+
+describe('ManagementService.posUnlistedStock', () => {
+  it('lists stocked products without a POS mapping and hides internal LOCAL barcodes', async () => {
+    const product = { findMany: jest.fn().mockResolvedValue([
+      { id: 1n, sku: 'LOCAL-A', name: '8分钟Pro 精华', englishName: null, createdAt: new Date('2026-10-20T00:00:00.000Z'), barcodes: [{ barcode: '9421907711157' }, { barcode: 'LOCAL-1' }] },
+      { id: 2n, sku: 'B', name: '已售完商品', englishName: null, createdAt: new Date('2026-10-20T00:00:00.000Z'), barcodes: [] },
+    ] as never) };
+    const inventoryBalance = { groupBy: jest.fn().mockResolvedValue([{ productId: 1n, _sum: { quantity: 240 } }, { productId: 2n, _sum: { quantity: 0 } }] as never) };
+    const client = {
+      userStoreRole: {
+        findMany: jest.fn().mockResolvedValue([{ store: { id: 1n, name: 'City' }, role: { code: 'ADMIN', permissions: [] } }] as never),
+      },
+      product, inventoryBalance,
+    };
+    const service = new ManagementService({ client } as never, {} as never, {} as never, {} as never);
+
+    const result = await service.posUnlistedStock(1n, 2n, 1n);
+
+    expect(result).toEqual({ totalUnits: 240, products: [expect.objectContaining({ productId: '1', barcodes: ['9421907711157'], stock: 240 })] });
+    expect(product.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ posProductMappings: { none: { storeId: 1n, status: 'ACTIVE' } } }),
+    }));
+  });
+});
