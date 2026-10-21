@@ -13,6 +13,8 @@ type ProductsBrandsInput = { from: string; to: string; query?: string; brand?: s
 const DEFAULT_MINIMUM_STOCK = 20;
 // Zero-stock products count as out of stock only if they sold within this window (store owner, 2026-10-21).
 const SHORTAGE_SALES_WINDOW_DAYS = 180;
+// Products received within this many days are listed as arrived instead of being suggested again.
+const ARRIVED_WINDOW_DAYS = 7;
 const MANAGEMENT_PERMISSIONS = {
   overview: 'management.overview.view', sales: 'management.sales.view', inventory: 'management.inventory.view',
   posSync: 'management.pos.sync', posIssues: 'management.pos.issues', permissions: 'management.permissions.manage',
@@ -45,7 +47,8 @@ export class ManagementService {
 
   async posDataCheck(organizationId: bigint, userId: bigint, storeId: bigint) {
     const store = await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.posIssues);
-    const [orderCount, itemCount, nonInventoryItems, mappedItems, unmappedItems, reviewItems, inactiveItems, refundReviews, failedRuns, dateRange] = await Promise.all([
+    const miscSince = new Date(Date.now() - 7 * 86_400_000);
+    const [orderCount, itemCount, nonInventoryItems, mappedItems, unmappedItems, reviewItems, inactiveItems, refundReviews, failedRuns, dateRange, miscSales] = await Promise.all([
       this.prisma.client.posOrder.count({ where: { organizationId, storeId } }),
       this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', order: { organizationId, storeId } } }),
       this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', disposition: 'NON_INVENTORY', order: { organizationId, storeId } } }),
@@ -56,7 +59,13 @@ export class ManagementService {
       this.prisma.client.posRefundReview.count({ where: { status: 'PENDING', order: { organizationId, storeId } } }),
       this.prisma.client.posSyncRun.count({ where: { organizationId, storeId, status: 'FAILED' } }),
       this.prisma.client.posOrder.aggregate({ where: { organizationId, storeId }, _min: { orderedAt: true }, _max: { orderedAt: true } }),
+      // MISC lines hide which product left the shelf (store rule since 2026-10-21: scan the real product and change the price).
+      this.prisma.client.posOrderItem.aggregate({
+        where: { status: 'ACTIVE', sourceName: { startsWith: 'MISC' }, order: { organizationId, storeId, sourceStatus: 'Paid', orderedAt: { gte: miscSince } } },
+        _count: { _all: true }, _sum: { quantity: true },
+      }),
     ]);
+    const miscLines = miscSales._count._all;
     const mappableItemCount = Math.max(0, itemCount - nonInventoryItems);
     const mappingCoveragePercent = mappableItemCount === 0 ? 0 : Math.round((mappedItems / mappableItemCount) * 10000) / 100;
     const issueCount = unmappedItems + reviewItems + refundReviews;
@@ -72,8 +81,10 @@ export class ManagementService {
       },
       items: { total: itemCount, mappable: mappableItemCount, nonInventory: nonInventoryItems, mapped: mappedItems, unmapped: unmappedItems, reviewRequired: reviewItems, inactive: inactiveItems, mappingCoveragePercent },
       issues: { total: issueCount, pendingRefundReviews: refundReviews, failedSyncRuns: failedRuns },
+      miscSales: { since: miscSince.toISOString(), lines: miscLines, units: Number(miscSales._sum.quantity ?? 0) },
       readiness: orderCount === 0 ? 'WAITING_FOR_DATA' : issueCount > 0 ? 'NEEDS_REVIEW' : 'READY',
       checks: [
+        { code: 'NO_MISC_SALES', passed: miscLines === 0, message: miscLines === 0 ? '近7天没有MISC杂项销售' : `近7天有 ${miscLines} 行MISC杂项销售，无法扣减库存；清货请在POS扫实际商品再改价` },
         { code: 'ORDERS_PRESENT', passed: orderCount > 0, message: orderCount > 0 ? `已有 ${orderCount} 张订单` : '尚未同步POS订单' },
         { code: 'ITEM_MAPPING', passed: mappableItemCount > 0 && unmappedItems === 0 && reviewItems === 0, message: mappableItemCount === 0 ? '尚无需要映射的商品销售明细' : `商品映射覆盖率 ${mappingCoveragePercent}%` },
         { code: 'REFUND_REVIEW', passed: refundReviews === 0, message: refundReviews === 0 ? '没有待处理退款' : `${refundReviews} 笔退款需要确认商品` },
@@ -687,7 +698,8 @@ export class ManagementService {
     const end = nextCalendarDateStart(today, organization.timezone);
     const start = new Date(calendarDateStart(today, organization.timezone).getTime() - 27 * 86_400_000);
     const productWhere = { organizationId, status: 'ACTIVE' as const, storeProducts: { some: { storeId, enabled: true } } };
-    const [products, balances, salesItems, currentOrder, ignoredRows] = await Promise.all([
+    const receivedSince = new Date(Date.now() - ARRIVED_WINDOW_DAYS * 86_400_000);
+    const [products, balances, salesItems, currentOrder, ignoredRows, recentReceipts] = await Promise.all([
       this.prisma.client.product.findMany({
         where: productWhere, orderBy: { name: 'asc' },
         select: {
@@ -710,7 +722,13 @@ export class ManagementService {
         where: { organizationId, storeId, OR: [{ restoredAt: null }, { restoredAt: { gt: new Date() } }] },
         select: { productId: true, reason: true, ignoredAt: true },
       }),
+      this.prisma.client.stockMovement.groupBy({
+        by: ['productId'],
+        where: { organizationId, storeId, movementType: 'RECEIPT', createdAt: { gte: receivedSince }, reversedBy: { is: null } },
+        _sum: { quantityDelta: true }, _max: { createdAt: true },
+      }),
     ]);
+    const received = new Map(recentReceipts.map((row) => [row.productId.toString(), row]));
     const inventory = new Map<string, number>();
     for (const row of balances) inventory.set(row.productId.toString(), (inventory.get(row.productId.toString()) ?? 0) + row.quantity);
     const latestInventoryUpdatedAt = balances.reduce<Date | null>((latest, row) => !latest || row.updatedAt > latest ? row.updatedAt : latest, null);
@@ -747,9 +765,14 @@ export class ManagementService {
         suggestedQuantity, source, priority, alreadyIncluded: included.has(productId),
         ignored: Boolean(ignoredRow), ignoredReason: ignoredRow?.reason ?? null,
         ignoredAt: ignoredRow?.ignoredAt.toISOString() ?? null,
+        recentReceivedQty: received.get(productId)?._sum.quantityDelta ?? 0,
+        lastReceivedAt: received.get(productId)?._max.createdAt?.toISOString() ?? null,
       };
     }).filter((row) => row.suggestedQuantity > 0);
-    const suggestions = rows.filter((row) => !row.ignored)
+    // Goods just received are not suggested again; they are listed as arrived for reference.
+    const arrivedSuggestions = rows.filter((row) => !row.ignored && row.recentReceivedQty > 0)
+      .sort((a, b) => (b.lastReceivedAt ?? '').localeCompare(a.lastReceivedAt ?? ''));
+    const suggestions = rows.filter((row) => !row.ignored && row.recentReceivedQty <= 0)
       .sort((a, b) => Number(b.priority === 'THIS_WEEK') - Number(a.priority === 'THIS_WEEK') || b.suggestedQuantity - a.suggestedQuantity || a.currentInventory - b.currentInventory);
     const ignoredSuggestions = rows.filter((row) => row.ignored)
       .sort((a, b) => (b.ignoredAt ?? '').localeCompare(a.ignoredAt ?? ''));
@@ -757,7 +780,7 @@ export class ManagementService {
       generatedAt: new Date().toISOString(),
       inventoryLatestUpdatedAt: latestInventoryUpdatedAt?.toISOString() ?? null,
       store: { id: store.id.toString(), name: store.name }, period: { from: this.dateInZone(start, organization.timezone), to: today },
-      calculation: '这是备货4–6周的候选清单，不是一周必须买完。按最近28天销量折算周均：低于1件/周不建议；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。',
+      calculation: '这是备货4–6周的候选清单，不是一周必须买完。按最近28天销量折算周均：低于1件/周不建议；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。近7天已入库的商品列入“已到货”，不再建议进货。',
       summary: {
         products: suggestions.length,
         suggestedUnits: suggestions.reduce((sum, row) => sum + row.suggestedQuantity, 0),
@@ -765,8 +788,9 @@ export class ManagementService {
         followUpProducts: suggestions.filter((row) => row.priority === 'FOLLOW_UP').length,
         alreadyIncluded: suggestions.filter((row) => row.alreadyIncluded).length,
         ignored: ignoredSuggestions.length,
+        arrived: arrivedSuggestions.length,
       },
-      suggestions, ignoredSuggestions,
+      suggestions, ignoredSuggestions, arrivedSuggestions,
     };
   }
 

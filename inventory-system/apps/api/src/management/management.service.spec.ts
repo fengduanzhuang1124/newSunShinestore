@@ -88,3 +88,75 @@ describe('ManagementService.inventoryOperations', () => {
     expect(result.summary).toMatchObject({ expiredBatches: 2, expiredUnits: 14 });
   });
 });
+
+describe('ManagementService.purchaseSuggestions', () => {
+  it('lists products received in the last 7 days as arrived instead of suggesting them again', async () => {
+    const stockMovement = {
+      groupBy: jest.fn().mockResolvedValue([
+        { productId: 1n, _sum: { quantityDelta: 40 }, _max: { createdAt: new Date('2026-10-20T03:00:00.000Z') } },
+      ] as never),
+    };
+    const client = {
+      userStoreRole: {
+        findMany: jest.fn().mockResolvedValue([{ store: { id: 1n, name: 'City' }, role: { code: 'ADMIN', permissions: [] } }] as never),
+      },
+      organization: { findUniqueOrThrow: jest.fn().mockResolvedValue({ timezone: 'Pacific/Auckland' } as never) },
+      product: {
+        findMany: jest.fn().mockResolvedValue([
+          { ...product(1n, 'lifespace 60+益生菌'), barcodes: [] },
+          { ...product(2n, 'GoodHealth 液体钙'), barcodes: [] },
+        ] as never),
+      },
+      inventoryBalance: {
+        findMany: jest.fn().mockResolvedValue([
+          { productId: 1n, quantity: 37, updatedAt: new Date() },
+          { productId: 2n, quantity: 3, updatedAt: new Date() },
+        ] as never),
+      },
+      posOrderItem: {
+        findMany: jest.fn().mockResolvedValue([
+          { productId: 1n, quantity: '41', isMinus: false },
+          { productId: 2n, quantity: '40', isMinus: false },
+        ] as never),
+      },
+      purchaseOrder: { findUnique: jest.fn().mockResolvedValue(null as never) },
+      purchaseSuggestionIgnore: { findMany: jest.fn().mockResolvedValue([] as never) },
+      stockMovement,
+    };
+    const service = new ManagementService({ client } as never, {} as never, {} as never, {} as never);
+
+    const result = await service.purchaseSuggestions(1n, 2n, 1n);
+
+    expect(result.suggestions.map((row) => row.productId)).toEqual(['2']);
+    expect(result.arrivedSuggestions).toEqual([expect.objectContaining({
+      productId: '1', recentReceivedQty: 40, lastReceivedAt: '2026-10-20T03:00:00.000Z',
+    })]);
+    expect(result.summary).toMatchObject({ products: 1, arrived: 1 });
+    expect(stockMovement.groupBy).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ movementType: 'RECEIPT', reversedBy: { is: null } }),
+    }));
+  });
+});
+
+describe('ManagementService.posDataCheck', () => {
+  it('flags recent MISC sales because they cannot be deducted from a product', async () => {
+    const aggregate = jest.fn()
+      .mockResolvedValueOnce({ _min: { orderedAt: new Date() }, _max: { orderedAt: new Date() } } as never)
+      .mockResolvedValueOnce({ _count: { _all: 3 }, _sum: { quantity: '5' } } as never);
+    const client = {
+      userStoreRole: {
+        findMany: jest.fn().mockResolvedValue([{ store: { id: 1n, name: 'City' }, role: { code: 'ADMIN', permissions: [] } }] as never),
+      },
+      posOrder: { count: jest.fn().mockResolvedValue(10 as never), aggregate },
+      posOrderItem: { count: jest.fn().mockResolvedValue(0 as never), aggregate },
+      posRefundReview: { count: jest.fn().mockResolvedValue(0 as never) },
+      posSyncRun: { count: jest.fn().mockResolvedValue(0 as never) },
+    };
+    const service = new ManagementService({ client } as never, {} as never, {} as never, {} as never);
+
+    const result = await service.posDataCheck(1n, 2n, 1n);
+
+    expect(result.miscSales).toMatchObject({ lines: 3, units: 5 });
+    expect(result.checks[0]).toEqual(expect.objectContaining({ code: 'NO_MISC_SALES', passed: false }));
+  });
+});
