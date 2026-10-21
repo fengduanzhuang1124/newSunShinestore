@@ -39,11 +39,12 @@ export class PosRealtimeSyncService implements OnModuleInit, OnModuleDestroy {
     private readonly application: PosInventoryApplicationService,
   ) {}
 
-  onModuleInit() {
+  async onModuleInit() {
     const minutes = this.intervalMinutes();
     this.state.intervalMinutes = minutes;
     this.state.enabled = minutes > 0;
     if (!minutes) return;
+    await this.closeInterruptedRuns();
     this.firstTick = setTimeout(() => void this.tick(), FIRST_TICK_DELAY_MS);
     this.timer = setInterval(() => void this.tick(), minutes * 60 * 1000);
     this.firstTick.unref?.();
@@ -54,6 +55,16 @@ export class PosRealtimeSyncService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy() {
     clearTimeout(this.firstTick);
     clearInterval(this.timer);
+  }
+
+  // Syncs run inside this process, so a run still marked RUNNING at start-up was cut off by a restart. Left alone it
+  // would make every tick skip the store until it went stale.
+  async closeInterruptedRuns() {
+    const closed = await this.prisma.client.posSyncRun.updateMany({
+      where: { status: 'RUNNING' },
+      data: { status: 'FAILED', finishedAt: new Date(), errorCode: 'INTERRUPTED', errorMessage: 'API 重启中断了本次同步' },
+    });
+    if (closed.count) this.logger.warn(`Closed ${closed.count} POS sync run(s) interrupted by a restart`);
   }
 
   status(): PosRealtimeSyncStatus {

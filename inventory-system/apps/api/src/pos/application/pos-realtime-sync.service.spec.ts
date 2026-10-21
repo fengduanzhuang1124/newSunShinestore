@@ -12,7 +12,7 @@ function setup({ running = 0, baselineAt = baseline as Date | null } = {}) {
         { id: 1n, organizationId: 9n, organization: { timezone: 'Pacific/Auckland' } },
       ] as never),
     },
-    posSyncRun: { count: jest.fn().mockResolvedValue(running as never) },
+    posSyncRun: { count: jest.fn().mockResolvedValue(running as never), updateMany: jest.fn().mockResolvedValue({ count: 1 } as never) },
   };
   const observation = {
     importProductMappings: jest.fn(async () => { calls.push('mappings'); return {}; }),
@@ -92,13 +92,28 @@ describe('PosRealtimeSyncService', () => {
     expect(service.status().lastError).toContain('POS_REALTIME_SYNC_USERNAME');
   });
 
-  it('stays disabled unless an interval is configured', () => {
+  it('stays disabled unless an interval is configured', async () => {
     const previousMinutes = process.env.POS_REALTIME_SYNC_MINUTES;
     delete process.env.POS_REALTIME_SYNC_MINUTES;
-    const { service } = setup();
-    service.onModuleInit();
+    const { service, client } = setup();
+    await service.onModuleInit();
     expect(service.status()).toMatchObject({ enabled: false, intervalMinutes: 0 });
+    expect(client.posSyncRun.updateMany).not.toHaveBeenCalled();
     service.onModuleDestroy();
     if (previousMinutes !== undefined) process.env.POS_REALTIME_SYNC_MINUTES = previousMinutes;
+  });
+
+  it('closes sync runs left RUNNING by a restart before the first tick', async () => {
+    const previousMinutes = process.env.POS_REALTIME_SYNC_MINUTES;
+    process.env.POS_REALTIME_SYNC_MINUTES = '5';
+    const { service, client } = setup();
+    await service.onModuleInit();
+    expect(client.posSyncRun.updateMany).toHaveBeenCalledWith({
+      where: { status: 'RUNNING' },
+      data: expect.objectContaining({ status: 'FAILED', errorCode: 'INTERRUPTED' }),
+    });
+    service.onModuleDestroy();
+    if (previousMinutes === undefined) delete process.env.POS_REALTIME_SYNC_MINUTES;
+    else process.env.POS_REALTIME_SYNC_MINUTES = previousMinutes;
   });
 });
