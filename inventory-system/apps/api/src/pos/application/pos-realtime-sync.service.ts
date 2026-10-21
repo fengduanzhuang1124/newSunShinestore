@@ -121,6 +121,8 @@ export class PosRealtimeSyncService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     const result = await this.application.applyRange(store.organizationId, userId, store.id, baseline, now);
+    // Lines that were unmapped when applied are deducted once their POS product gets mapped; short lines wait for a person.
+    await this.application.reapplyNewlyMapped(store.organizationId, userId, store.id);
     this.state.lastApplied = {
       storeId: store.id.toString(),
       appliedOrders: result.summary.appliedOrders,

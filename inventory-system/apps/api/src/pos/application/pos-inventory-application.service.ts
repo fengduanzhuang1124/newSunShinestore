@@ -181,6 +181,154 @@ export class PosInventoryApplicationService {
     };
   }
 
+  // Lines left for review after an order was applied, with the product they would deduct from today.
+  async listReviewLines(organizationId: bigint, storeId: bigint, limit = 300) {
+    const items = await this.prisma.client.posOrderItem.findMany({
+      where: { status: 'ACTIVE', inventoryReviewReason: { not: null }, order: { organizationId, storeId, inventoryStatus: 'APPLIED' } },
+      include: { order: { select: { externalOrderNo: true, orderedAt: true } }, product: { select: { name: true } } },
+      orderBy: { id: 'desc' },
+      take: limit,
+    });
+    const mappings = await this.prisma.client.posProductMapping.findMany({
+      where: { storeId, status: 'ACTIVE', externalProductId: { in: [...new Set(items.map((item) => item.externalProductId))] } },
+      select: { externalProductId: true, productId: true, product: { select: { name: true } } },
+    });
+    const mappingByExternalId = new Map(mappings.map((mapping) => [mapping.externalProductId, mapping]));
+    const available = new Map<string, number>();
+    for (const balance of await this.loadBalances(organizationId, storeId)) {
+      const key = balance.productId.toString();
+      available.set(key, (available.get(key) ?? 0) + balance.quantity);
+    }
+    return items.map((item) => {
+      const mapping = mappingByExternalId.get(item.externalProductId);
+      const productId = item.productId ?? mapping?.productId ?? null;
+      const required = Number(item.quantity);
+      const applied = item.inventoryAppliedQuantity ?? 0;
+      const stock = productId ? available.get(productId.toString()) ?? 0 : 0;
+      const reapplicable = productId !== null && !item.isMinus && Number.isInteger(required) && required > applied;
+      return {
+        itemId: item.id.toString(),
+        orderNo: item.order.externalOrderNo,
+        orderedAt: item.order.orderedAt.toISOString(),
+        sourceName: item.sourceName,
+        productId: productId?.toString() ?? null,
+        productName: item.product?.name ?? mapping?.product.name ?? null,
+        reason: item.inventoryReviewReason as LineReviewReason,
+        required,
+        applied,
+        remaining: Math.max(0, required - applied),
+        availableStock: stock,
+        canReapply: reapplicable && stock > 0,
+      };
+    });
+  }
+
+  // Deducts what is still missing on reviewed lines, first-expiry-first, never below zero. Lines whose POS product
+  // has since been mapped take that product. Each line commits on its own and is safe to repeat.
+  async reapplyLines(organizationId: bigint, userId: bigint, storeId: bigint, itemIds: bigint[]) {
+    let unitsApplied = 0;
+    let completed = 0;
+    let stillShort = 0;
+    const skipped: { itemId: string; reason: 'NOT_ELIGIBLE' | 'STILL_UNMAPPED' | 'NO_STOCK' }[] = [];
+    for (const itemId of itemIds) {
+      const outcome = await this.prisma.client.$transaction(async (tx) => {
+        const item = await tx.posOrderItem.findFirst({
+          where: {
+            id: itemId, status: 'ACTIVE', isMinus: false,
+            inventoryReviewReason: { in: ['UNMAPPED', 'REVIEW_REQUIRED', 'INSUFFICIENT_INVENTORY'] },
+            order: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, inventoryStatus: 'APPLIED' },
+          },
+          include: { order: { select: { externalOrderNo: true } } },
+        });
+        if (!item) return { skipped: 'NOT_ELIGIBLE' as const };
+        const required = Number(item.quantity);
+        if (!Number.isInteger(required) || required <= 0) return { skipped: 'NOT_ELIGIBLE' as const };
+        let productId = item.disposition === 'INVENTORY' ? item.productId : null;
+        let mappingId = item.mappingId;
+        if (!productId) {
+          const mapping = await tx.posProductMapping.findFirst({
+            where: { storeId, externalProductId: item.externalProductId, status: 'ACTIVE' },
+            select: { id: true, productId: true },
+          });
+          if (!mapping) return { skipped: 'STILL_UNMAPPED' as const };
+          productId = mapping.productId;
+          mappingId = mapping.id;
+        }
+        const appliedBefore = item.inventoryAppliedQuantity ?? 0;
+        let remaining = required - appliedBefore;
+        const balances = await tx.inventoryBalance.findMany({
+          where: { organizationId, productId, quantity: { gt: 0 }, warehouse: { storeId, status: 'ACTIVE' }, batch: { status: 'ACTIVE' } },
+          orderBy: [{ batch: { expiryDate: 'asc' } }, { warehouseId: 'asc' }, { batchId: 'asc' }],
+        });
+        let allocated = 0;
+        for (const balance of balances) {
+          if (remaining === 0) break;
+          const quantity = Math.min(balance.quantity, remaining);
+          await tx.stockMovement.create({
+            data: {
+              movementNo: `POSR-${item.id}-${appliedBefore}-${balance.batchId}`,
+              organizationId, storeId, warehouseId: balance.warehouseId, productId, batchId: balance.batchId,
+              movementType: 'SALE_OUT', quantityDelta: -quantity, referenceType: 'POS_SALE_ITEM', referenceId: item.id,
+              reason: `POS订单 ${item.order.externalOrderNo}（复核后补扣）`, performedById: userId,
+              idempotencyKey: `posr:${item.id}:${appliedBefore}:${balance.warehouseId}:${balance.batchId}`,
+            },
+          });
+          const updated = await tx.inventoryBalance.updateMany({
+            where: {
+              organizationId, warehouseId: balance.warehouseId, productId, batchId: balance.batchId,
+              version: balance.version, quantity: { gte: quantity },
+            },
+            data: { quantity: { decrement: quantity }, version: { increment: 1 } },
+          });
+          if (updated.count !== 1) throw new Error(`Balance ${productId}:${balance.batchId} changed during re-apply`);
+          allocated += quantity;
+          remaining -= quantity;
+        }
+        if (allocated === 0 && item.disposition === 'INVENTORY') return { skipped: 'NO_STOCK' as const };
+        const appliedAfter = appliedBefore + allocated;
+        const reviewReason = appliedAfter >= required ? null : 'INSUFFICIENT_INVENTORY';
+        await tx.posOrderItem.update({
+          where: { id: item.id },
+          data: {
+            productId, mappingId, disposition: 'INVENTORY', exclusionReason: null,
+            inventoryAppliedQuantity: appliedAfter, inventoryReviewReason: reviewReason,
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            organizationId, userId, storeId, action: 'pos.inventory.reapply', entityType: 'PosOrderItem', entityId: item.id.toString(),
+            requestId: randomUUID(),
+            beforeSummary: { reason: item.inventoryReviewReason, applied: appliedBefore, productId: item.productId?.toString() ?? null },
+            afterSummary: { reason: reviewReason, applied: appliedAfter, productId: productId.toString(), unitsApplied: allocated },
+          },
+        });
+        return { allocated, complete: reviewReason === null };
+      });
+      if ('skipped' in outcome) {
+        skipped.push({ itemId: itemId.toString(), reason: outcome.skipped! });
+        continue;
+      }
+      unitsApplied += outcome.allocated;
+      if (outcome.complete) completed += 1;
+      else stillShort += 1;
+    }
+    return { lines: itemIds.length, completed, stillShort, unitsApplied, skipped };
+  }
+
+  // Lines that were unmapped when the order was applied but whose POS product is mapped now.
+  async reapplyNewlyMapped(organizationId: bigint, userId: bigint, storeId: bigint) {
+    const lines = await this.prisma.client.posOrderItem.findMany({
+      where: { status: 'ACTIVE', inventoryReviewReason: 'UNMAPPED', order: { organizationId, storeId, inventoryStatus: 'APPLIED' } },
+      select: { id: true, externalProductId: true },
+    });
+    if (!lines.length) return { lines: 0, completed: 0, stillShort: 0, unitsApplied: 0, skipped: [] };
+    const mapped = new Set((await this.prisma.client.posProductMapping.findMany({
+      where: { storeId, status: 'ACTIVE', externalProductId: { in: [...new Set(lines.map((line) => line.externalProductId))] } },
+      select: { externalProductId: true },
+    })).map((mapping) => mapping.externalProductId));
+    return this.reapplyLines(organizationId, userId, storeId, lines.filter((line) => mapped.has(line.externalProductId)).map((line) => line.id));
+  }
+
   private loadCandidateOrders(
     organizationId: bigint,
     storeId: bigint,

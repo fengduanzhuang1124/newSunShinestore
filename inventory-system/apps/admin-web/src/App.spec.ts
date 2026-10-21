@@ -418,6 +418,38 @@ describe('App', () => {
     expect(wrapper.text()).toContain('已导出今日点货：未提交 1 项，已入库 1 项。');
   });
 
+  it('counts a near-expiry batch as sold out from the expiry list', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const expiryList = (quantity: number) => ({
+      warehouseName: '主仓库', thresholds: { urgentMonths: 2, warningMonths: 3, earlyWarningMonths: 6 },
+      summary: { EXPIRED: 0, URGENT: 1, WARNING: 0, EARLY: 0 },
+      items: quantity ? [{ productId: '1', productName: '红印美白牙膏', barcodes: ['9415991001904'], batchId: '9', expiryDate: '2027-01', quantity, level: 'URGENT', levelLabel: '临期预警', daysRemaining: 102, action: null }] : [],
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(json({ warehouseName: '主仓库', summary: { receiptCount: 0, productCount: 0, totalQuantity: 0 }, receipts: [] }))
+      .mockResolvedValueOnce(json(expiryList(47)))
+      .mockResolvedValueOnce(json({ movementId: '5', productName: '红印美白牙膏', expiryDate: '2027-01', previousQuantity: 47, actualQuantity: 0, difference: -47 }))
+      .mockResolvedValueOnce(json(expiryList(0)));
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[2].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.report-switch button')[2].trigger('click');
+    await flushPromises();
+
+    await wrapper.findAll('button').find((button) => button.text() === '实盘')!.trigger('click');
+    await wrapper.findAll('button').find((button) => button.text() === '已售完（0 件）')!.trigger('click');
+    await wrapper.get('form[aria-label="临期实盘"]').trigger('submit');
+    await flushPromises();
+
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes('/inventory/stocktake-adjustment'));
+    expect(call?.[1]?.method).toBe('POST');
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ batchId: '9', actualQuantity: 0, reason: '临期实盘' });
+    expect(wrapper.text()).toContain('47 → 0 件');
+    expect(wrapper.find('form[aria-label="临期实盘"]').exists()).toBe(false);
+  });
+
   it('shows expiry inventory grouped by the 2, 3 and 6 month levels', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch')

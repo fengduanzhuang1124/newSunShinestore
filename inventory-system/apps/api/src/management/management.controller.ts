@@ -99,6 +99,33 @@ export class ManagementController {
     };
   }
 
+  @Get('pos-inventory/review-lines')
+  async posInventoryReviewLines(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue?: string) {
+    const storeId = this.storeId(storeIdValue);
+    const user = request.inventoryUser!;
+    return { code: 200, message: '复核明细查询成功', data: await this.management.posInventoryReviewLines(user.organizationId, user.id, storeId) };
+  }
+
+  @Post('pos-inventory/review-lines/reapply')
+  async reapplyPosInventoryReviewLines(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue: string | undefined,
+    @Body() input: { itemIds?: unknown; confirm?: boolean },
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    if (input?.confirm !== true) throw new BadRequestException('重新扣减必须明确提交 confirm=true');
+    const itemIds = Array.isArray(input.itemIds) ? input.itemIds : [];
+    if (!itemIds.length || itemIds.length > 200 || !itemIds.every((id) => typeof id === 'string' && /^\d{1,20}$/.test(id))) {
+      throw new BadRequestException('itemIds 必须是 1–200 个明细编号');
+    }
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: '复核明细已重新扣减',
+      data: await this.management.reapplyPosInventoryReviewLines(user.organizationId, user.id, storeId, (itemIds as string[]).map((id) => BigInt(id))),
+    };
+  }
+
   @Post('pos-inventory/apply')
   async applyPosInventory(
     @Req() request: AuthenticatedRequest,

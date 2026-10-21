@@ -22,6 +22,10 @@ const fixtures: Record<string, unknown> = {
   'product-insight-tags': { disclaimer: '不代表购买者真实身份', coverage: { productCount: 1, approvedProducts: 0, pendingProducts: 0, untaggedProducts: 1, approvedCoveragePercent: 0 }, tags: [{ id: 't1', code: 'milk', name: '奶粉', dimension: 'BUSINESS_CATEGORY', parentId: null, status: 'ACTIVE', sortOrder: 1 }], tagTree: [{ id: 't1', code: 'milk', name: '奶粉', dimension: 'BUSINESS_CATEGORY', children: [], status: 'ACTIVE', sortOrder: 1 }], dimensions: [{ code: 'BUSINESS_CATEGORY', name: '商品分类' }], products: [{ ...product, assignments: [] }] },
   'pos-sync/check': { checkedAt: null, readiness: 'NEEDS_REVIEW', orders: { total: 2, lastOrderedAt: null }, items: { mappingCoveragePercent: 50, mapped: 1, total: 2 }, issues: { total: 1 }, checks: [] },
   'pos-sync/status': { running: false, latestRun: null, cursor: null, history: [] },
+  'pos-inventory/review-lines': { lines: [
+    { itemId: '501', orderNo: 'RO-1', orderedAt: '2026-10-21T01:00:00.000Z', sourceName: 'alpine hand cream', productId: '40', productName: 'alpine 蜂蜜护手霜', reason: 'INSUFFICIENT_INVENTORY', required: 2, applied: 0, remaining: 2, availableStock: 12, canReapply: true },
+    { itemId: '502', orderNo: 'RO-2', orderedAt: '2026-10-21T02:00:00.000Z', sourceName: 'careline', productId: null, productName: null, reason: 'UNMAPPED', required: 1, applied: 0, remaining: 1, availableStock: 0, canReapply: false },
+  ] },
   'pos-sync/issues': { summary: { itemIssues: 0, pendingRefunds: 0 }, itemIssues: { items: [], pagination: { total: 0 } }, pendingRefunds: { items: [] } },
   'pos-inventory/preview': { mode: 'PREVIEW', period: { from: '2026-10-12T05:15:22.401Z', toExclusive: '2026-10-17T11:00:00.000Z' }, summary: { ordersScanned: 178, eligibleOrders: 105, unitsPlanned: 455, reviewRequiredOrders: 6, blockedOrders: 0, reviewLines: 73, shortfallUnits: 12 }, issues: [{ orderId: '9', orderNo: 'POS-9', reason: 'INSUFFICIENT_INVENTORY', itemId: '90', productId: '33', required: 4, available: 0 }] },
   'store-comparison': { storeCount: 1, comparisonAvailable: false, period: { from: '2026-10-01', to: '2026-10-06' }, stores: [{ store: { id: '1', name: '测试门店', code: 'ONE' }, selected: true, sales: salesSummary, inventory: { totalQuantity: 20, outOfStockProducts: 0, lowStockProducts: 0 } }], ranking: { byRevenue: [], byOrders: [], byInventory: [] } },
@@ -32,6 +36,7 @@ function setup(options: { failPos?: boolean; limited?: boolean; multipleStores?:
     const path = String(input).split('/management/')[1]?.split('?')[0];
     if (options.failPos && path?.startsWith('pos-sync/')) return new Response(JSON.stringify({ message: 'POS 状态读取失败' }), { status: 500 });
     const data = path === 'access' ? { administrator: !options.limited, roleCodes: ['ADMIN'], capabilities: options.limited ? { ...capabilities, posSync: false, posIssues: false, permissionsManage: false } : capabilities, grantedPermissionCodes: [] }
+      : path === 'pos-inventory/review-lines/reapply' ? { lines: 1, completed: 1, stillShort: 0, unitsApplied: 2, skipped: [] }
       : path === 'pos-sync/run' ? { result: { orders: 2, ordersProcessed: 2, ordersSkipped: 0, items: 2, unmappedItems: 0, reviewItems: 0 } }
         : path === 'pos-inventory/apply' ? { mode: 'APPLIED', period: { from: '2026-10-12T05:15:22.401Z', toExclusive: '2026-10-17T11:00:00.000Z' }, summary: { ordersScanned: 178, appliedOrders: 105, unitsApplied: 455, blockedOrders: 0, reviewLines: 73, shortfallUnits: 12 }, issues: [] }
         : path === 'store-comparison' && options.multipleStores ? { ...(fixtures[path] as object), comparisonAvailable: true, storeCount: 2 }
@@ -182,6 +187,19 @@ describe('经营管理页面组织', () => {
     const call = fetchSpy.mock.calls.find(([url]) => String(url).includes('pos-sync/run'));
     expect(call?.[1]?.method).toBe('POST');
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ date: '2026-10-01', reconcile: false });
+  });
+
+  it('lists review lines and re-applies a short line only when asked', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises(); await go(wrapper, '数据中心');
+    const card = wrapper.find('.pos-review-card');
+    expect(card.text()).toContain('alpine 蜂蜜护手霜');
+    expect(card.text()).toContain('未映射');
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('review-lines/reapply'))).toBe(false);
+    await card.findAll('button').find((button) => button.text() === '重扣')!.trigger('click'); await flushPromises();
+    const call = fetchSpy.mock.calls.find(([url]) => String(url).includes('review-lines/reapply'));
+    expect(call?.[1]?.method).toBe('POST');
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ itemIds: ['501'], confirm: true });
+    expect(wrapper.find('.pos-review-card').text()).toContain('补扣 2 件');
   });
 
   it('previews POS inventory deductions before requiring an explicit confirmed write', async () => {

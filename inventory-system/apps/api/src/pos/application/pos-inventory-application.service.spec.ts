@@ -193,4 +193,70 @@ describe('PosInventoryApplicationService', () => {
       else process.env.POS_INVENTORY_BASELINE_AT = previous;
     }
   });
+
+  describe('re-applying review lines', () => {
+    function reviewItem(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 200n, externalProductId: 'POS-7', mappingId: null, productId: null, quantity: '3.0000', isMinus: false,
+        disposition: 'UNMAPPED', inventoryReviewReason: 'UNMAPPED', inventoryAppliedQuantity: 0,
+        order: { externalOrderNo: 'ORDER-20' }, ...overrides,
+      };
+    }
+
+    function reapplySetup(item: ReturnType<typeof reviewItem> | null, balances: ReturnType<typeof balance>[], mapping: unknown = { id: 9n, productId: 5n }) {
+      const transaction = {
+        posOrderItem: { findFirst: jest.fn().mockResolvedValue(item as never), update: jest.fn().mockResolvedValue({} as never) },
+        posProductMapping: { findFirst: jest.fn().mockResolvedValue(mapping as never) },
+        inventoryBalance: {
+          findMany: jest.fn().mockResolvedValue(balances as never),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 } as never),
+        },
+        stockMovement: { create: jest.fn().mockResolvedValue({ id: 21n } as never) },
+        auditLog: { create: jest.fn().mockResolvedValue({ id: 31n } as never) },
+      };
+      const client = { $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)) };
+      return { transaction, service: new PosInventoryApplicationService({ client } as never) };
+    }
+
+    it('deducts a line whose POS product is now mapped and clears the review reason', async () => {
+      const { transaction, service } = reapplySetup(reviewItem(), [balance(5)]);
+
+      const result = await service.reapplyLines(1n, 7n, 3n, [200n]);
+
+      expect(result).toMatchObject({ completed: 1, stillShort: 0, unitsApplied: 3, skipped: [] });
+      expect(transaction.stockMovement.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ movementType: 'SALE_OUT', quantityDelta: -3, productId: 5n, idempotencyKey: 'posr:200:0:2:6' }),
+      });
+      expect(transaction.posOrderItem.update).toHaveBeenCalledWith({
+        where: { id: 200n },
+        data: expect.objectContaining({ productId: 5n, mappingId: 9n, disposition: 'INVENTORY', inventoryAppliedQuantity: 3, inventoryReviewReason: null }),
+      });
+    });
+
+    it('tops up a short line only by the missing units and keeps the rest for review', async () => {
+      const { transaction, service } = reapplySetup(
+        reviewItem({ productId: 5n, disposition: 'INVENTORY', inventoryReviewReason: 'INSUFFICIENT_INVENTORY', inventoryAppliedQuantity: 1 }),
+        [balance(1)],
+      );
+
+      const result = await service.reapplyLines(1n, 7n, 3n, [200n]);
+
+      expect(result).toMatchObject({ completed: 0, stillShort: 1, unitsApplied: 1 });
+      expect(transaction.posProductMapping.findFirst).not.toHaveBeenCalled();
+      expect(transaction.posOrderItem.update).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ inventoryAppliedQuantity: 2, inventoryReviewReason: 'INSUFFICIENT_INVENTORY' }),
+      }));
+    });
+
+    it('skips lines that are still unmapped or have no stock, writing nothing', async () => {
+      const unmapped = reapplySetup(reviewItem(), [], null);
+      expect(await unmapped.service.reapplyLines(1n, 7n, 3n, [200n])).toMatchObject({ skipped: [{ itemId: '200', reason: 'STILL_UNMAPPED' }] });
+
+      const empty = reapplySetup(reviewItem({ productId: 5n, disposition: 'INVENTORY', inventoryReviewReason: 'INSUFFICIENT_INVENTORY' }), []);
+      expect(await empty.service.reapplyLines(1n, 7n, 3n, [200n])).toMatchObject({ skipped: [{ itemId: '200', reason: 'NO_STOCK' }] });
+      expect(empty.transaction.posOrderItem.update).not.toHaveBeenCalled();
+      expect(empty.transaction.stockMovement.create).not.toHaveBeenCalled();
+    });
+  });
 });
+

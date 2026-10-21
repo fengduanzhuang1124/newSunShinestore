@@ -342,6 +342,16 @@ export class ManagementService {
     );
   }
 
+  async posInventoryReviewLines(organizationId: bigint, userId: bigint, storeId: bigint) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.posSync);
+    return { lines: await this.posInventoryApplication.listReviewLines(organizationId, storeId) };
+  }
+
+  async reapplyPosInventoryReviewLines(organizationId: bigint, userId: bigint, storeId: bigint, itemIds: bigint[]) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.posSync);
+    return this.posInventoryApplication.reapplyLines(organizationId, userId, storeId, itemIds);
+  }
+
   private async posInventoryBaseline(storeId: bigint) {
     const baseline = await this.posInventoryApplication.resolveBaseline(storeId);
     if (!baseline) throw new ConflictException('尚未配置POS正式扣库基准时间');

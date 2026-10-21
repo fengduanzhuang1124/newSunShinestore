@@ -185,6 +185,7 @@ const correctedExpiryDayMax = computed(() => {
 const expiryCorrectionReason = ref('录入日期修正');
 const deletingExpiryAlert = ref<{ batchId: string; productName: string; expiryDate: string; quantity: number } | null>(null);
 const expiryAlertDeleteReason = ref('预警记录录入错误');
+const countingExpiryBatch = ref<{ batchId: string; productName: string; expiryDate: string; quantity: number; actual: number | null; reason: string } | null>(null);
 const receiveDraft = ref<ReceiveDraftItem[]>([]);
 watch(correctedExpiryMonth, () => {
   if (correctedExpiryDay.value && correctedExpiryDay.value > correctedExpiryDayMax.value) {
@@ -1049,6 +1050,43 @@ async function submitBatchExpiryCorrection() {
   }
 }
 
+// A near-expiry batch that was cleared or sold off-system is corrected by counting it, which writes a stocktake movement.
+function openExpiryCount(item: ExpiryItem) {
+  countingExpiryBatch.value = {
+    batchId: item.batchId, productName: item.productName, expiryDate: item.expiryDate, quantity: item.quantity, actual: null, reason: '临期实盘',
+  };
+  clearStatus();
+}
+
+async function submitExpiryCount() {
+  const target = countingExpiryBatch.value;
+  if (!target) return;
+  const reason = target.reason.trim();
+  if (!Number.isInteger(target.actual) || (target.actual ?? -1) < 0 || reason.length < 2) {
+    error.value = '请填写实际数量（0 表示已售完）和至少2个字的原因。';
+    return;
+  }
+  if (target.actual === target.quantity) {
+    countingExpiryBatch.value = null;
+    message.value = `${target.productName} ${target.expiryDate} 实盘 ${target.quantity} 件，与系统一致，无需调整。`;
+    return;
+  }
+  loading.value = true;
+  clearStatus();
+  try {
+    const data = await apiRequest('/inventory/stocktake-adjustment', {
+      method: 'POST', body: JSON.stringify({ batchId: target.batchId, actualQuantity: target.actual, reason }),
+    });
+    countingExpiryBatch.value = null;
+    message.value = `实盘完成：${data.productName} ${data.expiryDate}，${data.previousQuantity} → ${data.actualQuantity} 件（${data.difference > 0 ? '盘盈' : '盘亏'} ${Math.abs(data.difference)} 件）。`;
+    await loadExpiryReport();
+  } catch (reasonValue) {
+    error.value = reasonValue instanceof Error ? reasonValue.message : '临期实盘失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
 function openExpiryAlertDelete(item: ExpiryItem) {
   deletingExpiryAlert.value = { batchId: item.batchId, productName: item.productName, expiryDate: item.expiryDate, quantity: item.quantity };
   expiryAlertDeleteReason.value = '预警记录录入错误';
@@ -1710,7 +1748,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
                 <div v-if="editingExpiryActionBatchId === item.batchId" class="expiry-action-editor"><textarea v-model="expiryActionDrafts[item.batchId]" maxlength="500" placeholder="例如：移至临期专区，本周内优先销售；处理后标记完成"></textarea><div><button class="action-primary compact-action" :disabled="loading" @click="saveExpiryAction(item)">保存任务</button><button class="secondary compact-action" @click="editingExpiryActionBatchId = ''">取消</button></div></div>
                 <div v-else-if="item.action" class="expiry-action-summary"><span class="task-status" :class="item.action.status.toLowerCase()">{{ item.action.status === 'OPEN' ? '待处理' : item.action.status === 'COMPLETED' ? '已完成' : '已忽略' }}</span><p>{{ item.action.handlingMethod }}</p><div class="expiry-action-buttons"><button v-if="item.action.status === 'OPEN'" class="action-primary compact-action" :disabled="loading" @click="changeExpiryActionStatus(item, 'COMPLETED')">完成</button><button v-if="isAdmin" class="secondary compact-action" @click="editExpiryAction(item)">修改</button><button v-if="isAdmin && item.action.status !== 'IGNORED'" class="secondary compact-action" @click="changeExpiryActionStatus(item, 'IGNORED')">忽略</button><button v-if="isAdmin" class="secondary danger-action compact-action" @click="deleteExpiryAction(item)">删除任务</button></div></div>
                 <button v-else-if="isAdmin" class="action-primary compact-action" type="button" @click="editExpiryAction(item)">填写处理方式</button><span v-else class="muted-task">等待管理者安排</span>
-              </td><td><div class="expiry-record-actions"><button class="secondary compact-action" type="button" @click="openBatchExpiryCorrection(item.batchId, item.productName, item.expiryDate)">修改</button><button v-if="isAdmin" class="secondary danger-action compact-action" type="button" @click="openExpiryAlertDelete(item)">删除预警</button></div></td></tr></tbody>
+              </td><td><div class="expiry-record-actions"><button class="action-primary compact-action" type="button" @click="openExpiryCount(item)">实盘</button><button class="secondary compact-action" type="button" @click="openBatchExpiryCorrection(item.batchId, item.productName, item.expiryDate)">修改</button><button v-if="isAdmin" class="secondary danger-action compact-action" type="button" @click="openExpiryAlertDelete(item)">删除预警</button></div></td></tr></tbody>
             </table>
           </div>
           <p v-else class="empty-state">当前筛选条件下没有6个月内到期的库存。</p>
@@ -1902,6 +1940,18 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <label>修正原因<input v-model="expiryCorrectionReason" required minlength="2" maxlength="255" placeholder="例如：员工录入月份错误" /></label>
           <div class="correction-warning">修正会同步更新入库表、库存台账、盘点和流水中的批次日期，并保留修改前后内容及操作人。</div>
           <button class="action-primary stock-increase-confirm" type="submit" :disabled="loading">{{ loading ? '正在保存…' : '确认修正日期' }}</button>
+        </form>
+      </div>
+
+      <div v-if="countingExpiryBatch" class="account-overlay" role="presentation" @click.self="countingExpiryBatch = null">
+        <form class="stock-increase-sheet expiry-correction-sheet" role="dialog" aria-modal="true" aria-label="临期实盘" @submit.prevent="submitExpiryCount">
+          <button class="account-close" type="button" aria-label="关闭临期实盘" @click="countingExpiryBatch = null">×</button>
+          <h2>临期实盘</h2><p>{{ countingExpiryBatch.productName }} · {{ countingExpiryBatch.expiryDate }} · 系统 {{ countingExpiryBatch.quantity }} 件</p>
+          <label>实际数量<input v-model.number="countingExpiryBatch.actual" type="number" min="0" step="1" inputmode="numeric" required placeholder="清点货架上这个日期的实际件数" /></label>
+          <button class="secondary compact-action" type="button" @click="countingExpiryBatch.actual = 0">已售完（0 件）</button>
+          <label>原因<input v-model="countingExpiryBatch.reason" required minlength="2" maxlength="255" /></label>
+          <div class="correction-warning">按实际数量写入盘点流水，只调整这个到期日期的批次；其他日期的库存不变。</div>
+          <button class="action-primary stock-increase-confirm" type="submit" :disabled="loading">{{ loading ? '正在保存…' : '确认实盘数量' }}</button>
         </form>
       </div>
 

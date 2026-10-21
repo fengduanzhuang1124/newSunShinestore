@@ -50,6 +50,8 @@ type PosSyncRun = {
   startedAt: string; finishedAt: string | null; ordersObserved: number; ordersInserted: number; ordersUpdated: number;
   ordersSkipped: number; itemsObserved: number; exceptionsCount: number; errorCode: string | null; errorMessage: string | null;
 };
+type PosReviewLine = { itemId: string; orderNo: string; orderedAt: string; sourceName: string | null; productId: string | null; productName: string | null; reason: PosInventoryIssue['reason']; required: number; applied: number; remaining: number; availableStock: number; canReapply: boolean };
+type PosReapplyResult = { lines: number; completed: number; stillShort: number; unitsApplied: number; skipped: { itemId: string; reason: string }[] };
 type PosRealtimeStatus = { enabled: boolean; intervalMinutes: number; lastTickAt: string | null; lastSuccessAt: string | null; lastError: string | null; lastApplied: { storeId: string; appliedOrders: number; unitsApplied: number; reviewLines: number; shortfallUnits: number } | null };
 type PosSyncStatus = { running: boolean; realtime?: PosRealtimeStatus; cursor: { lastSourceTimestamp: string | null; updatedAt: string } | null; latestRun: PosSyncRun | null; history: PosSyncRun[] };
 type PosSyncIssues = {
@@ -155,6 +157,9 @@ const loading = ref(false);
 const error = ref('');
 const posCheck = ref<PosDataCheck | null>(null);
 const posStatus = ref<PosSyncStatus | null>(null);
+const posReviewLines = ref<PosReviewLine[] | null>(null);
+const posReapplyLoading = ref(false);
+const posReapplyResult = ref<PosReapplyResult | null>(null);
 const posIssues = ref<PosSyncIssues | null>(null);
 const barcodeAudit = ref<BarcodeAudit | null>(null);
 const posLoading = ref(false);
@@ -569,7 +574,10 @@ async function loadPosManagement() {
   try {
     const store = encodeURIComponent(props.storeId);
     if (managementAccess.value?.capabilities.posIssues) posCheck.value = await managementRequest<PosDataCheck>(`/management/pos-sync/check?storeId=${store}`);
-    if (managementAccess.value?.capabilities.posSync) posStatus.value = await managementRequest<PosSyncStatus>(`/management/pos-sync/status?storeId=${store}`);
+    if (managementAccess.value?.capabilities.posSync) {
+      posStatus.value = await managementRequest<PosSyncStatus>(`/management/pos-sync/status?storeId=${store}`);
+      posReviewLines.value = (await managementRequest<{ lines: PosReviewLine[] }>(`/management/pos-inventory/review-lines?storeId=${store}`)).lines;
+    }
     if (managementAccess.value?.capabilities.posIssues) {
       [posIssues.value, barcodeAudit.value] = await Promise.all([
         managementRequest<PosSyncIssues>(`/management/pos-sync/issues?storeId=${store}&page=1&pageSize=20`),
@@ -636,6 +644,24 @@ async function previewPosInventory() {
 function openPosInventoryConfirmation() {
   if (!posInventoryPreview.value?.summary.eligibleOrders || posInventoryApplyState.value !== 'idle') return;
   posInventoryConfirmOpen.value = true;
+}
+
+// Short lines are re-applied only when someone decides the stock was really there (e.g. goods arrived later).
+async function reapplyReviewLines(itemIds: string[]) {
+  if (!props.storeId || !itemIds.length || posReapplyLoading.value) return;
+  posReapplyLoading.value = true;
+  error.value = '';
+  try {
+    posReapplyResult.value = await managementRequest<PosReapplyResult>(`/management/pos-inventory/review-lines/reapply?storeId=${encodeURIComponent(props.storeId)}`, {
+      method: 'POST', body: JSON.stringify({ itemIds, confirm: true }),
+    });
+    purchaseSuggestions.value = null;
+    await loadPosManagement();
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '复核明细重新扣减失败';
+  } finally {
+    posReapplyLoading.value = false;
+  }
 }
 
 async function applyPosInventory() {
@@ -1287,9 +1313,16 @@ onBeforeUnmount(() => { if (purchaseMessageTimer) clearTimeout(purchaseMessageTi
         <template v-if="posInventoryPreview">
           <div class="pos-inventory-preview-summary" aria-label="正式扣库预览结果"><article><span>扫描订单</span><strong>{{ posInventoryPreview.summary.ordersScanned }}</strong><small>所选日期内正常候选</small></article><article class="ready"><span>可安全扣库</span><strong>{{ posInventoryPreview.summary.eligibleOrders }} 张</strong><small>{{ number(posInventoryPreview.summary.unitsPlanned) }} 件商品</small></article><article class="blocked"><span>明细待复核</span><strong>{{ posInventoryPreview.summary.reviewLines }} 行</strong><small>缺口 {{ number(posInventoryPreview.summary.shortfallUnits) }} 件，其余照常扣减</small></article><article><span>待人工复核</span><strong>{{ posInventoryPreview.summary.reviewRequiredOrders }} 张</strong><small>不会进入本次扣库</small></article></div>
           <div class="pos-inventory-commit"><span><strong v-if="posInventoryPreview.summary.eligibleOrders">预览已就绪</strong><strong v-else>暂无可扣订单</strong><small>{{ posInventoryPreview.summary.eligibleOrders ? `确认后将写入 ${posInventoryPreview.summary.eligibleOrders} 张订单的销售出库流水。` : '当前没有待扣订单。' }}</small></span><button type="button" :disabled="!posInventoryPreview.summary.eligibleOrders || posInventoryApplyState !== 'idle'" @click="openPosInventoryConfirmation">确认正式扣库</button></div>
-          <details v-if="posInventoryPreview.issues.length" class="pos-inventory-issues"><summary>查看被拦截订单（{{ posInventoryPreview.issues.length }}）</summary><div class="management-detail-scroll"><article v-for="issue in posInventoryPreview.issues" :key="issue.orderId"><span><strong>订单 {{ issue.orderNo }}</strong><small v-if="issue.productId">商品 ID {{ issue.productId }}</small></span><em>{{ posInventoryIssueLabel(issue) }}</em></article></div></details>
+          <details v-if="posInventoryPreview.issues.length" class="pos-inventory-issues"><summary>查看待复核明细（{{ posInventoryPreview.issues.length }}）</summary><div class="management-detail-scroll"><article v-for="issue in posInventoryPreview.issues" :key="`${issue.orderId}-${issue.itemId ?? ''}`"><span><strong>订单 {{ issue.orderNo }}</strong><small v-if="issue.productId">商品 ID {{ issue.productId }}</small></span><em>{{ posInventoryIssueLabel(issue) }}</em></article></div></details>
         </template>
         <p v-else class="pos-inventory-empty">选择日期并生成预览后，系统会列出可以扣减的订单、件数和被拦截原因。这里不会自动写入库存。</p>
+      </section>
+      <section v-if="managementAccess?.capabilities.posSync" class="system-card pos-review-card">
+        <div class="card-title"><div><h3>复核明细</h3><p>已扣库订单中没扣足的销售行。商品映射补齐后系统会自动补扣；库存不足的行需确认货已到再重扣，不会扣成负数。</p></div><button v-if="posReviewLines?.some((line) => line.canReapply)" class="table-action" type="button" :disabled="posReapplyLoading" @click="reapplyReviewLines(posReviewLines!.filter((line) => line.canReapply).map((line) => line.itemId))">重扣全部可扣明细（{{ posReviewLines!.filter((line) => line.canReapply).length }}）</button></div>
+        <p v-if="posReapplyResult" class="management-alert inventory-source" role="status"><strong>重新扣减完成</strong><span>补扣 {{ number(posReapplyResult.unitsApplied) }} 件：{{ posReapplyResult.completed }} 行已扣足，{{ posReapplyResult.stillShort }} 行仍有缺口，{{ posReapplyResult.skipped.length }} 行跳过。</span></p>
+        <p v-if="posReviewLines === null" class="system-empty">{{ posLoading ? '正在读取…' : posLoadError ? '复核明细读取失败' : '尚未读取' }}</p>
+        <p v-else-if="!posReviewLines.length" class="system-empty">没有待复核的销售明细。</p>
+        <div v-else class="product-table-wrap management-detail-scroll"><table><thead><tr><th>订单</th><th>商品</th><th>原因</th><th>需扣 / 已扣</th><th>现有库存</th><th>操作</th></tr></thead><tbody><tr v-for="line in posReviewLines" :key="line.itemId"><td><strong>{{ line.orderNo }}</strong><small>{{ dateTime(line.orderedAt) }}</small></td><td><strong>{{ line.productName || line.sourceName || '未知商品' }}</strong><small v-if="line.productName && line.sourceName">{{ line.sourceName }}</small></td><td>{{ posInventoryIssueLabel({ orderId: '', orderNo: line.orderNo, reason: line.reason, required: line.required, available: line.applied }) }}</td><td>{{ number(line.required) }} / {{ number(line.applied) }}</td><td>{{ line.productId ? number(line.availableStock) : '—' }}</td><td><button v-if="line.canReapply" class="table-action" type="button" :disabled="posReapplyLoading" @click="reapplyReviewLines([line.itemId])">重扣</button><span v-else class="muted-task">{{ line.productId ? '无库存' : '未映射' }}</span></td></tr></tbody></table></div>
       </section>
 
       <section v-if="systemView === 'quality'" class="system-card foundation-check">
