@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { allocateBatchTargets, planBaselineReconciliation, type PlanInput, type ProductState } from './baseline-reconciliation.js';
+import { allocateBatchTargets, collapseRecounts, planBaselineReconciliation, type PlanInput, type ProductState } from './baseline-reconciliation.js';
 
 const product = (productId: string, currentQuantity: number, preservedDelta = 0): ProductState => ({
   productId,
@@ -143,5 +143,32 @@ describe('allocateBatchTargets', () => {
       lots: [], salesDeducted: 2, preserved: [], current: [], fallback: { batchId: '9', expiryDate: '2029-01-31' },
     })).toEqual([{ batchId: '9', expiryDate: '2029-01-31', currentQuantity: 0, targetQuantity: -2, delta: -2 }]);
     expect(() => allocateBatchTargets({ lots: [], salesDeducted: 1, preserved: [], current: [] })).toThrow('No batch');
+  });
+});
+
+describe('collapseRecounts', () => {
+  const entry = (productId: string, entryDate: string, quantity: number, expiryDate: string, source = 'RK') => ({
+    productId, entryDate, quantity, expiryDate, source,
+  });
+
+  it('keeps only the later count when it is at least the earlier count for the same expiry', () => {
+    const { kept, superseded } = collapseRecounts([
+      entry('1', '2026-10-08', 20, '2031-01-31'),
+      entry('1', '2026-10-09', 300, '2031-01-31'),
+      entry('1', '2026-10-09', 181, '2031-01-31'),
+    ]);
+    expect(kept.map((line) => line.quantity)).toEqual([300, 181]);
+    expect(superseded.map((line) => line.quantity)).toEqual([20]);
+  });
+
+  it('sums smaller later counts and never collapses different expiries', () => {
+    const { kept, superseded } = collapseRecounts([
+      entry('1', '2026-10-08', 55, '2029-02-28'),
+      entry('1', '2026-10-10', 30, '2029-02-28'),
+      entry('2', '2026-10-08', 35, '2028-01-31'),
+      entry('2', '2026-10-13', 36, '2029-02-25'),
+    ]);
+    expect(kept).toHaveLength(4);
+    expect(superseded).toHaveLength(0);
   });
 });

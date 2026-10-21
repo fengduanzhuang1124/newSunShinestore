@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { PrismaService } from '../../src/database/prisma.service.js';
 import {
   allocateBatchTargets,
+  collapseRecounts,
   planBaselineReconciliation,
   type BaselineEntry,
   type BatchLot,
@@ -38,6 +39,8 @@ export interface RebuildPlan {
   products: ProductBatchPlan[];
   // Current balances the plan was computed from; execution refuses to run if any of them moved.
   snapshot: Map<string, { quantity: number; version: number }>;
+  // Entry lines dropped because a later day recounted the same product and expiry.
+  superseded: (BaselineEntry & { expiryDate: string })[];
 }
 
 interface EntryLine extends BaselineEntry {
@@ -141,6 +144,7 @@ export async function loadRebuildPlan(prisma: PrismaService, options: SourceOpti
   if (mismatches.length) {
     throw new Error(`Barcode/product mismatch: ${mismatches.slice(0, 5).map((entry) => `${entry.barcode}->${entry.productId}`).join(', ')}`);
   }
+  const { kept: counted, superseded } = collapseRecounts(entries);
 
   const preservedRows = await db.$queryRaw<{ product_id: bigint; batch_id: bigint; expiry_date: Date; delta: unknown }[]>`
     SELECT m.product_id, m.batch_id, b.expiry_date, SUM(m.quantity_delta) AS delta
@@ -156,7 +160,7 @@ export async function loadRebuildPlan(prisma: PrismaService, options: SourceOpti
     preservedByProduct.set(row.product_id.toString(), list);
   }
 
-  const earliestEntry = entries.reduce((min, entry) => (entry.entryDate < min ? entry.entryDate : min), '9999-12-31');
+  const earliestEntry = counted.reduce((min, entry) => (entry.entryDate < min ? entry.entryDate : min), '9999-12-31');
   const salesFrom = new Date(Math.min(new Date(`${earliestEntry}T00:00:00Z`).getTime() - 86_400_000, options.unlistedSalesAfter.getTime()));
   const sales = await db.$queryRaw<{ product_id: bigint; ordered_at: Date; quantity: unknown }[]>`
     SELECT i.product_id, o.ordered_at, i.quantity
@@ -171,7 +175,7 @@ export async function loadRebuildPlan(prisma: PrismaService, options: SourceOpti
   });
   const sum = (lots: BatchLot[] | undefined) => (lots ?? []).reduce((total, lot) => total + lot.quantity, 0);
   const plan = planBaselineReconciliation({
-    entries,
+    entries: counted,
     sales: sales.map((row) => ({
       productId: row.product_id.toString(),
       orderedAt: row.ordered_at,
@@ -191,11 +195,14 @@ export async function loadRebuildPlan(prisma: PrismaService, options: SourceOpti
   });
 
   const entriesByProduct = new Map<string, BatchLot[]>();
-  for (const entry of entries) {
+  for (const entry of counted) {
     const list = entriesByProduct.get(entry.productId) ?? [];
     list.push({ batchId: entry.batchId!, expiryDate: entry.expiryDate, quantity: entry.quantity });
     entriesByProduct.set(entry.productId, list);
   }
+
+  const recounted = new Set(superseded.map((entry) => entry.productId));
+  for (const row of plan.rows) if (recounted.has(row.productId)) row.flags.push('RECOUNT_KEPT_LATER');
 
   const productPlans = plan.rows.map((row) => {
     const current = currentByProduct.get(row.productId) ?? [];
@@ -232,12 +239,13 @@ export async function loadRebuildPlan(prisma: PrismaService, options: SourceOpti
     storeId,
     warehouseId,
     timeZone,
-    entryLines: entries.length,
+    entryLines: counted.length,
     saleLines: sales.length,
     lastSaleAt: sales.reduce((max, row) => (row.ordered_at > max ? row.ordered_at : max), new Date(0)),
     plan,
     products: productPlans,
     snapshot,
+    superseded,
   };
 }
 

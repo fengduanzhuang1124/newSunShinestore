@@ -161,6 +161,27 @@ export function allocateBatchTargets(input: BatchAllocationInput): BatchTarget[]
     .sort((left, right) => left.expiryDate.localeCompare(right.expiryDate) || left.batchId.localeCompare(right.batchId));
 }
 
+// A later day counting at least as many units of the same product and expiry is a recount of the same stock, not new stock;
+// only the later count is kept. Smaller later counts are treated as additional stock and summed.
+export function collapseRecounts<T extends BaselineEntry & { expiryDate: string }>(entries: T[]): { kept: T[]; superseded: T[] } {
+  const dayTotals = new Map<string, Map<string, number>>();
+  for (const entry of entries) {
+    const key = `${entry.productId}:${entry.expiryDate}`;
+    const days = dayTotals.get(key) ?? new Map<string, number>();
+    days.set(entry.entryDate, (days.get(entry.entryDate) ?? 0) + entry.quantity);
+    dayTotals.set(key, days);
+  }
+  const dropped = new Set<string>();
+  for (const [key, days] of dayTotals) {
+    const ordered = [...days.entries()].sort(([left], [right]) => left.localeCompare(right));
+    ordered.forEach(([day, quantity], index) => {
+      if (ordered.slice(index + 1).some(([, later]) => later >= quantity)) dropped.add(`${key}:${day}`);
+    });
+  }
+  const isDropped = (entry: T) => dropped.has(`${entry.productId}:${entry.expiryDate}:${entry.entryDate}`);
+  return { kept: entries.filter((entry) => !isDropped(entry)), superseded: entries.filter(isDropped) };
+}
+
 function assertWholeQuantity(value: number, label: string) {
   if (!Number.isInteger(value)) throw new Error(`${label} must be a whole number, got ${value}`);
 }

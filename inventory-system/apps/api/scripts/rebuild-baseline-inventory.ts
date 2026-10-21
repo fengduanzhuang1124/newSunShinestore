@@ -111,6 +111,7 @@ try {
         action: 'INVENTORY_BASELINE_REBUILT', entityType: 'InventoryBaseline', entityId: run, requestId,
         beforeSummary: {
           entries: basename(options.entriesPath), receipts: options.receiptNos, backup: basename(backupPath),
+          supersededEntries: rebuild.superseded.length,
           currentQuantity: totals.currentQuantity,
         },
         afterSummary: {
