@@ -161,7 +161,7 @@ describe('经营管理页面组织', () => {
   it('does not present zero or idle as a successful result when POS status fails', async () => {
     const { wrapper } = setup({ failPos: true }); await flushPromises(); await go(wrapper, '数据中心');
     const cards = wrapper.findAll('.pos-status-grid article strong').map(item => item.text());
-    expect(cards).toEqual(['加载失败', '—', '—', '—']);
+    expect(cards).toEqual(['加载失败', '—', '—', '—', '—']);
     await click(wrapper, '异常记录'); expect(wrapper.find('.issue-card').text()).toContain('不能判断是否存在异常');
   });
 

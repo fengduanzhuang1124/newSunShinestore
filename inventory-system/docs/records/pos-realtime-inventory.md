@@ -36,6 +36,18 @@
 
 - `corepack pnpm typecheck`、`corepack pnpm test`、`corepack pnpm build` 通过（数据库 46、管理端 38、API 测试全部通过）。
 
+## 阶段 2（S1 实时同步、S4 映射刷新）
+
+- `PosRealtimeSyncService`（API 进程内定时器）：每 `POS_REALTIME_SYNC_MINUTES` 分钟执行一轮，0 或未设置为关闭；只允许一个 API 实例开启。
+  1. 每小时最多刷新一次商品映射（先于读取订单，使 POS 新上架商品先关联到本地商品）；
+  2. 同步门店时区的当天订单，凌晨 1 点前同时补同步前一天；
+  3. 从门店基准时间起按明细自动扣库。
+- 门店有未超时（30 分钟内）的手动同步在运行时跳过本轮；上一轮未结束时不叠加。
+- 扣库执行人取 `POS_REALTIME_SYNC_USERNAME`（必须是有效员工），审计可追溯；未配置时只记录错误，不扣库。
+- 手动同步 `POST /management/pos-sync/run` 完成后在后台强制刷新映射。
+- `GET /management/pos-sync/status` 增加 `realtime`（开启状态、间隔、上次运行、最近扣减、错误）；数据中心显示“实时同步”卡片，加载失败时显示“—”而非“未开启”。
+- POS 接口仍只读。该运行方式是对 `inventory-system/AGENTS.md`“第一阶段不监听 POS”的例外，由店主于 2026-10-21 批准。
+
 ## 待后续阶段
 
 - S1 实时同步任务与手动同步刷新映射；M1–M5 经营规则；R1–R3 入库条码与重复点货；I1–I3 页面标记。

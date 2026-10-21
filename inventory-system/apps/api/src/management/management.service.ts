@@ -4,6 +4,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { calendarDateStart, nextCalendarDateStart } from '../pos/application/pos-date.js';
 import { PosObservationService } from '../pos/application/pos-observation.service.js';
 import { PosInventoryApplicationService } from '../pos/application/pos-inventory-application.service.js';
+import { PosRealtimeSyncService } from '../pos/application/pos-realtime-sync.service.js';
 
 type SalesLine = { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number };
 type SalesAnalysisInput = { from: string; to: string; dimension: 'DAY' | 'WEEK' | 'MONTH'; brand?: string; category?: string };
@@ -21,6 +22,7 @@ export class ManagementService {
     private readonly prisma: PrismaService,
     private readonly posObservation: PosObservationService,
     private readonly posInventoryApplication: PosInventoryApplicationService,
+    private readonly posRealtimeSync: PosRealtimeSyncService,
   ) {}
 
   async access(organizationId: bigint, userId: bigint, storeId: bigint) {
@@ -94,6 +96,7 @@ export class ManagementService {
     return {
       store: { id: store.id.toString(), name: store.name }, provider: 'MONI', stream: 'ORDERS',
       running: runningCount > 0,
+      realtime: this.posRealtimeSync.status(),
       cursor: cursor ? { lastSourceTimestamp: cursor.lastSourceTimestamp?.toISOString() ?? null, updatedAt: cursor.updatedAt.toISOString() } : null,
       latestRun: runs[0] ? serializeRun(runs[0]) : null,
       history: runs.map(serializeRun),
@@ -266,6 +269,7 @@ export class ManagementService {
     if (running) throw new ConflictException('该门店已有POS同步正在运行，请稍后再试');
 
     const result = await this.posObservation.observeOrders(organizationId, storeId, date, { reconcile });
+    this.posRealtimeSync.refreshMappingsInBackground(organizationId, storeId);
     const latestRun = await this.prisma.client.posSyncRun.findFirst({ where: { organizationId, storeId }, orderBy: { startedAt: 'desc' }, select: { id: true, finishedAt: true } });
     await this.prisma.client.auditLog.create({
       data: {

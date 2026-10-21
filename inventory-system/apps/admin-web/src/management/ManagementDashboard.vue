@@ -50,7 +50,8 @@ type PosSyncRun = {
   startedAt: string; finishedAt: string | null; ordersObserved: number; ordersInserted: number; ordersUpdated: number;
   ordersSkipped: number; itemsObserved: number; exceptionsCount: number; errorCode: string | null; errorMessage: string | null;
 };
-type PosSyncStatus = { running: boolean; cursor: { lastSourceTimestamp: string | null; updatedAt: string } | null; latestRun: PosSyncRun | null; history: PosSyncRun[] };
+type PosRealtimeStatus = { enabled: boolean; intervalMinutes: number; lastTickAt: string | null; lastSuccessAt: string | null; lastError: string | null; lastApplied: { storeId: string; appliedOrders: number; unitsApplied: number; reviewLines: number; shortfallUnits: number } | null };
+type PosSyncStatus = { running: boolean; realtime?: PosRealtimeStatus; cursor: { lastSourceTimestamp: string | null; updatedAt: string } | null; latestRun: PosSyncRun | null; history: PosSyncRun[] };
 type PosSyncIssues = {
   summary: { itemIssues: number; pendingRefunds: number; failedRuns: number };
   itemIssues: { items: { id: string; orderNo: string; orderedAt: string; externalProductId: string; productName: string | null; barcode: string | null; quantity: string; disposition: string; reason: string | null }[]; pagination: { total: number } };
@@ -1272,6 +1273,7 @@ onBeforeUnmount(() => { if (purchaseMessageTimer) clearTimeout(purchaseMessageTi
         <article><span>同步状态</span><strong :class="posLoadError || posStatus?.latestRun?.status === 'FAILED' ? 'status-warning' : posStatus?.running ? 'status-running' : ''">{{ posLoading ? '加载中' : posLoadError ? '加载失败' : !posStatus ? '未获取' : posStatus.running ? '正在同步' : posStatus.latestRun?.status === 'FAILED' ? '最近失败' : '空闲' }}</strong><small>最近成功或失败结果见下方记录</small></article>
         <article><span>POS订单</span><strong>{{ posLoading || posLoadError ? '—' : (posCheck?.orders.total ?? '—') }}</strong><small>最近订单：{{ dateTime(posCheck?.orders.lastOrderedAt ?? null) }}</small></article>
         <article><span>商品映射率</span><strong>{{ posLoading || posLoadError || !posCheck ? '—' : `${posCheck.items.mappingCoveragePercent}%` }}</strong><small>{{ posCheck?.items.mapped ?? '—' }} / {{ posCheck?.items.mappable ?? posCheck?.items.total ?? '—' }} 条商品销售明细已关联</small></article>
+        <article><span>实时同步</span><strong :class="posStatus?.realtime?.lastError ? 'status-warning' : ''">{{ posLoading || posLoadError || !posStatus?.realtime ? '—' : posStatus.realtime.enabled ? `每 ${posStatus.realtime.intervalMinutes} 分钟` : '未开启' }}</strong><small v-if="posLoading || posLoadError || !posStatus?.realtime">状态未知</small><small v-else-if="posStatus.realtime.lastError">{{ posStatus.realtime.lastError }}</small><small v-else-if="posStatus?.realtime?.enabled">上次 {{ dateTime(posStatus.realtime.lastSuccessAt) }}<template v-if="posStatus.realtime.lastApplied"> · 扣减 {{ number(posStatus.realtime.lastApplied.unitsApplied) }} 件</template></small><small v-else>需手动同步与扣库</small></article>
         <article><span>待处理异常</span><strong class="status-warning">{{ posLoading || posLoadError ? '—' : (posCheck?.issues.total ?? '—') }}</strong><small>商品、退款和人工复核事项</small></article>
       </div>
 
