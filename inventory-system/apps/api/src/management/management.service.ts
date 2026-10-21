@@ -5,11 +5,14 @@ import { calendarDateStart, nextCalendarDateStart } from '../pos/application/pos
 import { PosObservationService } from '../pos/application/pos-observation.service.js';
 import { PosInventoryApplicationService } from '../pos/application/pos-inventory-application.service.js';
 import { PosRealtimeSyncService } from '../pos/application/pos-realtime-sync.service.js';
+import { isCoreReplenishmentProduct } from './core-replenishment.js';
 
 type SalesLine = { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number };
 type SalesAnalysisInput = { from: string; to: string; dimension: 'DAY' | 'WEEK' | 'MONTH'; brand?: string; category?: string };
 type ProductsBrandsInput = { from: string; to: string; query?: string; brand?: string; category?: string };
 const DEFAULT_MINIMUM_STOCK = 20;
+// Zero-stock products count as out of stock only if they sold within this window (store owner, 2026-10-21).
+const SHORTAGE_SALES_WINDOW_DAYS = 180;
 const MANAGEMENT_PERMISSIONS = {
   overview: 'management.overview.view', sales: 'management.sales.view', inventory: 'management.inventory.view',
   posSync: 'management.pos.sync', posIssues: 'management.pos.issues', permissions: 'management.permissions.manage',
@@ -412,7 +415,8 @@ export class ManagementService {
       ...(input.category ? { categoryName: { contains: input.category } } : {}),
       ...textFilter,
     };
-    const [products, balances, salesItems, activeItemCount, mappedItemCount] = await Promise.all([
+    const recentSalesStart = new Date(Date.now() - SHORTAGE_SALES_WINDOW_DAYS * 86_400_000);
+    const [products, balances, salesItems, activeItemCount, mappedItemCount, recentlySold] = await Promise.all([
       this.prisma.client.product.findMany({
         where: productWhere,
         orderBy: { name: 'asc' },
@@ -427,12 +431,20 @@ export class ManagementService {
         select: { productId: true, quantity: true },
       }),
       this.prisma.client.posOrderItem.findMany({
-        where: { status: 'ACTIVE', product: productWhere, order: { organizationId, storeId, orderedAt: { gte: start, lt: end } } },
+        where: { status: 'ACTIVE', product: productWhere, order: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, orderedAt: { gte: start, lt: end } } },
         select: { productId: true, quantity: true, unitPrice: true, isMinus: true },
       }),
       this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', disposition: { not: 'NON_INVENTORY' }, order: { organizationId, storeId, orderedAt: { gte: start, lt: end } } } }),
       this.prisma.client.posOrderItem.count({ where: { status: 'ACTIVE', productId: { not: null }, order: { organizationId, storeId, orderedAt: { gte: start, lt: end } } } }),
+      this.prisma.client.posOrderItem.groupBy({
+        by: ['productId'],
+        where: {
+          status: 'ACTIVE', disposition: 'INVENTORY', isMinus: false, product: productWhere,
+          order: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, orderedAt: { gte: recentSalesStart } },
+        },
+      }),
     ]);
+    const soldRecently = new Set(recentlySold.map((row) => row.productId?.toString()));
     const inventory = new Map<string, number>();
     for (const balance of balances) inventory.set(balance.productId.toString(), (inventory.get(balance.productId.toString()) ?? 0) + balance.quantity);
     const sales = new Map<string, { units: number; revenue: number }>();
@@ -450,7 +462,8 @@ export class ManagementService {
       const key = product.id.toString();
       const sold = sales.get(key) ?? { units: 0, revenue: 0 };
       const currentInventory = inventory.get(key) ?? 0;
-      const minimumStock = product.storeProducts[0]?.minimumStock ?? DEFAULT_MINIMUM_STOCK;
+      const coreProduct = isCoreReplenishmentProduct(product.brandName, product.chineseName, product.name, product.englishName, product.categoryName);
+      const minimumStock = product.storeProducts[0]?.minimumStock ?? (coreProduct ? DEFAULT_MINIMUM_STOCK : null);
       return {
         productId: key, sku: product.sku,
         productName: product.chineseName || product.name || product.englishName || '未命名商品',
@@ -458,7 +471,8 @@ export class ManagementService {
         barcode: product.barcodes[0]?.barcode ?? null,
         unitsSold: this.money(sold.units), salesRevenue: this.money(sold.revenue), currentInventory, minimumStock,
         sellingPriceCents: product.storeProducts[0]?.sellingPriceCents ?? product.storeProducts[0]?.level4PriceCents ?? null,
-        stockStatus: currentInventory <= 0 ? 'OUT_OF_STOCK' : currentInventory < minimumStock ? 'LOW' : 'IN_STOCK',
+        stockStatus: currentInventory <= 0 ? 'OUT_OF_STOCK' : minimumStock !== null && currentInventory < minimumStock ? 'LOW' : 'IN_STOCK',
+        shortageVisible: currentInventory > 0 || soldRecently.has(key),
         salesToStockRatio: currentInventory > 0 ? this.money(sold.units / currentInventory) : null,
       };
     }).sort((a, b) => b.salesRevenue - a.salesRevenue || b.unitsSold - a.unitsSold || b.currentInventory - a.currentInventory);
@@ -482,9 +496,9 @@ export class ManagementService {
         salesRevenue: this.money(productRows.reduce((sum, row) => sum + row.salesRevenue, 0)),
         currentInventory: productRows.reduce((sum, row) => sum + row.currentInventory, 0),
         inStockProducts: productRows.filter((row) => row.currentInventory > 0).length,
-        outOfStockProducts: productRows.filter((row) => row.stockStatus === 'OUT_OF_STOCK').length,
+        outOfStockProducts: productRows.filter((row) => row.stockStatus === 'OUT_OF_STOCK' && row.shortageVisible).length,
         lowStockProducts: productRows.filter((row) => row.stockStatus === 'LOW').length,
-        minimumStockConfiguredProducts: productRows.length,
+        minimumStockConfiguredProducts: productRows.filter((row) => row.minimumStock !== null).length,
       },
       products: productRows, brands: group('brandName'), categories: group('categoryName'),
       catalogQuality: {
@@ -508,7 +522,7 @@ export class ManagementService {
     });
     const now = new Date();
     const start = new Date(now.getTime() - lookbackDays * 86_400_000);
-    const shortageHistoryStart = new Date(now.getTime() - 120 * 86_400_000);
+    const shortageHistoryStart = new Date(now.getTime() - SHORTAGE_SALES_WINDOW_DAYS * 86_400_000);
     const textFilter = query ? {
       OR: [
         { sku: { contains: query } }, { name: { contains: query } },
@@ -520,12 +534,13 @@ export class ManagementService {
     const productWhere = {
       organizationId, status: 'ACTIVE' as const, storeProducts: { some: { storeId, enabled: true } }, ...textFilter,
     };
-    const [products, balances, salesItems, movements, salesRange, hiddenRows] = await Promise.all([
+    const [products, balances, salesItems, movements, salesRange, hiddenRows, expiredStock] = await Promise.all([
       this.prisma.client.product.findMany({
         where: productWhere, orderBy: { name: 'asc' },
         select: {
           id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
           storeProducts: { where: { storeId, enabled: true }, select: { minimumStock: true }, take: 1 },
+          posProductMappings: { where: { storeId, status: 'ACTIVE' }, select: { id: true }, take: 1 },
         },
       }),
       this.prisma.client.inventoryBalance.findMany({
@@ -533,7 +548,10 @@ export class ManagementService {
         select: { productId: true, quantity: true, updatedAt: true },
       }),
       this.prisma.client.posOrderItem.findMany({
-        where: { status: 'ACTIVE', product: productWhere, order: { organizationId, storeId, orderedAt: { gte: shortageHistoryStart, lte: now } } },
+        where: {
+          status: 'ACTIVE', disposition: 'INVENTORY', product: productWhere,
+          order: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, orderedAt: { gte: shortageHistoryStart, lte: now } },
+        },
         select: { productId: true, quantity: true, isMinus: true, order: { select: { orderedAt: true } } },
       }),
       this.prisma.client.stockMovement.findMany({
@@ -547,6 +565,13 @@ export class ManagementService {
       this.prisma.client.purchaseSuggestionIgnore.findMany({
         where: { organizationId, storeId, OR: [{ restoredAt: null }, { restoredAt: { gt: now } }] },
         select: { productId: true, reason: true, ignoredAt: true, restoredAt: true },
+      }),
+      this.prisma.client.inventoryBalance.aggregate({
+        where: {
+          organizationId, quantity: { gt: 0 }, warehouse: { storeId, status: 'ACTIVE' },
+          batch: { expiryDate: { lt: calendarDateStart(this.dateInZone(now, organization.timezone), 'UTC') } },
+        },
+        _count: { _all: true }, _sum: { quantity: true },
       }),
     ]);
     const firstObservedSaleAt = salesRange._min.orderedAt;
@@ -588,18 +613,24 @@ export class ManagementService {
       const hiddenRow = hidden.get(key);
       const currentInventory = inventory.get(key)?.quantity ?? 0;
       const configuredMinimumStock = product.storeProducts[0]?.minimumStock ?? null;
-      const minimumStock = configuredMinimumStock ?? DEFAULT_MINIMUM_STOCK;
+      // Low-stock alerts only for steadily selling core brands and lanolin unless a minimum is set by hand.
+      const coreProduct = isCoreReplenishmentProduct(product.brandName, product.chineseName, product.name, product.englishName, product.categoryName);
+      const minimumStock = configuredMinimumStock ?? (coreProduct ? DEFAULT_MINIMUM_STOCK : null);
+      const posMapped = product.posProductMappings.length > 0;
       const soldUnits = this.money(sales.get(key)?.units ?? 0);
       const dailyVelocity = soldUnits > 0 && observedDays > 0 ? soldUnits / observedDays : 0;
       const coverageDays = salesCoverageReliable && dailyVelocity > 0 ? this.money(currentInventory / dailyVelocity) : null;
       const daysSinceLastSale = sales.get(key)?.lastSoldAt ? Math.floor((now.getTime() - sales.get(key)!.lastSoldAt!.getTime()) / 86_400_000) : null;
-      const shortageVisible = currentInventory > 0 || (daysSinceLastSale !== null && daysSinceLastSale <= 120);
-      const stockStatus = currentInventory <= 0 ? 'OUT_OF_STOCK' : currentInventory < minimumStock ? 'LOW' : 'IN_STOCK';
-      const slowMoving = salesCoverageReliable && currentInventory > 0 && (soldUnits <= 0 || (daysSinceLastSale !== null && daysSinceLastSale >= Math.min(observedDays, 60)) || (coverageDays !== null && coverageDays > 180));
+      const shortageVisible = currentInventory > 0 || (daysSinceLastSale !== null && daysSinceLastSale <= SHORTAGE_SALES_WINDOW_DAYS);
+      const stockStatus = currentInventory <= 0 ? 'OUT_OF_STOCK' : minimumStock !== null && currentInventory < minimumStock ? 'LOW' : 'IN_STOCK';
+      // Without a POS mapping no sale can be recorded, so "no sales" says nothing about demand.
+      const slowMoving = posMapped && salesCoverageReliable && currentInventory > 0 && (soldUnits <= 0 || (daysSinceLastSale !== null && daysSinceLastSale >= Math.min(observedDays, 60)) || (coverageDays !== null && coverageDays > 180));
       return {
         productId: key, sku: product.sku, productName,
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName), categoryName: product.categoryName || '未标注品类',
-        currentInventory, minimumStock, configuredMinimumStock, minimumStockSource: configuredMinimumStock === null ? 'DEFAULT' : 'MANUAL',
+        currentInventory, minimumStock, configuredMinimumStock,
+        minimumStockSource: configuredMinimumStock !== null ? 'MANUAL' : minimumStock !== null ? 'DEFAULT' : 'NONE',
+        coreProduct, posMapped,
         soldUnits, dailyVelocity: this.money(dailyVelocity), coverageDays, shortageVisible,
         lastSoldAt: sales.get(key)?.lastSoldAt?.toISOString() ?? null, daysSinceLastSale,
         lastMovementAt: lastMovement.get(key)?.toISOString() ?? null,
@@ -632,6 +663,8 @@ export class ManagementService {
         outOfStockProducts: actionableRows.filter((row) => row.stockStatus === 'OUT_OF_STOCK' && row.shortageVisible).length,
         lowStockProducts: actionableRows.filter((row) => row.stockStatus === 'LOW').length,
         slowMovingProducts: actionableRows.filter((row) => row.slowMoving).length,
+        expiredBatches: expiredStock._count._all,
+        expiredUnits: expiredStock._sum.quantity ?? 0,
       },
       coverageBuckets,
       alerts: actionableRows.filter((row) => row.stockStatus === 'LOW' || (row.stockStatus === 'OUT_OF_STOCK' && row.shortageVisible)).sort((a, b) => a.currentInventory - b.currentInventory),
@@ -640,7 +673,7 @@ export class ManagementService {
       turnoverAvailable: false,
       turnoverNotice: '当前数据库没有连续历史库存快照，不能用当前库存代替平均库存，因此暂不计算标准库存周转率。',
       defaultMinimumStock: DEFAULT_MINIMUM_STOCK,
-      shortageNotice: '缺货仅显示最近120天有销售记录的零库存商品；无单独配置时最低库存默认按20件判断。',
+      shortageNotice: '缺货仅显示最近180天有销售记录的零库存商品；低库存只提醒核心品牌与绵羊油（默认20件）及单独设置了最低库存的商品。',
       coverageNotice: salesCoverageReliable
         ? `库存覆盖天数按实际已有的${observedDays}天POS销售跨度与当前库存估算；无销量商品不生成虚假天数。`
         : `当前只有${observedDays}天POS销售跨度，少于${minimumReliableDays}天；暂不生成库存覆盖天数或滞销结论。`,
