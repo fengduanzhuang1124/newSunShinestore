@@ -38,3 +38,20 @@ export function pickBarcodeMatch<T extends { barcode: string; productId: bigint 
   if (products.size > 1) return { kind: 'ambiguous', rows: normalized };
   return { kind: 'none' };
 }
+
+export class AmbiguousBarcodeError extends Error {
+  constructor(readonly barcode: string) {
+    super(`Barcode ${barcode} matches several products`);
+  }
+}
+
+// Returns the spelling actually stored for a scanned code (so exact lookups keep working), or the scanned code itself
+// when nothing matches. Several products sharing the normalized code is a conflict for a person to resolve.
+export async function resolveStoredBarcode(
+  barcode: string,
+  findBySpellings: (spellings: string[]) => Promise<{ barcode: string; productId: bigint }[]>,
+) {
+  const match = pickBarcodeMatch(barcode, await findBySpellings(barcodeSpellings(barcode)));
+  if (match.kind === 'ambiguous') throw new AmbiguousBarcodeError(barcode.trim());
+  return match.kind === 'none' ? barcode.trim() : match.row.barcode;
+}

@@ -318,6 +318,40 @@ describe('App', () => {
     expect(wrapper.text()).toContain('到期日期');
   });
 
+  it('asks whether a draft line for an expiry that already has stock is new stock or a recount', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(json({ products: [{
+        productId: '2', productName: '纽乐植物酵素60粒', barcodes: ['94005810038224'],
+        batches: [{ batchId: '7', expiryDate: '2027-12', expiryPrecision: 'MONTH', quantity: 12 }, { batchId: '8', expiryDate: '2099-12', expiryPrecision: 'MONTH', quantity: 3 }],
+        totalQuantity: 15,
+      }] }))
+      .mockResolvedValueOnce(json({ movementId: '9', productName: '纽乐植物酵素60粒', expiryDate: '2027-12', previousQuantity: 12, actualQuantity: 10, difference: -2 }));
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('input[aria-label="查询条码或商品名称"]').setValue('纽乐');
+    await wrapper.get('input[aria-label="查询条码或商品名称"]').trigger('keydown.enter');
+    await flushPromises();
+    await wrapper.get('.product-search-dropdown [role="option"]').trigger('click');
+    await wrapper.get('input[aria-label="到期年月"]').setValue('2027-12');
+    await wrapper.get('.receive-form input[type="number"][min="1"][step="1"]').setValue(10);
+    await wrapper.get('form.receive-form').trigger('submit');
+
+    expect(wrapper.text()).toContain('该日期已有 12 件');
+    const confirm = wrapper.get('.confirm-draft');
+    expect(confirm.attributes('disabled')).toBeDefined();
+    await wrapper.findAll('button').find((button) => button.text() === '重新点货（以本次为准）')!.trigger('click');
+    expect(confirm.attributes('disabled')).toBeUndefined();
+    await confirm.trigger('click');
+    await flushPromises();
+
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes('/inventory/stocktake-adjustment'));
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ batchId: '7', actualQuantity: 10, reason: '重新点货（以本次为准）' });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/inventory/scan-receive'))).toBe(false);
+  });
+
   it('shows bilingual product details and moves focus to expiry after a barcode scan', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({

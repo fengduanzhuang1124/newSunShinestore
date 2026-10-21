@@ -47,6 +47,8 @@ type Movement = {
 type ReceiveDraftItem = {
   draftId: string; barcode: string; productName: string; productId?: string;
   expiryMonth: string; expiryDay?: number; expiryDisplay: string; quantity: number;
+  // Set when the same expiry already has stock: staff must say whether this is new stock or a recount.
+  existingBatchId?: string; existingQuantity?: number; countMode?: 'ADD' | 'RECOUNT';
 };
 type MilkCandidate = {
   id: string; sourceSku: string | null; barcode: string | null; sourceName: string;
@@ -925,6 +927,11 @@ function selectSearchSuggestion(product: ProductResult) {
   message.value = `已选择 ${product.productName}，显示全部到期批次。`;
 }
 
+// Products without a real expiry are entered with a far-future date (store convention); show them plainly.
+function expiryLabel(value: string) {
+  return Number(value.slice(0, 4)) >= 2036 ? '无到期日' : value;
+}
+
 function addReceiveDraft() {
   clearStatus();
   const itemBarcode = barcode.value.trim();
@@ -941,12 +948,16 @@ function addReceiveDraft() {
   if (duplicate) {
     duplicate.quantity += itemQuantity;
     receiveDraft.value = [duplicate, ...receiveDraft.value.filter((item) => item !== duplicate)];
-  } else receiveDraft.value.unshift({
-    draftId: createClientUuid(), barcode: itemBarcode, productName: itemName,
-    productId: selectedProduct.value?.productId, expiryMonth: expiryMonth.value,
-    expiryDay: itemDay, expiryDisplay: `${expiryMonth.value}${itemDay ? `-${String(itemDay).padStart(2, '0')}` : ''}`,
-    quantity: itemQuantity,
-  });
+  } else {
+    const expiryDisplay = `${expiryMonth.value}${itemDay ? `-${String(itemDay).padStart(2, '0')}` : ''}`;
+    const existing = selectedProduct.value?.batches.find((batch) => batch.expiryDate === expiryDisplay && batch.quantity > 0);
+    receiveDraft.value.unshift({
+      draftId: createClientUuid(), barcode: itemBarcode, productName: itemName,
+      productId: selectedProduct.value?.productId, expiryMonth: expiryMonth.value,
+      expiryDay: itemDay, expiryDisplay, quantity: itemQuantity,
+      ...(existing ? { existingBatchId: existing.batchId, existingQuantity: existing.quantity } : {}),
+    });
+  }
   message.value = duplicate ? `已累计 ${itemName}，清单数量 ${duplicate.quantity} 件。` : `已加入本次点货清单：${itemName}。`;
   receiveSearch.value = '';
   barcode.value = '';
@@ -971,6 +982,17 @@ async function confirmReceiveDraft() {
   let receiptNo = '';
   try {
     for (const item of [...receiveDraft.value]) {
+      if (item.countMode === 'RECOUNT' && item.existingBatchId) {
+        // A recount replaces the batch quantity instead of adding to it.
+        if (item.quantity !== item.existingQuantity) {
+          await apiRequest('/inventory/stocktake-adjustment', {
+            method: 'POST', body: JSON.stringify({ batchId: item.existingBatchId, actualQuantity: item.quantity, reason: '重新点货（以本次为准）' }),
+          });
+        }
+        completed += 1;
+        removeReceiveDraft(item.draftId);
+        continue;
+      }
       const data = await apiRequest('/inventory/scan-receive', {
         method: 'POST', body: JSON.stringify({
           barcode: item.barcode || undefined, productName: item.productName, productId: item.productId,
@@ -983,7 +1005,7 @@ async function confirmReceiveDraft() {
       lastReceivedBarcode.value = data.barcode || item.barcode;
       removeReceiveDraft(item.draftId);
     }
-    message.value = `入库单 ${receiptNo} 已写入：${completed} 项。`;
+    message.value = receiptNo ? `入库单 ${receiptNo} 已写入：${completed} 项。` : `已按重新点货更新 ${completed} 项库存。`;
   } catch (reason) {
     const detail = reason instanceof Error ? reason.message : '入库失败';
     error.value = `已成功 ${completed} 项，剩余 ${receiveDraft.value.length} 项未写入：${detail}`;
@@ -1570,9 +1592,9 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <div v-if="receiveDraft.length" class="table-wrap receive-draft-table-wrap">
             <table class="receive-draft-table">
               <thead><tr><th>条码</th><th>商品名</th><th>到期日期</th><th>数量</th><th>操作</th></tr></thead>
-              <tbody><tr v-for="item in receiveDraft" :key="item.draftId"><td data-label="条码">{{ item.barcode || '无条码（自动编号）' }}</td><td data-label="商品名">{{ item.productName }}</td><td data-label="到期日期">{{ item.expiryDisplay }}</td><td data-label="数量"><input v-model.number="item.quantity" class="table-input quantity-input" type="number" min="1" step="1" :aria-label="`${item.productName} 清单数量`" /></td><td data-label="操作"><button class="secondary danger-action" type="button" @click="removeReceiveDraft(item.draftId)">删除</button></td></tr></tbody>
+              <tbody><tr v-for="item in receiveDraft" :key="item.draftId"><td data-label="条码">{{ item.barcode || '无条码（自动编号）' }}</td><td data-label="商品名">{{ item.productName }}<div v-if="item.existingBatchId" class="recount-choice"><small>该日期已有 {{ item.existingQuantity }} 件：</small><button type="button" class="secondary compact-action" :class="{ active: item.countMode === 'ADD' }" @click="item.countMode = 'ADD'">新到货（相加）</button><button type="button" class="secondary compact-action" :class="{ active: item.countMode === 'RECOUNT' }" @click="item.countMode = 'RECOUNT'">重新点货（以本次为准）</button></div></td><td data-label="到期日期">{{ expiryLabel(item.expiryDisplay) }}</td><td data-label="数量"><input v-model.number="item.quantity" class="table-input quantity-input" type="number" min="1" step="1" :aria-label="`${item.productName} 清单数量`" /></td><td data-label="操作"><button class="secondary danger-action" type="button" @click="removeReceiveDraft(item.draftId)">删除</button></td></tr></tbody>
             </table>
-            <button class="confirm-draft action-primary" type="button" :disabled="loading || receiveDraft.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)" @click="confirmReceiveDraft">{{ loading ? '正在写入…' : '确认整单入库' }}</button>
+            <button class="confirm-draft action-primary" type="button" :disabled="loading || receiveDraft.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1 || (item.existingBatchId && !item.countMode))" @click="confirmReceiveDraft">{{ loading ? '正在写入…' : '确认整单入库' }}</button>
           </div>
           <p v-else class="empty-state compact">扫描并填写日期后，商品会先出现在这里。</p>
         </section>
@@ -1714,7 +1736,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
                 <tr v-for="(batch, index) in product.batches" :key="batch.batchId">
                   <td>{{ index === 0 ? product.productName : '' }}</td>
                   <td>{{ index === 0 ? product.barcodes.join('、') : '' }}</td>
-                  <td>{{ batch.expiryDate }}</td><td>{{ batch.quantity }} 件</td>
+                  <td>{{ expiryLabel(batch.expiryDate) }}</td><td>{{ batch.quantity }} 件</td>
                   <td>{{ index === 0 ? `${product.totalQuantity} 件` : '' }}</td><td><button class="secondary compact-action" type="button" @click="openBatchExpiryCorrection(batch.batchId, product.productName, batch.expiryDate)">修正日期</button></td>
                 </tr>
               </tbody>
@@ -1769,7 +1791,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <div class="movement-mobile-list">
             <article v-for="movement in movements" :key="movement.movementId" class="movement-mobile-card">
               <div class="movement-mobile-heading"><span class="movement-badge" :class="movement.quantityDelta > 0 ? 'gain' : 'loss'">{{ movement.movementLabel }}</span><strong :class="movement.quantityDelta > 0 ? 'delta-gain' : 'delta-loss'">{{ movement.quantityDelta > 0 ? '+' : '' }}{{ movement.quantityDelta }} 件</strong></div>
-              <h3>{{ movement.productName }}</h3><p>{{ movement.barcodes.join('、') || '无条码' }} · 到期 {{ movement.expiryDate }}</p>
+              <h3>{{ movement.productName }}</h3><p>{{ movement.barcodes.join('、') || '无条码' }} · 到期 {{ expiryLabel(movement.expiryDate) }}</p>
               <dl><div><dt>时间</dt><dd>{{ new Date(movement.createdAt).toLocaleString() }}</dd></div><div><dt>操作人</dt><dd>{{ movement.performedBy }}</dd></div><div><dt>原因</dt><dd>{{ movement.reason || '—' }}</dd></div></dl>
               <div v-if="movement.canReverse" class="reversal-action"><input v-model="reversalReasons[movement.movementId]" :aria-label="`${movement.movementNo} 撤销原因`" maxlength="255" placeholder="填写撤销原因" /><button class="secondary danger-action" :disabled="loading || (reversalReasons[movement.movementId]?.trim().length ?? 0) < 2" @click="reverseMovement(movement)">撤销</button></div>
             </article>
@@ -1810,7 +1832,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <div v-if="inventorySummary.products.length" class="inventory-card-list">
             <article v-for="product in inventorySummary.products" :key="product.productId" class="inventory-stock-card">
               <div class="inventory-stock-main"><div><h3>{{ product.chineseName || product.productName }}</h3><p v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</p><small>{{ product.barcodes.join('、') || product.sku || '无条码' }}</small></div><strong>{{ product.totalQuantity }}<small>件</small></strong></div>
-              <div class="inventory-batches"><div v-for="batch in product.batches" :key="batch.batchId" class="ledger-batch"><span><em>{{ batch.expiryDate }}</em>{{ batch.quantity }} 件<button class="text-action" type="button" @click="openBatchExpiryCorrection(batch.batchId, product.productName, batch.expiryDate)">修正</button></span><small class="location-chip">{{ batchLocationLabels(batch.batchId).join('、') || '仓位未分配' }}</small><div v-if="canManageLocations && warehouseLocations.length" class="ledger-location-editor"><select v-model="placementLocation[batch.batchId]" :aria-label="`${product.productName} 仓位`"><option value="">选择仓位</option><option v-for="location in warehouseLocations" :key="location.locationId" :value="location.locationId">{{ location.code }}</option></select><input v-model.number="placementQuantity[batch.batchId]" type="number" min="0" :max="batch.quantity" placeholder="件数" :aria-label="`${product.productName} 仓位数量`" /><button class="submit-morph ledger-location-save" :class="placementSaveState[batch.batchId] || 'idle'" type="button" :disabled="placementSaveState[batch.batchId] === 'loading'" @click="saveBatchPlacement(product, batch)"><span class="submit-label">保存</span><i class="submit-spinner"></i><i class="submit-check">✓</i></button></div></div></div>
+              <div class="inventory-batches"><div v-for="batch in product.batches" :key="batch.batchId" class="ledger-batch"><span><em>{{ expiryLabel(batch.expiryDate) }}</em>{{ batch.quantity }} 件<button class="text-action" type="button" @click="openBatchExpiryCorrection(batch.batchId, product.productName, batch.expiryDate)">修正</button></span><small class="location-chip">{{ batchLocationLabels(batch.batchId).join('、') || '仓位未分配' }}</small><div v-if="canManageLocations && warehouseLocations.length" class="ledger-location-editor"><select v-model="placementLocation[batch.batchId]" :aria-label="`${product.productName} 仓位`"><option value="">选择仓位</option><option v-for="location in warehouseLocations" :key="location.locationId" :value="location.locationId">{{ location.code }}</option></select><input v-model.number="placementQuantity[batch.batchId]" type="number" min="0" :max="batch.quantity" placeholder="件数" :aria-label="`${product.productName} 仓位数量`" /><button class="submit-morph ledger-location-save" :class="placementSaveState[batch.batchId] || 'idle'" type="button" :disabled="placementSaveState[batch.batchId] === 'loading'" @click="saveBatchPlacement(product, batch)"><span class="submit-label">保存</span><i class="submit-spinner"></i><i class="submit-check">✓</i></button></div></div></div>
               <div class="inventory-stock-actions"><button class="secondary" type="button" @click="openStockIncrease(product)">库存增加</button><button class="secondary stock-decrease-action" type="button" :disabled="product.totalQuantity < 1" @click="openStockDecrease(product)">库存减少</button></div>
             </article>
           </div>
@@ -1861,7 +1883,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             <button class="secondary stock-decrease-action" type="button" :disabled="product.totalQuantity < 1" @click="openStockDecrease(product)">库存减少</button>
           </div>
           <div v-for="batch in product.batches" :key="batch.batchId" class="batch-row">
-            <div class="batch-value"><small>到期日期</small><strong>{{ batch.expiryDate }}</strong></div>
+            <div class="batch-value"><small>到期日期</small><strong>{{ expiryLabel(batch.expiryDate) }}</strong></div>
             <div class="batch-value quantity-value"><small>库存数量</small><strong>{{ batch.quantity }} 件</strong></div>
             <div class="batch-value location-value"><small>仓库位置</small><strong>{{ batchLocationLabels(batch.batchId).join('、') || '未分配' }}</strong></div>
             <div v-if="activeMode === 'query' && canManageLocations && warehouseLocations.length" class="placement-editor"><select v-model="placementLocation[batch.batchId]" :aria-label="`${product.productName} 仓位`"><option value="">选择仓位</option><option v-for="location in warehouseLocations" :key="location.locationId" :value="location.locationId">{{ location.code }} · {{ location.name }}</option></select><input v-model.number="placementQuantity[batch.batchId]" type="number" min="0" :max="batch.quantity" placeholder="件数" :aria-label="`${product.productName} 仓位数量`" /><button class="submit-morph placement-submit" :class="placementSaveState[batch.batchId] || 'idle'" type="button" :disabled="placementSaveState[batch.batchId] === 'loading'" @click="saveBatchPlacement(product, batch)"><span class="submit-label">保存位置</span><i class="submit-spinner"></i><i class="submit-check">✓</i></button></div>
@@ -1984,7 +2006,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <p class="stock-increase-code">{{ increaseProduct.barcodes.join('、') || increaseProduct.sku || '无条码商品' }}</p>
           <label>到期批次
             <select v-model="increaseBatchChoice">
-              <option v-for="batch in increaseProduct.batches" :key="batch.batchId" :value="batch.batchId">{{ batch.expiryDate }} · 当前 {{ batch.quantity }} 件</option>
+              <option v-for="batch in increaseProduct.batches" :key="batch.batchId" :value="batch.batchId">{{ expiryLabel(batch.expiryDate) }} · 当前 {{ batch.quantity }} 件</option>
               <option v-if="stockChangeMode === 'increase'" value="new">＋ 新的到期日期</option>
             </select>
           </label>

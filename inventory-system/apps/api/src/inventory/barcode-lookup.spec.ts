@@ -1,4 +1,4 @@
-import { barcodeSpellings, normalizeBarcode, pickBarcodeMatch } from './barcode-lookup.js';
+import { AmbiguousBarcodeError, barcodeSpellings, normalizeBarcode, pickBarcodeMatch, resolveStoredBarcode } from './barcode-lookup.js';
 
 describe('barcode lookup', () => {
   it('treats UPC-A and EAN-13 spellings of the same code as equal without converting to numbers', () => {
@@ -18,5 +18,18 @@ describe('barcode lookup', () => {
     expect(pickBarcodeMatch('00735940885232', rows)).toEqual({ kind: 'ambiguous', rows });
     expect(pickBarcodeMatch('00735940885232', [rows[0]])).toEqual({ kind: 'normalized', row: rows[0] });
     expect(pickBarcodeMatch('9400000000000', rows)).toEqual({ kind: 'none' });
+  });
+});
+
+describe('resolveStoredBarcode', () => {
+  it('returns the stored spelling so a scan without the leading zero finds the existing product', async () => {
+    const find = async (spellings: string[]) => (spellings.includes('0735940885232') ? [{ barcode: '0735940885232', productId: 760n }] : []);
+    await expect(resolveStoredBarcode('735940885232', find)).resolves.toBe('0735940885232');
+    await expect(resolveStoredBarcode(' 9400000000000 ', async () => [])).resolves.toBe('9400000000000');
+  });
+
+  it('refuses to guess when the code belongs to several products', async () => {
+    const find = async () => [{ barcode: '0735940885232', productId: 1n }, { barcode: '00735940885232', productId: 2n }];
+    await expect(resolveStoredBarcode('735940885232', find)).rejects.toBeInstanceOf(AmbiguousBarcodeError);
   });
 });

@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { InventoryPermissionService } from './inventory-permission.service.js';
+import { AmbiguousBarcodeError, resolveStoredBarcode } from './barcode-lookup.js';
 
 const SEARCH_SYNONYM_GROUPS = [
   ['康维他', 'comvita'],
@@ -194,9 +195,18 @@ export class InventoryQueryService {
   async findByBarcode(organizationId: bigint, userId: bigint, barcode: string) {
     const permission = await this.permissions.warehousePermission(organizationId, userId, 'canView');
 
+    let storedBarcode: string;
+    try {
+      storedBarcode = await resolveStoredBarcode(barcode, (spellings) => this.prisma.client.productBarcode.findMany({
+        where: { organizationId, barcode: { in: spellings } }, select: { barcode: true, productId: true },
+      }));
+    } catch (lookupError) {
+      if (lookupError instanceof AmbiguousBarcodeError) throw new ConflictException('该条码对应多个商品，请按商品名称搜索并选择');
+      throw lookupError;
+    }
     const productBarcode = await this.prisma.client.productBarcode.findUnique({
       where: {
-        organizationId_barcode: { organizationId, barcode },
+        organizationId_barcode: { organizationId, barcode: storedBarcode },
       },
       include: {
         product: {

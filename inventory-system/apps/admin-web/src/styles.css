@@ -405,6 +405,9 @@ td { color: #29483e; }
 .draft-heading p { margin: 0; color: var(--muted); }
 .draft-heading strong { color: var(--ink); white-space: nowrap; }
 .draft-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.recount-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.recount-choice small { color: var(--warning, #b7791f); font-weight: 700; }
+.recount-choice button.active { color: #fff; border-color: transparent; background: linear-gradient(135deg, #2f80ed, #5b5bd6); }
 .confirm-draft { width: 100%; margin-top: 14px; }
 .empty-state.compact { margin: 0; padding: 18px; }
 .milk-review-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }

@@ -4,6 +4,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { InventoryPermissionService } from './inventory-permission.service.js';
 import { ScanReceiveDto } from './scan-receive.dto.js';
 import { parseExpiryInput } from './expiry-date.js';
+import { AmbiguousBarcodeError, resolveStoredBarcode } from './barcode-lookup.js';
 
 @Injectable()
 export class ReceivingService {
@@ -182,7 +183,16 @@ export class ReceivingService {
           },
         });
       }
-      const requestedBarcode = input.barcode?.trim() || null;
+      const scannedBarcode = input.barcode?.trim() || null;
+      let requestedBarcode: string | null = null;
+      try {
+        requestedBarcode = scannedBarcode && await resolveStoredBarcode(scannedBarcode, (spellings) => transaction.productBarcode.findMany({
+          where: { organizationId, barcode: { in: spellings } }, select: { barcode: true, productId: true },
+        }));
+      } catch (lookupError) {
+        if (lookupError instanceof AmbiguousBarcodeError) throw new ConflictException('该条码对应多个商品，请按商品名称搜索并选择');
+        throw lookupError;
+      }
       let productBarcode = requestedBarcode
         ? await transaction.productBarcode.findUnique({
           where: {
