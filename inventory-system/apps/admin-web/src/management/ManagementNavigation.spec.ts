@@ -82,6 +82,46 @@ describe('经营管理页面组织', () => {
     expect(fetchSpy.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
   });
 
+  it('drives the phone top bar, bottom navigation and more sheet', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    expect(wrapper.get('.management-topbar h1').text()).toBe('经营总览');
+    expect(wrapper.get('.management-topbar small').text()).toBe('测试门店');
+    expect(wrapper.get('.management-mobile-nav button[aria-current="page"]').text()).toBe('总览');
+
+    await wrapper.findAll('.management-mobile-nav button').find(item => item.text() === '库存')!.trigger('click'); await flushPromises();
+    expect(wrapper.get('.management-topbar h1').text()).toBe('库存经营');
+    expect(wrapper.get('.management-mobile-nav button[aria-current="page"]').text()).toBe('库存');
+
+    await wrapper.get('.management-topbar button').trigger('click');
+    expect(wrapper.find('.page-guide-popover').exists()).toBe(true);
+    await wrapper.find('.page-guide-popover header button').trigger('click');
+
+    const more = () => wrapper.findAll('.management-mobile-nav button').find(item => item.text() === '更多')!;
+    await more().trigger('click');
+    expect(wrapper.findAll('.more-modules strong').map(item => item.text())).toEqual(['本周进货', '分类与标签', '门店对比', '数据中心']);
+    await wrapper.findAll('.more-modules button').find(item => item.text().includes('数据中心'))!.trigger('click'); await flushPromises();
+    expect(wrapper.find('.management-more-sheet').exists()).toBe(false);
+    expect(wrapper.get('.management-topbar h1').text()).toBe('数据中心');
+    expect(more().classes()).toContain('active');
+
+    await more().trigger('click');
+    await wrapper.findAll('.more-account button').find(item => item.text().includes('账户设置'))!.trigger('click');
+    expect(wrapper.emitted('open-account')).toHaveLength(1);
+    expect(wrapper.find('.management-more-sheet').exists()).toBe(false);
+    await more().trigger('click');
+    await wrapper.findAll('.more-account button').find(item => item.text().includes('返回库存系统'))!.trigger('click');
+    expect(wrapper.emitted('exit')).toHaveLength(1);
+  });
+
+  it('labels every list cell with its column so phones can show rows as cards', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    await go(wrapper, '库存经营');
+    const headers = wrapper.findAll('.inventory-scroll-table th').map(item => item.text());
+    const cells = wrapper.findAll('.inventory-scroll-table tbody tr')[0].findAll('td');
+    expect(cells.map(item => item.attributes('data-label'))).toEqual(headers);
+    expect(wrapper.find('.inventory-table-pagination .load-more').exists()).toBe(false);
+  });
+
   it('introduces the purpose and contents of every management page', async () => {
     const { wrapper } = setup(); await flushPromises();
     const expected: Record<string, string> = {

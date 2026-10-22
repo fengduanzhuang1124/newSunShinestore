@@ -63,7 +63,6 @@
 .decision-workspace table td:not(:first-child), .decision-workspace table th:not(:first-child) { font-variant-numeric: tabular-nums; }
 .decision-workspace .store-comparison-table td:not(:first-child), .decision-workspace .store-comparison-table th:not(:first-child) { text-align: right; white-space: nowrap; }
 .decision-workspace :is(button, summary, input, select):focus-visible { outline: 2px solid var(--decision-accent); outline-offset: 3px; }
-.decision-workspace .management-more-sheet { max-height: calc(100dvh - 120px); overflow-y: auto; }
 @media(max-width:1100px) {
   .decision-workspace .sales-filter-panel, .decision-workspace .product-filter-panel { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .decision-workspace .inventory-operation-filters { grid-template-columns: repeat(2,minmax(0,1fr)); }
