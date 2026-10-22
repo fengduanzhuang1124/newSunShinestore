@@ -3,6 +3,7 @@
 import type { IScannerControls } from '@zxing/browser';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ManagementDashboard from './management/ManagementDashboard.vue';
+import { storeToday } from './store-date';
 
 type Mode = 'home' | 'receive' | 'issue' | 'query' | 'productReview' | 'milkReview' | 'reports' | 'management';
 type Theme = 'light' | 'dark';
@@ -148,9 +149,7 @@ const currentPassword = ref('');
 const newPassword = ref('');
 const confirmPassword = ref('');
 const passwordMessage = ref('');
-const reportDate = ref(new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit',
-}).format(new Date()));
+const reportDate = ref(storeToday());
 const receipts = ref<Receipt[]>([]);
 const reportWarehouseName = ref('');
 const receiptSummary = ref({ receiptCount: 0, productCount: 0, totalQuantity: 0 });
@@ -931,6 +930,8 @@ function selectSearchSuggestion(product: ProductResult) {
 }
 
 // Products without a real expiry are entered with a far-future date (store convention); show them plainly.
+const CAMERA_TITLE: Record<string, string> = { receive: '扫码入库', issue: '扫码出库', stocktake: '扫码筛选盘点商品' };
+
 function expiryLabel(value: string) {
   return Number(value.slice(0, 4)) >= 2036 ? '无到期日' : value;
 }
@@ -1372,9 +1373,7 @@ function downloadCsv(fileName: string, rows: Array<Array<string | number>>) {
 
 // Unsubmitted drafts live only in this browser, so today's count sheet combines them with every receipt already saved today.
 async function exportTodayCount() {
-  const today = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
+  const today = storeToday();
   loading.value = true;
   clearStatus();
   try {
@@ -1974,7 +1973,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
 
       <div v-if="cameraOpen" class="camera-scanner-overlay" role="dialog" aria-modal="true" aria-label="手机相机扫码">
         <section class="camera-scanner-sheet">
-          <header><button type="button" aria-label="关闭相机扫码" @click="stopCameraScanner">×</button><div><strong>{{ cameraTarget === 'receive' ? '扫码入库' : cameraTarget === 'issue' ? '扫码出库' : cameraTarget === 'stocktake' ? '扫码筛选盘点商品' : '扫码查询库存' }}</strong><small>扫描商品条形码</small></div><span></span></header>
+          <header><button type="button" aria-label="关闭相机扫码" @click="stopCameraScanner">×</button><div><strong>{{ CAMERA_TITLE[cameraTarget] ?? '扫码查询库存' }}</strong><small>扫描商品条形码</small></div><span></span></header>
           <div v-if="!cameraError" class="camera-viewport">
             <video ref="cameraVideo" autoplay muted playsinline></video>
             <div class="camera-guide"><i></i><i></i><i></i><i></i><span></span></div>

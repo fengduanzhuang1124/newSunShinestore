@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { storeToday } from '../store-date';
 
 type SalesSummary = {
   period: string; revenue: number; refunds: number; netRevenue: number; orderCount: number;
@@ -167,9 +168,9 @@ const barcodeAudit = ref<BarcodeAudit | null>(null);
 const posLoading = ref(false);
 const posRunning = ref(false);
 const posMessage = ref('');
-const syncDate = ref(new Intl.DateTimeFormat('en-CA', { timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()));
+const syncDate = ref(storeToday());
 const reconcile = ref(false);
-const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+const today = storeToday();
 const posInventoryFrom = ref(`${today.slice(0, 7)}-01`);
 const posInventoryTo = ref(today);
 const posInventoryPreview = ref<PosInventoryPreview | null>(null);
@@ -308,12 +309,46 @@ function openSalesFromOverview() {
   salesBrand.value = ''; salesCategory.value = ''; salesDimension.value = 'DAY';
   selectSection('sales');
 }
+const STOCK_STATUS_LABEL: Record<'OUT_OF_STOCK' | 'LOW' | 'IN_STOCK', string> = { IN_STOCK: '正常', LOW: '低库存', OUT_OF_STOCK: '缺货' };
+const MORE_SECTION_ICON: Record<string, string> = { procurement: '↧', customers: '◫', stores: '⌘' };
+
+function inventoryStatusLabel(item: InventoryOperationRow) {
+  if (item.stockStatus === 'IN_STOCK') return item.slowMoving ? '滞销关注' : '正常';
+  if (item.stockStatus === 'LOW') return '低库存';
+  return item.shortageVisible ? '缺货' : '长期停卖';
+}
+
+const posSyncState = computed(() => {
+  const status = posStatus.value;
+  const tone = posLoadError.value || status?.latestRun?.status === 'FAILED' ? 'status-warning' : status?.running ? 'status-running' : '';
+  if (posLoading.value) return { label: '加载中', tone };
+  if (posLoadError.value) return { label: '加载失败', tone };
+  if (!status) return { label: '未获取', tone };
+  if (status.running) return { label: '正在同步', tone };
+  return { label: status.latestRun?.status === 'FAILED' ? '最近失败' : '空闲', tone };
+});
+
+const POS_READINESS_LABEL: Record<string, string> = { READY: '可用于分析', NEEDS_REVIEW: '需要处理' };
+const posReadinessLabel = computed(() => {
+  if (posLoading.value) return '加载中';
+  if (posLoadError.value) return '加载失败';
+  if (!posCheck.value) return '未获取';
+  return POS_READINESS_LABEL[posCheck.value.readiness] ?? '等待数据';
+});
+
+const realtimeSyncLabel = computed(() => {
+  const realtime = posStatus.value?.realtime;
+  if (posLoading.value || posLoadError.value || !realtime) return '—';
+  return realtime.enabled ? `每 ${realtime.intervalMinutes} 分钟` : '未开启';
+});
+
 function clearSalesFilters() { salesBrand.value = ''; salesCategory.value = ''; }
 function clearProductFilters() { productQuery.value = ''; productBrand.value = ''; productCategory.value = ''; }
 function setDateRange(target: 'sales' | 'products' | 'stores', preset: 'today' | 'week' | 'month' | 'year') {
   const weekStart = new Date(`${today}T00:00:00Z`);
   weekStart.setUTCDate(weekStart.getUTCDate() - 6);
-  const from = preset === 'today' ? today : preset === 'week' ? weekStart.toISOString().slice(0, 10) : preset === 'year' ? `${today.slice(0, 4)}-01-01` : `${today.slice(0, 7)}-01`;
+  const presetStart = { today, week: weekStart.toISOString().slice(0, 10), month: `${today.slice(0, 7)}-01`, year: `${today.slice(0, 4)}-01-01` };
+  const from = presetStart[preset];
   if (target === 'sales') {
     salesFrom.value = from; salesTo.value = today;
     salesDimension.value = preset === 'year' ? 'MONTH' : 'DAY';
@@ -901,9 +936,16 @@ async function performRemovePurchaseItem(item: PurchaseOrderItem) {
   finally { purchaseLoading.value = false; }
 }
 
+const PURCHASE_STATUS_CONSEQUENCE: Record<'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'CANCELLED', string> = {
+  CONFIRMED: '确认后将暂时锁定商品和数量。',
+  ORDERED: '标记已订货后，仍需到货并扫码入库才会增加库存。',
+  CANCELLED: '取消后本周进货单不能继续使用。',
+  DRAFT: '退回草稿后可以继续修改。',
+};
+
 async function changePurchaseStatus(status: 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'CANCELLED') {
   if (!props.storeId) return;
-  const consequence = status === 'CONFIRMED' ? '确认后将暂时锁定商品和数量。' : status === 'ORDERED' ? '标记已订货后，仍需到货并扫码入库才会增加库存。' : status === 'CANCELLED' ? '取消后本周进货单不能继续使用。' : '退回草稿后可以继续修改。';
+  const consequence = PURCHASE_STATUS_CONSEQUENCE[status];
   purchaseConfirm.value = {
     title: status === 'CANCELLED' ? '取消本周进货单' : `${purchaseStatusLabel(status)}确认`,
     description: consequence,
@@ -935,15 +977,20 @@ function escapeXml(value: unknown) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 }
 
+// Excel 2003 XML: opens in Excel and Numbers, and keeps barcodes as text instead of numbers.
+function downloadSpreadsheet(fileName: string, sheetName: string, rows: (string | number)[][]) {
+  const tableRows = rows.map((row) => `<Row>${row.map((cell) => `<Cell><Data ss:Type="${typeof cell === 'number' ? 'Number' : 'String'}">${escapeXml(cell)}</Data></Cell>`).join('')}</Row>`).join('');
+  const xml = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="${escapeXml(sheetName)}"><Table>${tableRows}</Table></Worksheet></Workbook>`;
+  const url = URL.createObjectURL(new Blob(['\ufeff', xml], { type: 'application/vnd.ms-excel;charset=utf-8' }));
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = fileName; anchor.click(); URL.revokeObjectURL(url);
+}
+
 function exportPurchaseOrderExcel() {
   const order = currentPurchaseOrder.value?.order;
   if (!order?.items.length) return;
   const headers = ['序号', '商品名称', 'SKU/条码', '来源', '当前库存', '近7天销量', '建议数量', '确定进货数量', '供应商', '单件进价(NZ$)', '整箱规格', '预计金额(NZ$)', '备注'];
   const rows = order.items.map((item, index) => [index + 1, item.productName, item.barcode || item.sku, purchaseSourceLabel(item.source), item.currentInventory, item.recentSevenDayQty, item.suggestedQuantity, item.orderedQuantity, item.supplierName || '', item.unitCostCents == null ? '' : (item.unitCostCents / 100).toFixed(2), item.caseSize ?? '', item.unitCostCents == null ? '' : ((item.unitCostCents * item.orderedQuantity) / 100).toFixed(2), item.notes || '']);
-  const tableRows = [headers, ...rows].map((row) => `<Row>${row.map((cell) => `<Cell><Data ss:Type="${typeof cell === 'number' ? 'Number' : 'String'}">${escapeXml(cell)}</Data></Cell>`).join('')}</Row>`).join('');
-  const xml = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="本周进货单"><Table>${tableRows}</Table></Worksheet></Workbook>`;
-  const url = URL.createObjectURL(new Blob(['\ufeff', xml], { type: 'application/vnd.ms-excel;charset=utf-8' }));
-  const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${order.orderNo}-本周进货单.xls`; anchor.click(); URL.revokeObjectURL(url);
+  downloadSpreadsheet(`${order.orderNo}-本周进货单.xls`, '本周进货单', [headers, ...rows]);
   showPurchaseMessage('进货单 Excel 已生成');
 }
 
@@ -952,10 +999,7 @@ function exportUnlistedStockExcel() {
   if (!products?.length) return;
   const headers = ['序号', '商品名称', '英文名称', '条码', '本地SKU', '当前库存'];
   const rows = products.map((item, index) => [index + 1, item.productName, item.englishName || '', item.barcodes.join(' / '), item.sku, item.stock]);
-  const tableRows = [headers, ...rows].map((row) => `<Row>${row.map((cell) => `<Cell><Data ss:Type="${typeof cell === 'number' ? 'Number' : 'String'}">${escapeXml(cell)}</Data></Cell>`).join('')}</Row>`).join('');
-  const xml = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="POS未建档商品"><Table>${tableRows}</Table></Worksheet></Workbook>`;
-  const url = URL.createObjectURL(new Blob(['\ufeff', xml], { type: 'application/vnd.ms-excel;charset=utf-8' }));
-  const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${props.storeName || '门店'}-POS未建档商品.xls`; anchor.click(); URL.revokeObjectURL(url);
+  downloadSpreadsheet(`${props.storeName || '门店'}-POS未建档商品.xls`, 'POS未建档商品', [headers, ...rows]);
 }
 
 function openProcurement(view: 'suggestions' | 'order' = 'order') { purchaseView.value = view; selectSection('procurement'); }
@@ -1194,7 +1238,7 @@ onBeforeUnmount(() => { if (purchaseMessageTimer) clearTimeout(purchaseMessageTi
         </div>
         <section v-show="productView === 'products'" class="system-card product-table-card">
           <div class="card-title"><div><h3>商品销售与库存明细</h3><p>销售来自POS，库存来自正式库存系统；比例不等同于标准库存周转率</p></div><span>{{ productsBrands.products.length }} 种</span></div>
-          <div class="product-table-wrap management-detail-scroll"><table><thead><tr><th>商品</th><th>品牌 / 品类</th><th>销售件数</th><th>销售额</th><th>当前库存</th><th title="期间销量除以当前库存，不等于库存周转率">期间销量 / 当前库存</th><th>当前库存状态</th></tr></thead><tbody><tr v-for="item in pagedProductDetails" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.sku }}{{ item.barcode ? ` · ${item.barcode}` : ' · 无条码' }}</small></td><td><strong>{{ item.brandName }}</strong><small>{{ item.categoryName }}</small></td><td>{{ number(item.unitsSold) }}</td><td>{{ money(item.salesRevenue) }}</td><td>{{ number(item.currentInventory) }}</td><td>{{ item.salesToStockRatio === null ? '—' : number(item.salesToStockRatio) }}</td><td><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ item.stockStatus === 'IN_STOCK' ? '正常' : item.stockStatus === 'LOW' ? '低库存' : '缺货' }}</b></td></tr></tbody></table><p v-if="!productsBrands.products.length" class="system-empty">当前筛选条件没有商品。</p></div>
+          <div class="product-table-wrap management-detail-scroll"><table><thead><tr><th>商品</th><th>品牌 / 品类</th><th>销售件数</th><th>销售额</th><th>当前库存</th><th title="期间销量除以当前库存，不等于库存周转率">期间销量 / 当前库存</th><th>当前库存状态</th></tr></thead><tbody><tr v-for="item in pagedProductDetails" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.sku }}{{ item.barcode ? ` · ${item.barcode}` : ' · 无条码' }}</small></td><td><strong>{{ item.brandName }}</strong><small>{{ item.categoryName }}</small></td><td>{{ number(item.unitsSold) }}</td><td>{{ money(item.salesRevenue) }}</td><td>{{ number(item.currentInventory) }}</td><td>{{ item.salesToStockRatio === null ? '—' : number(item.salesToStockRatio) }}</td><td><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ STOCK_STATUS_LABEL[item.stockStatus] }}</b></td></tr></tbody></table><p v-if="!productsBrands.products.length" class="system-empty">当前筛选条件没有商品。</p></div>
           <div class="inventory-table-pagination"><span>共 {{ productsBrands.products.length }} 种商品</span><label>每页<select v-model.number="productDetailPageSize"><option :value="50">50</option><option :value="100">100</option></select></label><div><button type="button" :disabled="productDetailPage <= 1" @click="productDetailPage--">上一页</button><b>{{ productDetailPage }} / {{ productDetailPageCount }}</b><button type="button" :disabled="productDetailPage >= productDetailPageCount" @click="productDetailPage++">下一页</button></div></div>
         </section>
       </template>
@@ -1234,7 +1278,7 @@ onBeforeUnmount(() => { if (purchaseMessageTimer) clearTimeout(purchaseMessageTi
             <label>商品分类<select v-model="inventoryCategoryFilter"><option value="">全部分类</option><option v-for="category in inventoryCategories" :key="category" :value="category">{{ category }}</option></select></label>
             <label>排序<select v-model="inventorySort"><option value="INVENTORY_DESC">库存从高到低</option><option value="SALES_DESC">销量从高到低</option><option value="COVERAGE_DESC">覆盖天数从高到低</option><option value="LAST_SALE_ASC">最久未销售优先</option><option value="NAME_ASC">商品名称排序</option></select></label>
           </div>
-          <button class="text-action clear-table-filter" type="button" @click="clearInventoryFilters">清除筛选</button><div class="product-table-wrap inventory-scroll-table"><table><thead><tr><th>商品</th><th>库存</th><th>最低库存</th><th>观察期销量</th><th>日均销量</th><th>最后销售</th><th>状态与操作</th></tr></thead><tbody><tr v-for="item in pagedInventoryProducts" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }}<template v-if="item.posMapped === false"> · <b class="pos-unmapped-tag">POS未映射</b></template></small></td><td>{{ number(item.currentInventory) }}</td><td><button class="minimum-stock-value" type="button" @click="configureMinimumStock(item)">{{ item.minimumStock ?? '—' }} <small>{{ item.minimumStockSource === 'MANUAL' ? '单独' : item.minimumStockSource === 'DEFAULT' ? '默认' : '不提醒' }}</small></button></td><td>{{ number(item.soldUnits) }}</td><td>{{ number(item.dailyVelocity) }}</td><td>{{ item.daysSinceLastSale === null ? '无记录' : `${item.daysSinceLastSale} 天前` }}</td><td><div class="inventory-row-actions"><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ item.stockStatus === 'IN_STOCK' ? (item.slowMoving ? '滞销关注' : '正常') : item.stockStatus === 'LOW' ? '低库存' : item.shortageVisible ? '缺货' : '长期停卖' }}</b><button type="button" :disabled="inventoryActionProductId === item.productId" @click="setInventoryVisibility(item, 'IGNORE')">忽略</button><button type="button" :disabled="inventoryActionProductId === item.productId" @click="setInventoryVisibility(item, 'NEXT_WEEK')">下周显示</button><button class="table-action muted" type="button" @click="configureMinimumStock(item)">设阈值</button><button v-if="item.stockStatus !== 'IN_STOCK' && (item.stockStatus !== 'OUT_OF_STOCK' || item.shortageVisible)" :class="['table-action', { 'is-added': isProductInCurrentOrder(item.productId) }]" type="button" :disabled="purchaseLoading || isProductInCurrentOrder(item.productId)" @click="addToPurchaseOrder(item.productId, item.stockStatus === 'OUT_OF_STOCK' ? 'OUT_OF_STOCK' : 'LOW_STOCK')">{{ purchaseActionProductId === item.productId ? '加入中…' : isProductInCurrentOrder(item.productId) ? '已在进货单' : '加入进货单' }}</button></div></td></tr></tbody></table><p v-if="!pagedInventoryProducts.length" class="system-empty">当前筛选条件没有需要处理的商品。</p></div>
+          <button class="text-action clear-table-filter" type="button" @click="clearInventoryFilters">清除筛选</button><div class="product-table-wrap inventory-scroll-table"><table><thead><tr><th>商品</th><th>库存</th><th>最低库存</th><th>观察期销量</th><th>日均销量</th><th>最后销售</th><th>状态与操作</th></tr></thead><tbody><tr v-for="item in pagedInventoryProducts" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }}<template v-if="item.posMapped === false"> · <b class="pos-unmapped-tag">POS未映射</b></template></small></td><td>{{ number(item.currentInventory) }}</td><td><button class="minimum-stock-value" type="button" @click="configureMinimumStock(item)">{{ item.minimumStock ?? '—' }} <small>{{ item.minimumStockSource === 'MANUAL' ? '单独' : item.minimumStockSource === 'DEFAULT' ? '默认' : '不提醒' }}</small></button></td><td>{{ number(item.soldUnits) }}</td><td>{{ number(item.dailyVelocity) }}</td><td>{{ item.daysSinceLastSale === null ? '无记录' : `${item.daysSinceLastSale} 天前` }}</td><td><div class="inventory-row-actions"><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ inventoryStatusLabel(item) }}</b><button type="button" :disabled="inventoryActionProductId === item.productId" @click="setInventoryVisibility(item, 'IGNORE')">忽略</button><button type="button" :disabled="inventoryActionProductId === item.productId" @click="setInventoryVisibility(item, 'NEXT_WEEK')">下周显示</button><button class="table-action muted" type="button" @click="configureMinimumStock(item)">设阈值</button><button v-if="item.stockStatus !== 'IN_STOCK' && (item.stockStatus !== 'OUT_OF_STOCK' || item.shortageVisible)" :class="['table-action', { 'is-added': isProductInCurrentOrder(item.productId) }]" type="button" :disabled="purchaseLoading || isProductInCurrentOrder(item.productId)" @click="addToPurchaseOrder(item.productId, item.stockStatus === 'OUT_OF_STOCK' ? 'OUT_OF_STOCK' : 'LOW_STOCK')">{{ purchaseActionProductId === item.productId ? '加入中…' : isProductInCurrentOrder(item.productId) ? '已在进货单' : '加入进货单' }}</button></div></td></tr></tbody></table><p v-if="!pagedInventoryProducts.length" class="system-empty">当前筛选条件没有需要处理的商品。</p></div>
           <div class="inventory-table-pagination">
             <span>显示 {{ filteredInventoryProducts.length ? (inventoryPage - 1) * inventoryPageSize + 1 : 0 }}–{{ Math.min(inventoryPage * inventoryPageSize, filteredInventoryProducts.length) }} / 共 {{ filteredInventoryProducts.length }} 种商品</span>
             <label>每页<select v-model.number="inventoryPageSize"><option :value="18">18</option><option :value="54">54</option></select></label>
@@ -1314,10 +1358,10 @@ onBeforeUnmount(() => { if (purchaseMessageTimer) clearTimeout(purchaseMessageTi
       </section>
 
       <div v-show="systemView === 'sync'" class="pos-status-grid">
-        <article><span>同步状态</span><strong :class="posLoadError || posStatus?.latestRun?.status === 'FAILED' ? 'status-warning' : posStatus?.running ? 'status-running' : ''">{{ posLoading ? '加载中' : posLoadError ? '加载失败' : !posStatus ? '未获取' : posStatus.running ? '正在同步' : posStatus.latestRun?.status === 'FAILED' ? '最近失败' : '空闲' }}</strong><small>最近成功或失败结果见下方记录</small></article>
+        <article><span>同步状态</span><strong :class="posSyncState.tone">{{ posSyncState.label }}</strong><small>最近成功或失败结果见下方记录</small></article>
         <article><span>POS订单</span><strong>{{ posLoading || posLoadError ? '—' : (posCheck?.orders.total ?? '—') }}</strong><small>最近订单：{{ dateTime(posCheck?.orders.lastOrderedAt ?? null) }}</small></article>
         <article><span>商品映射率</span><strong>{{ posLoading || posLoadError || !posCheck ? '—' : `${posCheck.items.mappingCoveragePercent}%` }}</strong><small>{{ posCheck?.items.mapped ?? '—' }} / {{ posCheck?.items.mappable ?? posCheck?.items.total ?? '—' }} 条商品销售明细已关联</small></article>
-        <article><span>实时同步</span><strong :class="posStatus?.realtime?.lastError ? 'status-warning' : ''">{{ posLoading || posLoadError || !posStatus?.realtime ? '—' : posStatus.realtime.enabled ? `每 ${posStatus.realtime.intervalMinutes} 分钟` : '未开启' }}</strong><small v-if="posLoading || posLoadError || !posStatus?.realtime">状态未知</small><small v-else-if="posStatus.realtime.lastError">{{ posStatus.realtime.lastError }}</small><small v-else-if="posStatus?.realtime?.enabled">上次 {{ dateTime(posStatus.realtime.lastSuccessAt) }}<template v-if="posStatus.realtime.lastApplied"> · 扣减 {{ number(posStatus.realtime.lastApplied.unitsApplied) }} 件</template></small><small v-else>需手动同步与扣库</small></article>
+        <article><span>实时同步</span><strong :class="posStatus?.realtime?.lastError ? 'status-warning' : ''">{{ realtimeSyncLabel }}</strong><small v-if="posLoading || posLoadError || !posStatus?.realtime">状态未知</small><small v-else-if="posStatus.realtime.lastError">{{ posStatus.realtime.lastError }}</small><small v-else-if="posStatus?.realtime?.enabled">上次 {{ dateTime(posStatus.realtime.lastSuccessAt) }}<template v-if="posStatus.realtime.lastApplied"> · 扣减 {{ number(posStatus.realtime.lastApplied.unitsApplied) }} 件</template></small><small v-else>需手动同步与扣库</small></article>
         <article><span>待处理异常</span><strong class="status-warning">{{ posLoading || posLoadError ? '—' : (posCheck?.issues.total ?? '—') }}</strong><small>商品、退款和人工复核事项</small></article>
       </div>
 
@@ -1369,7 +1413,7 @@ onBeforeUnmount(() => { if (purchaseMessageTimer) clearTimeout(purchaseMessageTi
 
       <div v-show="systemView === 'quality'" class="pos-system-grid">
         <section v-if="managementAccess?.capabilities.posIssues" class="system-card health-check-card">
-          <div class="card-title"><div><h3>数据检查</h3><p>检查时间：{{ dateTime(posCheck?.checkedAt ?? null) }}</p></div><span>{{ posLoading ? '加载中' : posLoadError ? '加载失败' : !posCheck ? '未获取' : posCheck.readiness === 'READY' ? '可用于分析' : posCheck.readiness === 'NEEDS_REVIEW' ? '需要处理' : '等待数据' }}</span></div>
+          <div class="card-title"><div><h3>数据检查</h3><p>检查时间：{{ dateTime(posCheck?.checkedAt ?? null) }}</p></div><span>{{ posReadinessLabel }}</span></div>
           <ul><li v-for="check in posCheck?.checks ?? []" :key="check.code"><b :class="check.passed ? 'pass' : 'fail'">{{ check.passed ? '✓' : '!' }}</b><span>{{ check.message }}</span></li></ul>
         </section>
       </div>
@@ -1421,7 +1465,7 @@ onBeforeUnmount(() => { if (purchaseMessageTimer) clearTimeout(purchaseMessageTi
       <section class="management-more-sheet" role="dialog" aria-modal="true" aria-label="更多经营模块">
         <header><div><small>MORE MODULES</small><h2>更多经营模块</h2></div><button type="button" aria-label="关闭更多模块" @click="showMobileMore = false">×</button></header>
         <div>
-          <button v-for="section in sections.filter((item) => ['procurement', 'customers', 'stores', 'system'].includes(item.id))" :key="section.id" type="button" :disabled="!canSection(section.id)" @click="selectSection(section.id)"><span>{{ section.id === 'procurement' ? '↧' : section.id === 'customers' ? '◫' : section.id === 'stores' ? '⌘' : '⚙' }}</span><strong>{{ section.label }}</strong><small>{{ canSection(section.id) ? section.description : '当前账号无权限' }}</small></button>
+          <button v-for="section in sections.filter((item) => ['procurement', 'customers', 'stores', 'system'].includes(item.id))" :key="section.id" type="button" :disabled="!canSection(section.id)" @click="selectSection(section.id)"><span>{{ MORE_SECTION_ICON[section.id] ?? '⚙' }}</span><strong>{{ section.label }}</strong><small>{{ canSection(section.id) ? section.description : '当前账号无权限' }}</small></button>
         </div>
       </section>
     </div>

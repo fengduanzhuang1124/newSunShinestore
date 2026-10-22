@@ -64,7 +64,7 @@ function readEntries(path: string): EntryLine[] {
   });
 }
 
-const isoDate = (date: Date) => date.toISOString().slice(0, 10);
+export const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 const isMonthEnd = (date: string) => {
   const [year, month, day] = date.split('-').map(Number);
   return new Date(Date.UTC(year, month, 0)).getUTCDate() === day;

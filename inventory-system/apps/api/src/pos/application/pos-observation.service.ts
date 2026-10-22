@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service.js';
 import { MoniOrderGateway } from '../adapters/moni/moni-order.gateway.js';
 import { MoniProductGateway } from '../adapters/moni/moni-product.gateway.js';
-import { dateTimeInZone, nextCalendarDateStart } from './pos-date.js';
+import { dateTimeInZone, nextCalendarDateStart } from '../../shared/calendar-date.js';
 import { barcodeSpellings, pickBarcodeMatch } from '../../inventory/barcode-lookup.js';
 
 export interface PosMappingImportResult {

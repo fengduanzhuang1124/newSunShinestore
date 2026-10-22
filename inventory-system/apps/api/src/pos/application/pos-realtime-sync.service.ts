@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { PrismaService } from '../../database/prisma.service.js';
 import { PosInventoryApplicationService } from './pos-inventory-application.service.js';
 import { PosObservationService } from './pos-observation.service.js';
+import { calendarDateInZone, hourInZone } from '../../shared/calendar-date.js';
 
 const MAPPING_REFRESH_MS = 60 * 60 * 1000;
 const STALE_RUN_MS = 30 * 60 * 1000;
@@ -145,9 +146,8 @@ export class PosRealtimeSyncService implements OnModuleInit, OnModuleDestroy {
 
   // Today in the store's zone; shortly after midnight also yesterday, so late orders are not missed.
   private datesToSync(now: Date, timeZone: string) {
-    const date = (value: Date) => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(value);
-    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', hourCycle: 'h23' }).format(now));
-    return hour < 1 ? [date(new Date(now.getTime() - 86_400_000)), date(now)] : [date(now)];
+    const today = calendarDateInZone(now, timeZone);
+    return hourInZone(now, timeZone) < 1 ? [calendarDateInZone(new Date(now.getTime() - 86_400_000), timeZone), today] : [today];
   }
 
   private async actorId() {

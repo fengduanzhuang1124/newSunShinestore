@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
+import type { PrismaClient } from '@sunshine/database';
 import { PrismaService } from '../../database/prisma.service.js';
 
 // Why a sale line was not (fully) deducted. The rest of the order is still applied; these lines wait for review.
@@ -93,7 +94,7 @@ export class PosInventoryApplicationService {
   ) {
     const [orders, balances, reviewRequired] = await Promise.all([
       this.loadCandidateOrders(organizationId, storeId, from, to),
-      this.loadBalances(organizationId, storeId),
+      this.availableBalances(this.prisma.client, organizationId, storeId),
       this.prisma.client.posOrder.count({
         where: {
           organizationId,
@@ -195,7 +196,7 @@ export class PosInventoryApplicationService {
     });
     const mappingByExternalId = new Map(mappings.map((mapping) => [mapping.externalProductId, mapping]));
     const available = new Map<string, number>();
-    for (const balance of await this.loadBalances(organizationId, storeId)) {
+    for (const balance of await this.availableBalances(this.prisma.client, organizationId, storeId)) {
       const key = balance.productId.toString();
       available.set(key, (available.get(key) ?? 0) + balance.quantity);
     }
@@ -256,10 +257,7 @@ export class PosInventoryApplicationService {
         }
         const appliedBefore = item.inventoryAppliedQuantity ?? 0;
         let remaining = required - appliedBefore;
-        const balances = await tx.inventoryBalance.findMany({
-          where: { organizationId, productId, quantity: { gt: 0 }, warehouse: { storeId, status: 'ACTIVE' }, batch: { status: 'ACTIVE' } },
-          orderBy: [{ batch: { expiryDate: 'asc' } }, { warehouseId: 'asc' }, { batchId: 'asc' }],
-        });
+        const balances = await this.availableBalances(tx, organizationId, storeId, productId);
         let allocated = 0;
         for (const balance of balances) {
           if (remaining === 0) break;
@@ -349,10 +347,12 @@ export class PosInventoryApplicationService {
     });
   }
 
-  private loadBalances(organizationId: bigint, storeId: bigint) {
-    return this.prisma.client.inventoryBalance.findMany({
+  // The stock a sale may be deducted from: positive balances in active warehouses and batches, first-expiry-first.
+  private availableBalances(client: Pick<PrismaClient, 'inventoryBalance'>, organizationId: bigint, storeId: bigint, productId?: bigint) {
+    return client.inventoryBalance.findMany({
       where: {
         organizationId,
+        ...(productId === undefined ? {} : { productId }),
         quantity: { gt: 0 },
         warehouse: { storeId, status: 'ACTIVE' },
         batch: { status: 'ACTIVE' },
@@ -463,28 +463,7 @@ export class PosInventoryApplicationService {
         where: { id: orderId },
         include: { items: { where: { status: 'ACTIVE' }, orderBy: { id: 'asc' } } },
       });
-      const balances = await tx.inventoryBalance.findMany({
-        where: {
-          organizationId,
-          quantity: { gt: 0 },
-          warehouse: { storeId, status: 'ACTIVE' },
-          batch: { status: 'ACTIVE' },
-        },
-        orderBy: [
-          { batch: { expiryDate: 'asc' } },
-          { warehouseId: 'asc' },
-          { batchId: 'asc' },
-        ],
-        select: {
-          organizationId: true,
-          warehouseId: true,
-          productId: true,
-          batchId: true,
-          quantity: true,
-          version: true,
-          batch: { select: { expiryDate: true, status: true } },
-        },
-      });
+      const balances = await this.availableBalances(tx, organizationId, storeId);
       const plan = this.planOrder(order, balances);
       const requestId = randomUUID();
 
