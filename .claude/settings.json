@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc --noEmit -p tsconfig.json)",
+      "Bash(npx tsc -p *)",
+      "Bash(npx vue-tsc --noEmit -p tsconfig.json)",
+      "Bash(npx vitest run)",
+      "Bash(npx vitest run *)",
+      "Bash(node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand)",
+      "Bash(node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand *)",
+      "Bash(corepack pnpm typecheck)",
+      "Bash(corepack pnpm test)",
+      "Bash(corepack pnpm build)",
+      "Bash(corepack pnpm exec prisma migrate status)",
+      "Bash(corepack pnpm exec prisma validate)",
+      "Bash(docker compose ps)",
+      "Bash(tailscale status)",
+      "Bash(tailscale serve status)",
+      "Bash(tailscale funnel status)",
+      "Bash(curl -sk -o /dev/null -w \"public page %{http_code}\\n\" https://macmacbook-pro.tail10ff0a.ts.net/)",
+      "Bash(curl -sk -o /dev/null -w \"public api %{http_code}\\n\" https://macmacbook-pro.tail10ff0a.ts.net/api/v1/health)"
+    ]
+  }
+}
