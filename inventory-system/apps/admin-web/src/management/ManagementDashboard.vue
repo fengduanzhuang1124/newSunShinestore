@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import OverviewPage from './pages/OverviewPage.vue';
 import SalesPage from './pages/SalesPage.vue';
 import ProductsPage from './pages/ProductsPage.vue';
@@ -10,17 +11,52 @@ import SystemPage from './pages/SystemPage.vue';
 import { provideManagementDashboard, useManagementDashboard } from './useManagementDashboard';
 
 const props = defineProps<{ apiBaseUrl: string; token: string; storeId: string; storeName: string; administrator?: boolean }>();
-const emit = defineEmits<{ 'open-report': [view: 'receipts' | 'expiry' | 'movements'] }>();
+const emit = defineEmits<{ 'open-report': [view: 'receipts' | 'expiry' | 'movements']; 'open-account': []; exit: [] }>();
 const management = useManagementDashboard(props, emit);
 provideManagementDashboard(management);
 const {
   overview, loading, error, posLoading, posRunning, today, posInventoryFrom, posInventoryTo, posInventoryPreview,
   posInventoryConfirmOpen, posInventoryApplyState, pageGuideOpen, minimumStockDialog, minimumStockSaving,
   purchaseMessage, purchaseMessageTone, purchaseConfirm, purchaseConfirmBusy, activeSection, showMobileMore,
-  navigationGroups, canSection, sections, currentSection, currentGuide, selectSection, MORE_SECTION_ICON, pageBusy,
+  navigationGroups, canSection, sections, currentSection, currentGuide, selectSection, pageBusy,
   retryCurrentPage, number, refreshOverviewRealtime, loadSystemManagement, applyPosInventory, saveMinimumStock,
-  confirmPurchaseAction
+  confirmPurchaseAction, salesAnalysis, productsBrands, inventoryOperations, purchaseSuggestions, productInsights,
+  storeComparison, posStatus
 } = management;
+
+// First load of a page (nothing to show yet): phones show a skeleton instead of an empty page.
+const pageWaitingForFirstData = computed(() => pageBusy.value && !{
+  overview: overview.value, sales: salesAnalysis.value, products: productsBrands.value, inventory: inventoryOperations.value,
+  procurement: purchaseSuggestions.value, customers: productInsights.value, stores: storeComparison.value, system: posStatus.value,
+}[activeSection.value]);
+
+// Phone navigation: four primary pages in the bottom bar, the rest in the "更多" sheet.
+const MOBILE_PRIMARY_SECTIONS = [
+  { id: 'overview', label: '总览' }, { id: 'sales', label: '销售' }, { id: 'products', label: '商品' }, { id: 'inventory', label: '库存' },
+] as const;
+const MOBILE_MORE_SECTIONS: string[] = ['procurement', 'customers', 'stores', 'system'];
+// 24 × 24 stroke icons drawn with currentColor.
+const ICON_PATH: Record<string, string> = {
+  overview: 'M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z',
+  sales: 'M3 17l6-6 4 4 8-8M15 7h6v6',
+  products: 'M21 8 12 3 3 8v8l9 5 9-5zM3 8l9 5 9-5M12 13v8',
+  inventory: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+  more: 'M5 12h.01M12 12h.01M19 12h.01',
+  procurement: 'M3 4h2l2.4 10.2a1 1 0 0 0 1 .8h8.9a1 1 0 0 0 1-.8L20 8H6.2M9 20h.01M17 20h.01',
+  customers: 'M3 12V4h8l9 9-8 8zM7.5 7.5h.01',
+  stores: 'M4 10v10h16V10M3 10l2-6h14l2 6zM9 20v-5h6v5',
+  system: 'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
+  account: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 3.6-6 8-6s8 2 8 6',
+  exit: 'M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l-5-5 5-5M5 12h11',
+  guide: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7M12 17h.01',
+  chevron: 'M9 6l6 6-6 6',
+  close: 'M6 6l12 12M18 6 6 18',
+};
+function openFromMore(action: 'open-account' | 'exit') {
+  showMobileMore.value = false;
+  if (action === 'exit') emit('exit');
+  else emit('open-account');
+}
 </script>
 
 <template>
@@ -42,8 +78,13 @@ const {
       <p>正式数据来自 Homi 数据库<br />POS 数据同步后自动更新</p>
     </aside>
 
+    <header class="management-topbar">
+      <div><h1>{{ currentSection.label }}</h1><small>{{ overview?.store.name || storeName }}</small></div>
+      <button type="button" aria-label="查看本页说明" :aria-expanded="pageGuideOpen" @click="pageGuideOpen = !pageGuideOpen"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH.guide" /></svg></button>
+    </header>
+
     <main class="management-content" :class="{ 'overview-content': activeSection === 'overview' }">
-    <header class="management-heading">
+    <header class="management-heading" :class="{ 'has-filters': activeSection === 'overview' || activeSection === 'system' }">
       <div><p>MANAGEMENT / {{ activeSection.toUpperCase() }}</p><h2>{{ currentSection.label }}</h2><span>{{ overview?.store.name || storeName }} · {{ currentSection.description }}</span></div>
       <div v-if="activeSection === 'overview'" class="management-filters"><label>经营日期<strong>{{ today }}</strong></label><button type="button" :disabled="loading" @click="refreshOverviewRealtime">{{ loading ? '同步中…' : '刷新今日数据' }}</button></div>
       <div v-else-if="activeSection === 'system'" class="management-filters"><button type="button" :disabled="posLoading || posRunning" @click="loadSystemManagement">{{ posLoading ? '加载中…' : '刷新状态' }}</button></div>
@@ -59,6 +100,7 @@ const {
 
     <div v-if="error" class="management-alert error" role="alert"><span>{{ error }}。本次数据未能更新，已显示的内容可能不是最新结果。</span><button class="text-action" type="button" :disabled="pageBusy" @click="retryCurrentPage">重新加载</button></div>
     <p v-if="pageBusy" class="page-load-status" role="status">正在更新{{ currentSection.label }}…</p>
+    <div v-if="pageWaitingForFirstData" class="page-skeleton" aria-hidden="true"><i></i><i></i><i></i><i></i><i class="wide"></i><i class="wide"></i></div>
     <OverviewPage v-if="activeSection === 'overview'" />
 
     <SalesPage v-else-if="activeSection === 'sales'" />
@@ -84,21 +126,25 @@ const {
     </main>
 
     <nav class="management-mobile-nav" aria-label="手机经营管理导航">
-      <button :class="{ active: activeSection === 'overview' }" :disabled="!canSection('overview')" @click="selectSection('overview')"><span>⌂</span>总览</button>
-      <button :class="{ active: activeSection === 'sales' }" :disabled="!canSection('sales')" @click="selectSection('sales')"><span>↗</span>销售</button>
-      <button :class="{ active: activeSection === 'products' }" :disabled="!canSection('products')" @click="selectSection('products')"><span>◇</span>商品</button>
-      <button :class="{ active: activeSection === 'inventory' }" :disabled="!canSection('inventory')" @click="selectSection('inventory')"><span>▦</span>库存</button>
-      <button :class="{ active: ['procurement', 'customers', 'stores', 'system'].includes(activeSection) }" :aria-expanded="showMobileMore" @click="showMobileMore = true"><span>•••</span>更多</button>
+      <button v-for="item in MOBILE_PRIMARY_SECTIONS" :key="item.id" type="button" :class="{ active: activeSection === item.id }" :aria-current="activeSection === item.id ? 'page' : undefined" :disabled="!canSection(item.id)" @click="selectSection(item.id)"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH[item.id]" /></svg></span>{{ item.label }}</button>
+      <button type="button" :class="{ active: MOBILE_MORE_SECTIONS.includes(activeSection) }" :aria-expanded="showMobileMore" @click="showMobileMore = true"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH.more" /></svg></span>更多</button>
     </nav>
 
+    <Transition name="sheet-rise">
     <div v-if="showMobileMore" class="management-more-overlay" role="presentation" @click.self="showMobileMore = false">
       <section class="management-more-sheet" role="dialog" aria-modal="true" aria-label="更多经营模块">
-        <header><div><small>MORE MODULES</small><h2>更多经营模块</h2></div><button type="button" aria-label="关闭更多模块" @click="showMobileMore = false">×</button></header>
-        <div>
-          <button v-for="section in sections.filter((item) => ['procurement', 'customers', 'stores', 'system'].includes(item.id))" :key="section.id" type="button" :disabled="!canSection(section.id)" @click="selectSection(section.id)"><span>{{ MORE_SECTION_ICON[section.id] ?? '⚙' }}</span><strong>{{ section.label }}</strong><small>{{ canSection(section.id) ? section.description : '当前账号无权限' }}</small></button>
+        <i class="sheet-handle" aria-hidden="true"></i>
+        <header><h2>更多</h2><button type="button" aria-label="关闭更多模块" @click="showMobileMore = false"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH.close" /></svg></button></header>
+        <div class="more-modules">
+          <button v-for="section in sections.filter((item) => MOBILE_MORE_SECTIONS.includes(item.id))" :key="section.id" type="button" :class="{ active: activeSection === section.id }" :disabled="!canSection(section.id)" @click="selectSection(section.id)"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH[section.id]" /></svg></span><strong>{{ section.label }}</strong><small>{{ canSection(section.id) ? section.description : '当前账号无权限' }}</small></button>
+        </div>
+        <div class="more-account">
+          <button type="button" @click="openFromMore('open-account')"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH.account" /></svg><span>账户设置<small>密码、显示主题与退出登录</small></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH.chevron" /></svg></button>
+          <button type="button" @click="openFromMore('exit')"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH.exit" /></svg><span>返回库存系统<small>扫码入库、出库与盘点</small></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH.chevron" /></svg></button>
         </div>
       </section>
     </div>
+    </Transition>
   </section>
 </template>
 
@@ -229,17 +275,6 @@ const {
   .trend-line-chart,.trend-line-chart svg{min-height:145px;height:145px}.sales-ranking ol,.product-ranking ol,.ranking ol,.inventory-alert-list ol{max-height:230px}
 }
 @media(max-width:720px){
-  .management-workspace{padding:10px 10px calc(82px + env(safe-area-inset-bottom));border-radius:18px}
-  .management-sidebar{display:none}
-  .management-mobile-nav{position:fixed;z-index:40;right:0;bottom:0;left:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));padding:6px 8px max(6px,env(safe-area-inset-bottom));border-top:1px solid #213149;background:rgb(8 15 27 / 96%);box-shadow:0 -12px 32px rgb(0 0 0 / 34%);backdrop-filter:blur(18px)}
-  .management-mobile-nav button{display:grid;min-width:0;min-height:56px;place-items:center;gap:1px;padding:5px 2px;color:#77879e;border:0;border-radius:11px;background:transparent;font:inherit;font-size:10px;font-weight:800}
-  .management-mobile-nav button span{color:inherit;font-size:20px;line-height:1}.management-mobile-nav button.active{color:#ecf8ff;background:linear-gradient(145deg,#146d89,#4959c8);box-shadow:inset 0 1px 0 rgb(255 255 255 / 12%)}
-  .management-more-overlay{position:fixed;z-index:45;inset:0;display:flex;align-items:flex-end;padding:14px 12px calc(76px + env(safe-area-inset-bottom));background:rgb(2 7 15 / 72%);backdrop-filter:blur(8px)}
-  .management-more-sheet{width:100%;padding:18px;border:1px solid #26364d;border-radius:22px;background:#0b1422;box-shadow:0 24px 60px rgb(0 0 0 / 50%)}
-  .management-more-sheet>header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}.management-more-sheet h2{margin:3px 0 0;font-size:22px}.management-more-sheet header small{color:#72839b;font-size:10px;font-weight:900;letter-spacing:.14em}
-  .management-more-sheet>header>button{display:grid;width:44px;min-height:44px;place-items:center;padding:0;color:#eef4ff;border:1px solid #2a3a51;border-radius:50%;background:#111d2e;font-size:24px}
-  .management-more-sheet>div{display:grid;grid-template-columns:1fr 1fr;gap:9px}.management-more-sheet>div>button{display:grid;grid-template-columns:36px minmax(0,1fr);gap:2px 10px;min-height:86px;padding:12px;color:#eef4ff;border:1px solid #223149;border-radius:15px;background:#111c2d;text-align:left}
-  .management-more-sheet>div>button>span{grid-row:1/3;align-self:center;color:#35d2e1;font-size:24px;text-align:center}.management-more-sheet>div>button strong{align-self:end}.management-more-sheet>div>button small{align-self:start;overflow:hidden;color:#8190a6;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.management-more-sheet>div>button:disabled{opacity:.45}
   .management-heading,.management-alert,.management-card,.system-card{scroll-margin-top:12px}.management-kpis strong,.sales-kpis strong,.product-kpis strong,.inventory-operation-kpis strong,.store-kpis strong,.insight-kpis strong,td{font-variant-numeric:tabular-nums}
 }
 
@@ -428,3 +463,5 @@ const {
 </style>
 
 <style scoped src="./management-decision.css"></style>
+
+<style scoped src="./management-mobile.css"></style>

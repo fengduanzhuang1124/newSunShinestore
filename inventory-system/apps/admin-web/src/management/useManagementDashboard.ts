@@ -289,7 +289,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     overview: { purpose: '快速判断今日经营状态与需要优先处理的事项。', includes: ['今日销售与昨日比较', '当前库存与临期', '今日库存作业待办', '可切换周期的销售趋势与热销商品'], decision: '适合作为每日入口；详细原因继续进入销售、商品或库存页面。' },
     sales: { purpose: '回答卖了多少、何时卖、哪些商品贡献销售。', includes: ['销售趋势', '订单与客单价', '时段分布', '商品及品牌排行'], decision: '适合复盘销售变化；毛利和商品级退款在成本与退款数据完整前不作结论。' },
     products: { purpose: '从商品、品牌和品类角度查看销售与当前库存结构。', includes: ['商品明细', '品牌结构', '品类结构', '资料与映射质量'], decision: '适合调整商品结构；售价、条码和商品主档仍在商品维护流程处理。' },
-    inventory: { purpose: '识别缺货、低库存和滞销风险，帮助决定哪些商品需要补货或暂时隐藏提醒。', includes: ['库存状态', '观察期销量', '最低库存阈值', '最后销售时间'], decision: '缺货只统计最近120天有销售的零库存商品；未单独设置时最低库存按20件判断。', details: ['库存来自正式库存系统，销量来自已同步的 POS 订单。', '销售历史不足时，不生成库存覆盖天数和滞销结论，避免把缺少数据误判为没有销售。', '名称含 stage、数字+tins 或数字+bag 的直邮奶粉不进入补货提醒。点击“忽略”会持续隐藏，点击“下周显示”会在7天后自动恢复。'] },
+    inventory: { purpose: '识别缺货、低库存和滞销风险，帮助决定哪些商品需要补货或暂时隐藏提醒。', includes: ['库存状态', '观察期销量', '最低库存阈值', '最后销售时间'], decision: '缺货只统计近180天有销售的零库存商品；低库存只提醒核心品牌与绵羊油（默认20件）及单独设置了最低库存的商品。', details: ['库存来自正式库存系统，销量来自已同步的 POS 订单。', '销售历史不足时，不生成库存覆盖天数和滞销结论，避免把缺少数据误判为没有销售。', '名称含 stage、数字+tins 或数字+bag 的直邮奶粉不进入补货提醒。点击“忽略”会持续隐藏，点击“下周显示”会在7天后自动恢复。'] },
     procurement: { purpose: '把缺货、低库存和销售速度转为一张可确认的本周进货单。', includes: ['近7天进货建议', '进货数量与供应商', '草稿确认与已订货状态', '到货后转入正式入库流程'], decision: '加入进货单不会增加库存；只有完成扫码入库才改变正式库存。' },
     customers: { purpose: '维护商品经营分类、需求、人群倾向和营销标签。', includes: ['标签字典', '商品标签覆盖', '审核状态', '人工判断依据'], decision: '这是商品经营画像，不代表顾客真实身份，也不替代商品主档品类。' },
     stores: { purpose: '当前先保存单店经营基线，未来增加门店后再横向比较。', includes: ['单店销售基线', '订单与客单价', '库存与缺货', '后续多店排行'], decision: '目前只有一家门店，本页暂不作为重点开发模块。' },
@@ -313,7 +313,6 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     selectSection('sales');
   }
   const STOCK_STATUS_LABEL: Record<'OUT_OF_STOCK' | 'LOW' | 'IN_STOCK', string> = { IN_STOCK: '正常', LOW: '低库存', OUT_OF_STOCK: '缺货' };
-  const MORE_SECTION_ICON: Record<string, string> = { procurement: '↧', customers: '◫', stores: '⌘' };
 
   function inventoryStatusLabel(item: InventoryOperationRow) {
     if (item.stockStatus === 'IN_STOCK') return item.slowMoving ? '滞销关注' : '正常';
@@ -1111,7 +1110,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     insightMessage, insightDetailPage, insightDetailPageSize, newTagName, newTagDimension, newTagParentId,
     newTagDescription, editingTagId, newTagSortOrder, newTagStatus, activeSection, showMobileMore, allSections,
     navigationGroups, canSection, sections, currentSection, pageGuides, currentGuide, selectSection, openDataCenter,
-    openSalesFromOverview, STOCK_STATUS_LABEL, MORE_SECTION_ICON, inventoryStatusLabel, posSyncState,
+    openSalesFromOverview, STOCK_STATUS_LABEL, inventoryStatusLabel, posSyncState,
     POS_READINESS_LABEL, posReadinessLabel, realtimeSyncLabel, clearSalesFilters, clearProductFilters, setDateRange,
     openInventoryAlert, clearInventoryFilters, pageBusy, retryCurrentPage, overviewTrendSeries, maxDailyRevenue,
     salesTimeBuckets, singleDaySales, salesTrendSeries, maxSalesTrend, chartPoints, overviewTrendPoints,

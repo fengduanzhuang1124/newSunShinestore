@@ -1739,3 +1739,30 @@ img, video { max-width: 100%; }
   .receive-form input.long-value { font-size: 13px; }
 }
 
+
+/* REQ-008 · management center phone shell. The page is one viewport-high column:
+   the management top bar, the page content (the only scroller) and the bottom
+   navigation all live in ManagementDashboard (see management/management-mobile.css).
+   The inventory header is hidden here; its account and exit actions move to "更多".
+   No backdrop-filter on the shell: it would make it the containing block of the
+   fixed "更多" sheet and page guide. */
+@media (max-width: 720px) {
+  .app-shell.management-app-shell { height: 100dvh; min-height: 0; padding: 0; overflow: hidden; }
+  /* Prefixed with the app shell to outrank the themed .workspace card rules. */
+  .app-shell.management-app-shell > .workspace.management-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: hidden;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .workspace.management-shell > header { display: none; }
+  .workspace.management-shell > .alert { flex: none; margin: 8px 16px 0; }
+  .management-shell .mode-panel { display: grid; flex: 1 1 auto; grid-template-rows: minmax(0, 1fr); min-height: 0; overflow: hidden; }
+}

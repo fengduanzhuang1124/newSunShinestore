@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import FilterSheet from '../components/FilterSheet.vue';
 import { useManagementContext } from '../useManagementDashboard';
 
 const {
@@ -10,6 +11,7 @@ const {
 
 <template>
   <section class="sales-analysis-page">
+    <FilterSheet title="销售筛选" :summary="`${salesFrom === salesTo ? salesFrom : `${salesFrom} 至 ${salesTo}`}${salesBrand || salesCategory ? ' · 已筛选品牌或品类' : ''}`">
     <div class="period-shortcuts" role="group" aria-label="快捷日期"><span>默认显示今天</span><button type="button" @click="setDateRange('sales', 'today')">今天</button><button type="button" @click="setDateRange('sales', 'week')">近7天</button><button type="button" @click="setDateRange('sales', 'month')">本月</button><button type="button" @click="setDateRange('sales', 'year')">本年</button><small>快捷日期会同时选择合适的统计维度；自定义日期后可手动调整</small></div>
     <form class="sales-filter-panel" @submit.prevent="loadSalesAnalysis">
       <label>开始日期<input v-model="salesFrom" type="date" @click="openNativePicker" /></label>
@@ -19,6 +21,7 @@ const {
       <label>品类<input v-model="salesCategory" placeholder="全部品类" /></label>
       <button type="submit" :disabled="salesLoading">{{ salesLoading ? '查询中…' : '更新分析' }}</button><button class="secondary-action" type="button" @click="clearSalesFilters">清除品牌 / 品类</button>
     </form>
+    </FilterSheet>
     <details v-if="salesAnalysis" class="analysis-method"><summary>销售统计口径与筛选说明</summary><p class="scope-note">品牌按正式品牌名称精确匹配，品类按商品主档匹配；名称识别的品牌尚不能代替正式字段。商品分类与健康需求标签分开统计。</p><p v-if="salesAnalysis?.channelNotice" class="management-alert pending sync-required-alert"><strong>渠道说明</strong><span>{{ salesAnalysis.channelNotice }}“更新分析”只读取已同步数据。</span><button v-if="!salesAnalysis.dataAvailable" type="button" :disabled="!canSection('system')" @click="openDataCenter('sync')">前往 POS 同步</button></p>
     <p v-if="salesAnalysis?.refundNotice" class="management-alert pending"><strong>退款口径</strong><span>{{ salesAnalysis.refundNotice }}</span></p></details><p v-if="salesAnalysis && !salesAnalysis.dataAvailable" class="inline-notice">所选期间没有已同步订单，不代表门店没有销售。<button v-if="canSection('system')" type="button" class="text-action" @click="openDataCenter('sync')">检查 POS 同步 →</button></p>
 

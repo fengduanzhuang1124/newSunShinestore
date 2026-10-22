@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import FilterSheet from '../components/FilterSheet.vue';
 import { useManagementContext } from '../useManagementDashboard';
 
 const {
@@ -11,6 +12,7 @@ const {
 
 <template>
   <section class="products-page">
+    <FilterSheet title="商品筛选" :summary="`${productFrom === productTo ? productFrom : `${productFrom} 至 ${productTo}`}${productQuery || productBrand || productCategory ? ' · 已设商品条件' : ''}`">
     <div class="period-shortcuts" role="group" aria-label="快捷日期"><span>快捷日期</span><button type="button" @click="setDateRange('products', 'today')">今天</button><button type="button" @click="setDateRange('products', 'week')">近7天</button><button type="button" @click="setDateRange('products', 'month')">本月</button><small>修改条件后点击更新分析</small></div>
     <form class="product-filter-panel" @submit.prevent="loadProductsBrands">
       <label>开始日期<input v-model="productFrom" type="date" @click="openNativePicker" /></label>
@@ -20,6 +22,7 @@ const {
       <label>品类<input v-model="productCategory" placeholder="全部品类" /></label>
       <button type="submit" :disabled="productsLoading">{{ productsLoading ? '查询中…' : '更新分析' }}</button><button class="secondary-action" type="button" @click="clearProductFilters">清除商品条件</button>
     </form>
+    </FilterSheet>
     <details class="analysis-method"><summary>商品分析口径</summary><p>本页仅展示经营数据，不提供商品新增、售价或条码维护。销售金额按已关联正式商品的明细累计，可能与订单净销售额不同；库存是当前余额，不是所选日期的历史库存。</p><p>品牌及品类筛选读取正式商品字段。展示名称可能来自名称识别；商品主档分类不等同于健康需求或人群标签。</p><p v-if="productsBrands && !productsBrands.marginAvailable">{{ productsBrands.marginNotice }}</p><button v-if="canSection('system')" class="text-action" type="button" @click="openDataCenter()">查看正式资料完整度 →</button></details>
     <template v-if="productsBrands">
       <p v-if="productsBrands.mappingQuality?.activeItems && productsBrands.mappingQuality.coveragePercent < 100" class="management-alert pending"><strong>商品映射尚未完成</strong><span>当前销售明细映射率 {{ productsBrands.mappingQuality.coveragePercent }}%，未映射销售不会进入商品与品牌统计。</span><button v-if="canSection('system')" type="button" @click="openDataCenter('issues')">查看异常</button></p>
@@ -38,8 +41,8 @@ const {
       </div>
       <section v-show="productView === 'products'" class="system-card product-table-card">
         <div class="card-title"><div><h3>商品销售与库存明细</h3><p>销售来自POS，库存来自正式库存系统；比例不等同于标准库存周转率</p></div><span>{{ productsBrands.products.length }} 种</span></div>
-        <div class="product-table-wrap management-detail-scroll"><table><thead><tr><th>商品</th><th>品牌 / 品类</th><th>销售件数</th><th>销售额</th><th>当前库存</th><th title="期间销量除以当前库存，不等于库存周转率">期间销量 / 当前库存</th><th>当前库存状态</th></tr></thead><tbody><tr v-for="item in pagedProductDetails" :key="item.productId"><td><strong>{{ item.productName }}</strong><small>{{ item.sku }}{{ item.barcode ? ` · ${item.barcode}` : ' · 无条码' }}</small></td><td><strong>{{ item.brandName }}</strong><small>{{ item.categoryName }}</small></td><td>{{ number(item.unitsSold) }}</td><td>{{ money(item.salesRevenue) }}</td><td>{{ number(item.currentInventory) }}</td><td>{{ item.salesToStockRatio === null ? '—' : number(item.salesToStockRatio) }}</td><td><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ STOCK_STATUS_LABEL[item.stockStatus] }}</b></td></tr></tbody></table><p v-if="!productsBrands.products.length" class="system-empty">当前筛选条件没有商品。</p></div>
-        <div class="inventory-table-pagination"><span>共 {{ productsBrands.products.length }} 种商品</span><label>每页<select v-model.number="productDetailPageSize"><option :value="50">50</option><option :value="100">100</option></select></label><div><button type="button" :disabled="productDetailPage <= 1" @click="productDetailPage--">上一页</button><b>{{ productDetailPage }} / {{ productDetailPageCount }}</b><button type="button" :disabled="productDetailPage >= productDetailPageCount" @click="productDetailPage++">下一页</button></div></div>
+        <div class="product-table-wrap management-detail-scroll"><table><thead><tr><th>商品</th><th>品牌 / 品类</th><th>销售件数</th><th>销售额</th><th>当前库存</th><th title="期间销量除以当前库存，不等于库存周转率">期间销量 / 当前库存</th><th>当前库存状态</th></tr></thead><tbody><tr v-for="item in pagedProductDetails" :key="item.productId"><td data-label="商品"><strong>{{ item.productName }}</strong><small>{{ item.sku }}{{ item.barcode ? ` · ${item.barcode}` : ' · 无条码' }}</small></td><td data-label="品牌 / 品类"><strong>{{ item.brandName }}</strong><small>{{ item.categoryName }}</small></td><td data-label="销售件数">{{ number(item.unitsSold) }}</td><td data-label="销售额">{{ money(item.salesRevenue) }}</td><td data-label="当前库存">{{ number(item.currentInventory) }}</td><td data-label="期间销量 / 当前库存">{{ item.salesToStockRatio === null ? '—' : number(item.salesToStockRatio) }}</td><td data-label="当前库存状态"><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ STOCK_STATUS_LABEL[item.stockStatus] }}</b></td></tr></tbody></table><p v-if="!productsBrands.products.length" class="system-empty">当前筛选条件没有商品。</p></div>
+        <div class="inventory-table-pagination"><span>共 {{ productsBrands.products.length }} 种商品</span><label>每页<select v-model.number="productDetailPageSize"><option :value="50">50</option><option :value="100">100</option></select></label><div><button type="button" :disabled="productDetailPage <= 1" @click="productDetailPage--">上一页</button><b>{{ productDetailPage }} / {{ productDetailPageCount }}</b><button type="button" :disabled="productDetailPage >= productDetailPageCount" @click="productDetailPage++">下一页</button></div><button v-if="productDetailPageSize < productsBrands.products.length" class="load-more" type="button" @click="productDetailPageSize += 50">加载更多（{{ productDetailPageSize }} / {{ productsBrands.products.length }}）</button></div>
       </section>
     </template>
   </section>

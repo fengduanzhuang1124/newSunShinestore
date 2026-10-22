@@ -1522,7 +1522,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         <button :class="{ active: activeMode === 'receive' }" @click="switchMode('receive')">扫码入库</button>
         <button :class="{ active: activeMode === 'issue' }" @click="switchMode('issue')">扫码出库</button>
       </nav>
-      <ManagementDashboard v-if="activeMode === 'management'" :api-base-url="apiBaseUrl" :token="token" :store-id="storeId" :store-name="storeName" :administrator="isAdmin" @open-report="openReport" />
+      <ManagementDashboard v-if="activeMode === 'management'" :api-base-url="apiBaseUrl" :token="token" :store-id="storeId" :store-name="storeName" :administrator="isAdmin" @open-report="openReport" @open-account="showAccountPanel = true" @exit="switchMode('home')" />
       <template v-else-if="activeMode === 'home'">
         <section class="workbench-page-header report-header">
           <h2>仓管通</h2>

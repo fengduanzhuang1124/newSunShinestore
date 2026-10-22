@@ -162,5 +162,4 @@
   .inventory-master input:not([type=checkbox]), .inventory-master select,
   .inventory-master button { min-height: 44px; }
   .inventory-master .inventory-scroll-table { max-height: 60dvh; }
-  .inventory-master .management-mobile-nav button.active { color: #b7efd4; background: var(--master-selected); box-shadow: none; }
 }
