@@ -5,19 +5,11 @@ import { InventoryPermissionService } from './inventory-permission.service.js';
 import { ScanReceiveDto } from './scan-receive.dto.js';
 import { parseExpiryInput } from './expiry-date.js';
 import { AmbiguousBarcodeError, resolveStoredBarcode } from './barcode-lookup.js';
+import { calendarDateInZone } from '../shared/calendar-date.js';
 
 @Injectable()
 export class ReceivingService {
   constructor(private readonly prisma: PrismaService, private readonly permissions: InventoryPermissionService) {}
-
-  private localDate(timeZone: string, now = new Date()) {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(now);
-  }
 
   private dateValue(date: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -159,7 +151,7 @@ export class ReceivingService {
         where: { id: organizationId },
         select: { timezone: true },
       });
-      const receiptDateText = this.localDate(organization.timezone);
+      const receiptDateText = calendarDateInZone(new Date(), organization.timezone);
       const receiptDate = this.dateValue(receiptDateText);
       let receipt = await transaction.stockReceipt.findFirst({
         where: {
@@ -378,7 +370,7 @@ export class ReceivingService {
       where: { id: organizationId },
       select: { timezone: true },
     });
-    const date = requestedDate || this.localDate(organization.timezone);
+    const date = requestedDate || calendarDateInZone(new Date(), organization.timezone);
     const receipts = await this.prisma.client.stockReceipt.findMany({
       where: {
         organizationId,

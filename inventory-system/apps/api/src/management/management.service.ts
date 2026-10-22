@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
-import { calendarDateStart, nextCalendarDateStart } from '../pos/application/pos-date.js';
+import { calendarDateInZone, calendarDateStart, hourInZone, nextCalendarDateStart } from '../shared/calendar-date.js';
 import { PosObservationService } from '../pos/application/pos-observation.service.js';
 import { PosInventoryApplicationService } from '../pos/application/pos-inventory-application.service.js';
 import { PosRealtimeSyncService } from '../pos/application/pos-realtime-sync.service.js';
 import { isCoreReplenishmentProduct } from './core-replenishment.js';
+import { purchaseCoverage } from './purchase-coverage.js';
 
 type SalesLine = { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number };
 type SalesAnalysisInput = { from: string; to: string; dimension: 'DAY' | 'WEEK' | 'MONTH'; brand?: string; category?: string };
@@ -418,7 +419,7 @@ export class ManagementService {
     }
     return {
       store: { id: store.id.toString(), name: store.name }, currency: organization.currency,
-      period: { from: input.from, to: input.to, dimension: input.dimension, previousFrom: this.dateInZone(previousStart, organization.timezone), previousTo: this.dateInZone(new Date(previousEnd.getTime() - 1), organization.timezone) },
+      period: { from: input.from, to: input.to, dimension: input.dimension, previousFrom: calendarDateInZone(previousStart, organization.timezone), previousTo: calendarDateInZone(new Date(previousEnd.getTime() - 1), organization.timezone) },
       filters: { brand: input.brand ?? null, category: input.category ?? null },
       dataAvailable: orders.length > 0,
       channelBreakdownAvailable: channels.size > 0,
@@ -623,7 +624,7 @@ export class ManagementService {
       this.prisma.client.inventoryBalance.aggregate({
         where: {
           organizationId, quantity: { gt: 0 }, warehouse: { storeId, status: 'ACTIVE' },
-          batch: { expiryDate: { lt: calendarDateStart(this.dateInZone(now, organization.timezone), 'UTC') } },
+          batch: { expiryDate: { lt: calendarDateStart(calendarDateInZone(now, organization.timezone), 'UTC') } },
         },
         _count: { _all: true }, _sum: { quantity: true },
       }),
@@ -704,7 +705,7 @@ export class ManagementService {
     };
     return {
       generatedAt: now.toISOString(), store: { id: store.id.toString(), name: store.name },
-      period: { lookbackDays, from: this.dateInZone(start, organization.timezone), to: this.dateInZone(now, organization.timezone) },
+      period: { lookbackDays, from: calendarDateInZone(start, organization.timezone), to: calendarDateInZone(now, organization.timezone) },
       salesCoverage: {
         observedDays, reliable: salesCoverageReliable,
         firstObservedSaleAt: firstObservedSaleAt?.toISOString() ?? null,
@@ -739,7 +740,7 @@ export class ManagementService {
   async purchaseSuggestions(organizationId: bigint, userId: bigint, storeId: bigint) {
     const store = await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
     const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
-    const today = this.dateInZone(new Date(), organization.timezone);
+    const today = calendarDateInZone(new Date(), organization.timezone);
     const end = nextCalendarDateStart(today, organization.timezone);
     const start = new Date(calendarDateStart(today, organization.timezone).getTime() - 27 * 86_400_000);
     const productWhere = { organizationId, status: 'ACTIVE' as const, storeProducts: { some: { storeId, enabled: true } } };
@@ -790,11 +791,8 @@ export class ManagementService {
       const productId = product.id.toString();
       const currentInventory = inventory.get(productId) ?? 0;
       const recent28DayQty = Math.max(0, Math.round(sales.get(productId) ?? 0));
-      const weeklyVelocity = Math.round((recent28DayQty / 4) * 100) / 100;
+      const { weeklyVelocity, targetWeeks, targetInventory, gap: suggestedQuantity } = purchaseCoverage(recent28DayQty, currentInventory);
       const minimumStock = product.storeProducts[0]?.minimumStock ?? null;
-      const targetWeeks = weeklyVelocity >= 30 ? 4 : weeklyVelocity >= 10 ? 5 : weeklyVelocity >= 1 ? 6 : null;
-      const targetInventory = targetWeeks === null ? 0 : Math.ceil(weeklyVelocity * targetWeeks);
-      const suggestedQuantity = targetWeeks === null ? 0 : Math.max(0, targetInventory - currentInventory);
       const coverageWeeks = weeklyVelocity > 0 ? Math.round((currentInventory / weeklyVelocity) * 10) / 10 : null;
       const source = currentInventory <= 0 ? 'OUT_OF_STOCK' : 'WEEKLY_FORECAST';
       const priority = currentInventory <= 0 || (coverageWeeks !== null && coverageWeeks <= 1) || (minimumStock !== null && currentInventory <= minimumStock)
@@ -824,7 +822,7 @@ export class ManagementService {
     return {
       generatedAt: new Date().toISOString(),
       inventoryLatestUpdatedAt: latestInventoryUpdatedAt?.toISOString() ?? null,
-      store: { id: store.id.toString(), name: store.name }, period: { from: this.dateInZone(start, organization.timezone), to: today },
+      store: { id: store.id.toString(), name: store.name }, period: { from: calendarDateInZone(start, organization.timezone), to: today },
       calculation: '这是备货4–6周的候选清单，不是一周必须买完。按最近28天销量折算周均：低于1件/周不建议；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。近7天已入库的商品列入“已到货”，不再建议进货。',
       summary: {
         products: suggestions.length,
@@ -914,7 +912,7 @@ export class ManagementService {
     const order = await this.prisma.client.$transaction(async (tx) => {
       const purchaseOrder = await tx.purchaseOrder.upsert({
         where: { organizationId_storeId_weekStart: { organizationId, storeId, weekStart } },
-        create: { orderNo: `PO-${this.dateInZone(weekStart, organization.timezone).replaceAll('-', '')}-${storeId}`, organizationId, storeId, weekStart, createdById: userId },
+        create: { orderNo: `PO-${calendarDateInZone(weekStart, organization.timezone).replaceAll('-', '')}-${storeId}`, organizationId, storeId, weekStart, createdById: userId },
         update: {}, include: { items: true },
       });
       if (purchaseOrder.status !== 'DRAFT') throw new ConflictException('本周进货单已确认，不能再添加商品');
@@ -1323,16 +1321,12 @@ export class ManagementService {
     ]);
     if (!store || !organization) throw new NotFoundException('门店不存在');
 
-    const currentDate = requestedDate ?? new Intl.DateTimeFormat('en-CA', {
-      timeZone: organization.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(new Date());
+    const currentDate = requestedDate ?? calendarDateInZone(new Date(), organization.timezone);
     const currentRange = {
       start: calendarDateStart(currentDate, organization.timezone),
       end: nextCalendarDateStart(currentDate, organization.timezone),
     };
-    const previousDate = new Intl.DateTimeFormat('en-CA', {
-      timeZone: organization.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(new Date(currentRange.start.getTime() - 1));
+    const previousDate = calendarDateInZone(new Date(currentRange.start.getTime() - 1), organization.timezone);
     const previousRange = {
       start: calendarDateStart(previousDate, organization.timezone),
       end: currentRange.start,
@@ -1559,11 +1553,11 @@ export class ManagementService {
       refunds += orderRefund;
       unitsSold += orderUnits;
       const orderKey = order.id.toString();
-      const date = this.dateInZone(order.orderedAt, timeZone);
+      const date = calendarDateInZone(order.orderedAt, timeZone);
       const period = this.periodKey(date, input.dimension);
       const trendEntry = trend.get(period) ?? { period, revenue: 0, orders: new Set<string>(), units: 0 };
       trendEntry.revenue += orderNet; trendEntry.orders.add(orderKey); trendEntry.units += orderUnits; trend.set(period, trendEntry);
-      const hour = Number(new Intl.DateTimeFormat('en-NZ', { timeZone, hour: '2-digit', hourCycle: 'h23' }).format(order.orderedAt));
+      const hour = hourInZone(order.orderedAt, timeZone);
       const hourEntry = hourly.get(hour) ?? { hour, revenue: 0, orders: new Set<string>() };
       hourEntry.revenue += orderNet; hourEntry.orders.add(orderKey); hourly.set(hour, hourEntry);
       const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
@@ -1582,12 +1576,6 @@ export class ManagementService {
       weekdaySales: Array.from({ length: 7 }, (_, weekday) => { const item = weekdays.get(weekday); return { weekday, revenue: this.money(item?.revenue ?? 0), orders: item?.orders.size ?? 0 }; }),
       topProducts: rank([...products.values()]), topBrands: rank([...brands.values()]), topCategories: rank([...categories.values()]),
     };
-  }
-
-  private dateInZone(date: Date, timeZone: string) {
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
-    const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
-    return `${value('year')}-${value('month')}-${value('day')}`;
   }
 
   private periodKey(date: string, dimension: SalesAnalysisInput['dimension']) {
@@ -1627,7 +1615,7 @@ export class ManagementService {
   }
 
   private purchaseWeekStart(timezone: string) {
-    const today = this.dateInZone(new Date(), timezone);
+    const today = calendarDateInZone(new Date(), timezone);
     const noon = new Date(`${today}T12:00:00Z`);
     const weekday = noon.getUTCDay();
     noon.setUTCDate(noon.getUTCDate() - (weekday === 0 ? 6 : weekday - 1));
@@ -1635,7 +1623,7 @@ export class ManagementService {
   }
 
   private async purchaseProductSnapshot(organizationId: bigint, storeId: bigint, productId: bigint, timezone: string) {
-    const today = this.dateInZone(new Date(), timezone);
+    const today = calendarDateInZone(new Date(), timezone);
     const end = nextCalendarDateStart(today, timezone);
     const start = new Date(calendarDateStart(today, timezone).getTime() - 27 * 86_400_000);
     const [balances, salesItems] = await Promise.all([
@@ -1650,11 +1638,8 @@ export class ManagementService {
     ]);
     const currentInventory = balances.reduce((sum, row) => sum + row.quantity, 0);
     const recent28DayQty = Math.max(0, Math.round(salesItems.reduce((sum, row) => sum + Math.abs(Number(row.quantity)) * (row.isMinus ? -1 : 1), 0)));
-    const weeklyVelocity = Math.round((recent28DayQty / 4) * 100) / 100;
-    const targetWeeks = weeklyVelocity >= 30 ? 4 : weeklyVelocity >= 10 ? 5 : weeklyVelocity >= 1 ? 6 : null;
-    const targetInventory = targetWeeks === null ? 0 : Math.ceil(weeklyVelocity * targetWeeks);
-    const forecastGap = targetWeeks === null ? 0 : Math.max(0, targetInventory - currentInventory);
-    return { currentInventory, recentSevenDayQty: Math.round(weeklyVelocity), suggestedQuantity: Math.max(1, forecastGap) };
+    const { weeklyVelocity, gap } = purchaseCoverage(recent28DayQty, currentInventory);
+    return { currentInventory, recentSevenDayQty: Math.round(weeklyVelocity), suggestedQuantity: Math.max(1, gap) };
   }
 
   private serializePurchaseOrder(order: NonNullable<Awaited<ReturnType<ManagementService['findCurrentPurchaseOrder']>>>) {

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, ConflictException }
 import { PrismaService } from '../database/prisma.service.js';
 import { InventoryPermissionService } from './inventory-permission.service.js';
 import { AmbiguousBarcodeError, resolveStoredBarcode } from './barcode-lookup.js';
+import { calendarDateInZone } from '../shared/calendar-date.js';
 
 const SEARCH_SYNONYM_GROUPS = [
   ['康维他', 'comvita'],
@@ -19,15 +20,6 @@ const SEARCH_SYNONYM_GROUPS = [
 @Injectable()
 export class InventoryQueryService {
   constructor(private readonly prisma: PrismaService, private readonly permissions: InventoryPermissionService) {}
-
-  private localDate(timeZone: string, now = new Date()) {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(now);
-  }
 
   private dateValue(date: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -197,7 +189,7 @@ export class InventoryQueryService {
   async reviewItems(organizationId: bigint, userId: bigint) {
     const permission = await this.permissions.warehousePermission(organizationId, userId, 'canView');
     const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
-    const today = this.dateValue(this.localDate(organization.timezone));
+    const today = this.dateValue(calendarDateInZone(new Date(), organization.timezone));
     const storeId = permission.warehouse.storeId;
     const productSelect = {
       name: true,
@@ -349,7 +341,7 @@ export class InventoryQueryService {
     if (levelFilter && !allowedLevels.includes(levelFilter)) {
       throw new BadRequestException('临期级别不正确');
     }
-    const todayText = this.localDate(organization.timezone);
+    const todayText = calendarDateInZone(new Date(), organization.timezone);
     const today = this.dateValue(todayText);
     const urgentEnd = this.endOfUtcMonth(this.addUtcMonths(today, settings.urgentMonths));
     const warningEnd = this.endOfUtcMonth(this.addUtcMonths(today, settings.warningMonths));

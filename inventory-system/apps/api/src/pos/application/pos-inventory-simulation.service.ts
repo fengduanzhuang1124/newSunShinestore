@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service.js';
-import { calendarDateStart, nextCalendarDateStart } from './pos-date.js';
+import { calendarDateStart, nextCalendarDateStart } from '../../shared/calendar-date.js';
 
 export interface PosInventorySimulationResult {
   ordersObserved: number;

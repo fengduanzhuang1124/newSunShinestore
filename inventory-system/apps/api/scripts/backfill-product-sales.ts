@@ -7,7 +7,7 @@ import { basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../src/database/prisma.service.js';
 import { allocateBatchTargets } from './lib/baseline-reconciliation.js';
-import { csvCell } from './lib/baseline-reconciliation-source.js';
+import { csvCell, isoDate } from './lib/baseline-reconciliation-source.js';
 
 const REFERENCE_TYPE = 'SALES_BACKFILL';
 const value = (name: string) => process.argv.find((argument) => argument.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -37,7 +37,6 @@ const productIds = [...new Set(readFileSync(productsPath, 'utf8').split(/\s+/).f
   return BigInt(id);
 });
 
-const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 
 const prisma = new PrismaService();
 await prisma.onModuleInit();

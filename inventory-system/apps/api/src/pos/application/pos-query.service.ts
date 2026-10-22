@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service.js';
-import { calendarDateStart, nextCalendarDateStart } from './pos-date.js';
+import { calendarDateStart, nextCalendarDateStart } from '../../shared/calendar-date.js';
 import type {
   PosMappingQueryDto,
   PosOrderQueryDto,

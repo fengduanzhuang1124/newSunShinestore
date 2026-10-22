@@ -52,13 +52,7 @@ export function calendarDateStart(date: string, timeZone: string): Date {
     0,
     timeZone,
   );
-  const formatted = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(value);
-  if (formatted !== date) throw new Error('Date is invalid');
+  if (calendarDateInZone(value, timeZone) !== date) throw new Error('Date is invalid');
   return value;
 }
 
@@ -68,4 +62,14 @@ export function nextCalendarDateStart(date: string, timeZone: string): Date {
   const next = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
   next.setUTCDate(next.getUTCDate() + 1);
   return calendarDateStart(next.toISOString().slice(0, 10), timeZone);
+}
+
+// The calendar date (YYYY-MM-DD) an instant falls on in the given time zone.
+export function calendarDateInZone(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+// The hour of day (0–23) an instant falls on in the given time zone.
+export function hourInZone(date: Date, timeZone: string): number {
+  return Number(new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', hourCycle: 'h23' }).format(date));
 }
