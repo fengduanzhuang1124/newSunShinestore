@@ -60,6 +60,9 @@
 
 ## 上线（2026-10-21 17:47 NZDT）
 
+> 备份存放说明（2026-10-21）：除 `…_before_timestamp_fix_20261021_1845.sql` 与 `…_before_sales_backfill_20261021_1911.sql` 外，本文提到的备份均已压缩为同名 `.sql.gz`（已逐个校验）。恢复命令：`gunzip -c backups/<文件>.sql.gz | docker compose exec -T mysql mysql -u<用户> <库名>`。
+
+
 - 正式库执行迁移，`stores.pos_inventory_baseline_at` 写入 `2026-10-20 10:01:47`（审计 `store.pos_inventory_baseline_set`），`.env` 设置 `POS_REALTIME_SYNC_MINUTES=5`、`POS_REALTIME_SYNC_USERNAME=wf1124`，重启开发服务。备份 `backups/…before_pos_realtime_20261021_1746.sql`。
 - 首轮：当天 61 张订单全部按明细扣库，193 行足额扣减 452 件，31 行库存不足进入复核，未新增负库存。
 

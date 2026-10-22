@@ -82,6 +82,8 @@ npx tsx scripts/rebuild-baseline-inventory.ts \
 
 ## 回滚
 
+> 备份存放说明（2026-10-21）：除 `…_before_timestamp_fix_20261021_1845.sql` 与 `…_before_sales_backfill_20261021_1911.sql` 外，本文提到的备份均已压缩为同名 `.sql.gz`（已逐个校验）。恢复命令：`gunzip -c backups/<文件>.sql.gz | docker compose exec -T mysql mysql -u<用户> <库名>`。
+
 - 整体回滚：恢复执行前备份（先停止 API，恢复后把 `POS_INVENTORY_BASELINE_AT` 改回 `2026-10-12T05:15:22.401Z` 再启动）。
 - 单项修正：通过新的盘点流水冲正，不删除历史流水。
 
