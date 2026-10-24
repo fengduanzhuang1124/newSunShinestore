@@ -15,6 +15,7 @@
 | REQ-009 | 项目清理（输出、备份、临时文件） | 2026-10-21 | 技术改进 | P2 | 已完成 | `daily-logs/2026-10-21.md` |
 | REQ-010 | 重复代码整理 | 2026-10-21 | 技术改进 | P1 | 待验收 | `requirements/REQ-010-重复代码整理.md` |
 | REQ-011 | 大文件拆分与样式重写 | 2026-10-21 | 技术改进 | P1 | 开发中（经营管理页面已拆分；样式重写随 REQ-008 阶段 3–4） | REQ-008 第 9 节；`docs/records/management-component-split.md` |
+| REQ-012 | 手机逐项盘点任务（按 10-24 清单逐个确认并写入库存） | 2026-10-24 | 新功能 | P0 | 开发完成，待上线 | `requirements/REQ-012-手机逐项盘点任务.md`；测试报告 `docs/records/req-012-stock-count-test-report.md` |
 
 ## 变更单
 
