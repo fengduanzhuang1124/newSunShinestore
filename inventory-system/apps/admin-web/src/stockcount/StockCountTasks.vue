@@ -7,12 +7,13 @@ import { computed, onMounted, ref, watch } from 'vue';
 type Batch = { batchId: string; expiry: string; quantity: number };
 type CountItem = {
   id: string; productId: string; productName: string; brandName: string | null; barcode: string | null;
-  priority: number; reasons: string; source: 'PLANNED' | 'ADDED'; status: 'PENDING' | 'CONFIRMED';
+  priority: number; reasons: string; source: 'PLANNED' | 'ADDED'; status: 'PENDING' | 'CONFIRMED' | 'IGNORED';
   systemQuantity: number; batches: Batch[]; countedQuantity: number | null; confirmCount: number; confirmedAt: string | null;
 };
-type CountTask = { id: string; code: string; title: string; total: number; confirmed: number; pending: number };
-type Row = { key: number; expiry: string; quantity: number | null };
-type View = 1 | 2 | 3 | 'done';
+type CountTask = { id: string; code: string; title: string; total: number; confirmed: number; ignored: number; pending: number };
+// Expiry is picked as a month (native picker) plus an optional day, like the receiving form.
+type Row = { key: number; month: string; day: string; quantity: number | null };
+type View = 1 | 2 | 3 | 'done' | 'ignored';
 
 const props = defineProps<{ apiBaseUrl: string; token: string; scanned: { code: string; at: number } | null }>();
 const emit = defineEmits<{ scan: [] }>();
@@ -20,7 +21,9 @@ const emit = defineEmits<{ scan: [] }>();
 const PAGE = 50;
 const PRIORITIES = [1, 2, 3] as const;
 const PRIORITY_LABEL: Record<number, string> = { 1: '高', 2: '中', 3: '低' };
-const EXPIRY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/;
+const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const DAYS = Array.from({ length: 31 }, (_, index) => String(index + 1).padStart(2, '0'));
+const expiryOf = (row: Row) => (row.day ? `${row.month}-${row.day}` : row.month);
 
 const task = ref<CountTask | null>(null);
 const items = ref<CountItem[]>([]);
@@ -39,6 +42,7 @@ const saving = ref(false);
 const sheetError = ref('');
 let requestId = '';
 let rowKey = 0;
+const rowFrom = (expiry: string, quantity: number): Row => ({ key: ++rowKey, month: expiry.slice(0, 7), day: expiry.slice(8, 10), quantity });
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -69,11 +73,12 @@ onMounted(load);
 
 const pendingByPriority = computed(() => [1, 2, 3].map((priority) => items.value.filter((item) => item.status === 'PENDING' && item.priority === priority).length));
 const confirmedCount = computed(() => items.value.filter((item) => item.status === 'CONFIRMED').length);
-const progress = computed(() => (items.value.length ? Math.round((confirmedCount.value / items.value.length) * 100) : 0));
+const ignoredCount = computed(() => items.value.filter((item) => item.status === 'IGNORED').length);
+const progress = computed(() => (items.value.length ? Math.round(((confirmedCount.value + ignoredCount.value) / items.value.length) * 100) : 0));
 const visible = computed(() => {
   const text = search.value.trim().toLowerCase();
   return items.value
-    .filter((item) => (view.value === 'done' ? item.status === 'CONFIRMED' : item.status === 'PENDING' && item.priority === view.value))
+    .filter((item) => (view.value === 'done' ? item.status === 'CONFIRMED' : view.value === 'ignored' ? item.status === 'IGNORED' : item.status === 'PENDING' && item.priority === view.value))
     .filter((item) => !text || item.productName.toLowerCase().includes(text) || (item.barcode ?? '').includes(text) || (item.brandName ?? '').toLowerCase().includes(text))
     .sort((a, b) => (view.value === 'done' ? (b.confirmedAt ?? '').localeCompare(a.confirmedAt ?? '') : (a.source === 'ADDED' ? -1 : 0) - (b.source === 'ADDED' ? -1 : 0)));
 });
@@ -87,14 +92,64 @@ function showToast(text: string) {
 
 function openItem(item: CountItem) {
   open.value = item;
-  rows.value = item.batches.length ? item.batches.map((batch) => ({ key: ++rowKey, expiry: batch.expiry, quantity: batch.quantity })) : [{ key: ++rowKey, expiry: '', quantity: 0 }];
+  rows.value = item.batches.length ? item.batches.map((batch) => rowFrom(batch.expiry, batch.quantity)) : [rowFrom('', 0)];
   sheetError.value = '';
+  ignoring.value = false;
+  alsoHidePurchasing.value = true;
   requestId = crypto.randomUUID();
 }
 function closeSheet() { open.value = null; }
 
+// After an item is done, keep going with the next pending product of the same group.
+function advance(item: CountItem) {
+  const next = visible.value.find((candidate) => candidate.status === 'PENDING' && candidate.id !== item.id);
+  if (typeof view.value === 'number' && next) openItem(next);
+  else closeSheet();
+}
+
+// Discontinued products (CR-004): off the list without a count; stock is left unchanged.
+const ignoring = ref(false);
+const alsoHidePurchasing = ref(true);
+async function ignoreItem() {
+  const item = open.value;
+  if (!item || !task.value || saving.value) return;
+  saving.value = true;
+  sheetError.value = '';
+  try {
+    const result = await request<{ item: CountItem; task: CountTask }>(`/inventory/count-tasks/${task.value.id}/items/${item.id}/ignore`, {
+      method: 'POST', body: JSON.stringify({ alsoHidePurchasing: alsoHidePurchasing.value }),
+    });
+    Object.assign(item, result.item);
+    task.value = { ...task.value, ...result.task };
+    showToast(`已忽略：${item.productName}`);
+    advance(item);
+  } catch (reason) {
+    sheetError.value = reason instanceof Error ? reason.message : '忽略失败，请重试';
+  } finally {
+    saving.value = false;
+  }
+}
+async function restoreItem() {
+  const item = open.value;
+  if (!item || !task.value || saving.value) return;
+  saving.value = true;
+  sheetError.value = '';
+  try {
+    const result = await request<{ item: CountItem; task: CountTask }>(`/inventory/count-tasks/${task.value.id}/items/${item.id}/restore`, { method: 'POST' });
+    Object.assign(item, result.item);
+    task.value = { ...task.value, ...result.task };
+    showToast(`已恢复为待盘点：${item.productName}`);
+    openItem(item);
+  } catch (reason) {
+    sheetError.value = reason instanceof Error ? reason.message : '恢复失败，请重试';
+  } finally {
+    saving.value = false;
+  }
+}
+
 const rowErrors = computed(() => rows.value.map((row) => {
-  if (!EXPIRY_PATTERN.test(row.expiry.trim())) return '到期日格式：2028-03 或 2028-03-11';
+  if (!MONTH_PATTERN.test(row.month)) return '请选择到期年月';
+  if (row.day && Number(row.day) > new Date(Date.UTC(Number(row.month.slice(0, 4)), Number(row.month.slice(5, 7)), 0)).getUTCDate()) return '所选日期超出该月天数';
   if (row.quantity === null || !Number.isInteger(row.quantity) || row.quantity < 0) return '数量需为 0 或正整数';
   return '';
 }));
@@ -103,12 +158,12 @@ const difference = computed(() => countedTotal.value - (open.value?.systemQuanti
 const unchanged = computed(() => {
   if (!open.value) return false;
   const normalize = (list: { expiry: string; quantity: number }[]) => list.filter((row) => row.quantity !== 0).map((row) => `${row.expiry}:${row.quantity}`).sort().join('|');
-  return normalize(rows.value.map((row) => ({ expiry: row.expiry.trim(), quantity: row.quantity ?? 0 }))) === normalize(open.value.batches);
+  return normalize(rows.value.map((row) => ({ expiry: expiryOf(row), quantity: row.quantity ?? 0 }))) === normalize(open.value.batches);
 });
 const canSubmit = computed(() => !saving.value && rowErrors.value.every((message) => !message));
 
 function step(row: Row, delta: number) { row.quantity = Math.max(0, (row.quantity ?? 0) + delta); }
-function addRow() { rows.value.push({ key: ++rowKey, expiry: '', quantity: 0 }); }
+function addRow() { rows.value.push(rowFrom('', 0)); }
 function removeRow(row: Row) { rows.value = rows.value.filter((item) => item !== row); }
 
 async function confirm() {
@@ -120,7 +175,7 @@ async function confirm() {
     const result = await request<{ item: CountItem; task: CountTask }>(`/inventory/count-tasks/${task.value.id}/items/${item.id}/confirm`, {
       method: 'POST',
       body: JSON.stringify({
-        lines: rows.value.filter((row) => (row.quantity ?? 0) > 0).map((row) => ({ expiry: row.expiry.trim(), quantity: row.quantity })),
+        lines: rows.value.filter((row) => (row.quantity ?? 0) > 0).map((row) => ({ expiry: expiryOf(row), quantity: row.quantity })),
         expected: item.batches.map((batch) => ({ batchId: batch.batchId, quantity: batch.quantity })),
         requestId,
       }),
@@ -129,9 +184,7 @@ async function confirm() {
     Object.assign(item, result.item);
     task.value = { ...task.value, ...result.task };
     showToast(`已确认：${item.productName}（${summary}）`);
-    const next = visible.value.find((candidate) => candidate.status === 'PENDING' && candidate.id !== item.id);
-    if (view.value !== 'done' && next) openItem(next);
-    else closeSheet();
+    advance(item);
   } catch (reason) {
     const status = (reason as { status?: number }).status;
     sheetError.value = reason instanceof Error ? reason.message : '确认失败，请重试';
@@ -203,11 +256,12 @@ function timeText(value: string | null) {
         <strong>剩余 {{ task.pending }}</strong>
       </header>
       <div class="count-progress" role="progressbar" :aria-valuenow="progress" aria-valuemin="0" aria-valuemax="100"><i :style="{ width: `${progress}%` }"></i></div>
-      <p class="count-progress-text">已完成 {{ confirmedCount }} / {{ items.length }}</p>
+      <p class="count-progress-text">已完成 {{ confirmedCount }}<template v-if="ignoredCount"> · 已忽略 {{ ignoredCount }}</template> / {{ items.length }}</p>
 
       <nav class="count-tabs" aria-label="盘点清单分组">
         <button v-for="priority in PRIORITIES" :key="priority" type="button" :class="{ active: view === priority }" @click="view = priority">{{ PRIORITY_LABEL[priority] }}<b>{{ pendingByPriority[priority - 1] }}</b></button>
         <button type="button" :class="{ active: view === 'done' }" @click="view = 'done'">已完成<b>{{ confirmedCount }}</b></button>
+        <button type="button" :class="{ active: view === 'ignored' }" @click="view = 'ignored'">已忽略<b>{{ ignoredCount }}</b></button>
       </nav>
 
       <form class="count-search" @submit.prevent="submitSearch">
@@ -227,6 +281,7 @@ function timeText(value: string | null) {
             <span class="count-name">{{ item.productName }}</span>
             <span class="count-meta">{{ item.barcode || '无条码' }}<template v-if="item.brandName"> · {{ item.brandName }}</template></span>
             <span v-if="item.status === 'CONFIRMED'" class="count-result">实点 {{ item.countedQuantity }} 件 · {{ timeText(item.confirmedAt) }}</span>
+            <span v-else-if="item.status === 'IGNORED'" class="count-result">已忽略 · 系统 {{ item.systemQuantity }} 件保持不变</span>
             <span v-else class="count-result">系统 {{ item.systemQuantity }} 件 · {{ item.batches.length }} 个批次</span>
             <span class="count-reason">{{ item.source === 'ADDED' ? '临时加入' : item.reasons.split('；')[0] }}</span>
           </button>
@@ -246,10 +301,16 @@ function timeText(value: string | null) {
           </header>
           <p class="count-why">{{ open.source === 'ADDED' ? '盘点时临时加入' : open.reasons }}</p>
 
+          <div v-if="open.status === 'IGNORED'" class="count-ignored">
+            <p>已标记为不再销售，不参与本次盘点；系统库存 {{ open.systemQuantity }} 件保持不变。</p>
+            <p v-if="sheetError" class="count-error" role="alert">{{ sheetError }}</p>
+            <button class="count-confirm" type="button" :disabled="saving" @click="restoreItem">{{ saving ? '正在恢复…' : '恢复为待盘点' }}</button>
+          </div>
+          <template v-else>
           <div class="count-rows">
-            <div class="count-row-head"><span>到期日</span><span>实点数量</span></div>
             <div v-for="(row, index) in rows" :key="row.key" class="count-row" :class="{ invalid: rowErrors[index] }">
-              <input v-model="row.expiry" type="text" inputmode="numeric" placeholder="2028-03" maxlength="10" :aria-label="`第 ${index + 1} 个批次到期日`" />
+              <input v-model="row.month" class="count-month" type="month" :aria-label="`第 ${index + 1} 个批次到期年月`" />
+              <select v-model="row.day" class="count-day" :aria-label="`第 ${index + 1} 个批次到期日（可不选）`"><option value="">整月</option><option v-for="day in DAYS" :key="day" :value="day">{{ Number(day) }} 日</option></select>
               <div class="count-stepper">
                 <button type="button" aria-label="减一" @click="step(row, -1)">−</button>
                 <input v-model.number="row.quantity" type="number" inputmode="numeric" min="0" :aria-label="`第 ${index + 1} 个批次数量`" />
@@ -264,6 +325,15 @@ function timeText(value: string | null) {
           <p class="count-total">系统 {{ open.systemQuantity }} 件 → 实点 <strong>{{ countedTotal }}</strong> 件<b v-if="!unchanged" :class="difference > 0 ? 'up' : difference < 0 ? 'down' : ''">（{{ difference > 0 ? '+' : '' }}{{ difference }}）</b></p>
           <p v-if="sheetError" class="count-error" role="alert">{{ sheetError }}</p>
           <button class="count-confirm" :class="{ same: unchanged }" type="button" :disabled="!canSubmit" @click="confirm">{{ saving ? '正在保存…' : unchanged ? '与系统一致，确认' : '确认修改' }}</button>
+          <template v-if="open.status === 'PENDING'">
+            <button v-if="!ignoring" class="count-ignore" type="button" @click="ignoring = true">不再销售，忽略</button>
+            <div v-else class="count-ignore-confirm" role="group" aria-label="确认忽略">
+              <p>忽略后不盘点数量，系统库存 {{ open.systemQuantity }} 件保持不变，商品资料继续保留。</p>
+              <label><input v-model="alsoHidePurchasing" type="checkbox" />同时不再建议进货</label>
+              <div><button type="button" class="count-ignore-cancel" @click="ignoring = false">取消</button><button type="button" class="count-ignore-ok" :disabled="saving" @click="ignoreItem">确认忽略</button></div>
+            </div>
+          </template>
+          </template>
         </section>
       </div>
     </Transition>
@@ -289,8 +359,8 @@ function timeText(value: string | null) {
 .count-progress i { display: block; height: 100%; border-radius: 4px; background: var(--ops-green); transition: width .3s ease; }
 .count-progress-text { margin: -6px 0 0; color: var(--muted); font-size: 12px; }
 
-.count-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 12px; background: var(--ops-border); }
-.count-tabs button { display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 40px; padding: 0 4px; color: var(--muted); border: 0; border-radius: 9px; background: transparent; box-shadow: none; font-size: 14px; font-weight: 600; }
+.count-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 12px; background: var(--ops-border); }
+.count-tabs button { display: flex; align-items: center; justify-content: center; gap: 3px; min-width: 0; min-height: 40px; padding: 0 2px; color: var(--muted); border: 0; border-radius: 9px; background: transparent; box-shadow: none; font-size: 13px; font-weight: 600; white-space: nowrap; }
 .count-tabs button b { font-size: 12px; font-variant-numeric: tabular-nums; }
 .count-tabs button.active { color: var(--ink); background: var(--ops-card); }
 
@@ -319,12 +389,15 @@ function timeText(value: string | null) {
 .count-why { margin: 0; padding: 8px 10px; color: var(--muted); border-radius: 10px; background: var(--ops-bg); font-size: 12px; line-height: 18px; }
 
 .count-rows { display: grid; gap: 8px; }
-.count-row-head { display: grid; grid-template-columns: minmax(0, 1fr) 148px 44px; gap: 8px; color: var(--muted); font-size: 12px; }
-.count-row { display: grid; grid-template-columns: minmax(0, 1fr) 148px 44px; align-items: center; gap: 8px; }
+/* Each batch: expiry month + day on the first line, quantity and delete on the second. */
+.count-row { display: grid; grid-template-columns: minmax(0, 1fr) 104px; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--ops-border); border-radius: 14px; }
+.count-row .count-stepper { grid-column: 1; }
+.count-row .count-remove { justify-self: end; }
 /* The sheet lives under <body>, outside the app's themed input styles. */
 .count-sheet input { color: var(--ink); border: 1px solid var(--ops-border); border-radius: 12px; background: var(--ops-bg); }
-.count-row > input { min-width: 0; min-height: 44px; padding: 0 12px; font-size: 16px; font-variant-numeric: tabular-nums; }
-.count-row.invalid > input { border-color: var(--count-red); }
+.count-row > :is(input, select) { width: 100%; min-width: 0; min-height: 44px; padding: 0 12px; font-size: 16px; font-variant-numeric: tabular-nums; }
+.count-sheet select { color: var(--ink); border: 1px solid var(--ops-border); border-radius: 12px; background: var(--ops-bg); }
+.count-row.invalid > :is(input, select) { border-color: var(--count-red); }
 .count-row small { grid-column: 1 / -1; color: var(--count-red); font-size: 12px; }
 .count-stepper { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; overflow: hidden; border: 1px solid var(--ops-border); border-radius: 12px; }
 .count-stepper button { min-height: 44px; padding: 0; color: var(--ink); border: 0; border-radius: 0; background: var(--ops-bg); box-shadow: none; font-size: 20px; }
@@ -339,6 +412,16 @@ function timeText(value: string | null) {
 .count-error { margin: 0; padding: 10px 12px; color: var(--count-red); border: 1px solid var(--count-red); border-radius: 12px; font-size: 14px; }
 .count-confirm { min-height: 48px; border-radius: 12px; font-size: 16px; font-weight: 600; }
 .count-confirm.same { background: var(--ops-green); }
+.count-ignore { min-height: 44px; color: var(--count-red); border: 0; background: transparent; box-shadow: none; font-size: 14px; font-weight: 600; }
+.count-ignore-confirm { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--count-red); border-radius: 12px; font-size: 14px; line-height: 20px; }
+.count-ignore-confirm p, .count-ignored p { margin: 0; }
+.count-ignore-confirm label { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.count-ignore-confirm input { width: 20px; height: 20px; }
+.count-ignore-confirm > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.count-ignore-confirm button { min-height: 44px; border-radius: 12px; font-size: 15px; font-weight: 600; box-shadow: none; }
+.count-ignore-cancel { color: var(--ink); border: 1px solid var(--ops-border); background: var(--ops-card); }
+.count-ignore-ok { color: #fff; border: 0; background: var(--count-red); }
+.count-ignored { display: grid; gap: 12px; font-size: 14px; line-height: 20px; }
 .count-confirm:disabled { opacity: .5; }
 
 .count-toast { position: fixed; z-index: 80; right: 16px; bottom: calc(76px + env(safe-area-inset-bottom)); left: 16px; margin: 0; padding: 12px 14px; color: #fff; border-radius: 12px; background: rgb(23 32 51 / 92%); font-size: 14px; text-align: center; }

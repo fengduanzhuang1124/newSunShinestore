@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsInt, IsString, IsUUID, Matches, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsInt, IsString, IsUUID, Matches, Max, Min, ValidateNested } from 'class-validator';
 
 export class CountedBatchDto {
   // YYYY-MM (month precision) or YYYY-MM-DD.
@@ -45,4 +45,10 @@ export class AddStockCountItemDto {
   @IsString()
   @Matches(/^\d+$/)
   productId!: string;
+}
+
+export class IgnoreStockCountItemDto {
+  // Also stop suggesting the product for purchase (same as "忽略" in the management center).
+  @IsBoolean()
+  alsoHidePurchasing!: boolean;
 }

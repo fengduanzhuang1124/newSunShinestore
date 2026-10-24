@@ -60,6 +60,7 @@ enum StockCountTaskStatus {
 enum StockCountItemStatus {
   PENDING
   CONFIRMED
+  IGNORED
 }
 
 enum StockCountItemSource {
