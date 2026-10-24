@@ -8,6 +8,7 @@ function paidOrder() {
   return {
     id: 10n,
     externalOrderNo: 'ORDER-10',
+    orderedAt: new Date('2026-10-12T22:00:00.000Z'),
     sourceStatus: 'Paid',
     refundAmount: '0.00',
     inventoryStatus: 'OBSERVED',
@@ -42,6 +43,7 @@ describe('PosInventoryApplicationService', () => {
         count: jest.fn().mockResolvedValue(2 as never),
       },
       inventoryBalance: { findMany: jest.fn().mockResolvedValue([balance()] as never) },
+      stockCountTaskItem: { findMany: jest.fn().mockResolvedValue([] as never) },
     };
     const service = new PosInventoryApplicationService({ client } as never);
 
@@ -65,8 +67,9 @@ describe('PosInventoryApplicationService', () => {
     }));
   });
 
-  function applySetup(order: ReturnType<typeof paidOrder>, balances: ReturnType<typeof balance>[]) {
+  function applySetup(order: ReturnType<typeof paidOrder>, balances: ReturnType<typeof balance>[], counted: { productId: bigint; confirmedAt: Date }[] = []) {
     const transaction = {
+      stockCountTaskItem: { findMany: jest.fn().mockResolvedValue(counted as never) },
       posOrder: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 } as never),
         findUniqueOrThrow: jest.fn().mockResolvedValue(order as never),
@@ -178,6 +181,61 @@ describe('PosInventoryApplicationService', () => {
     expect(transaction.posOrder.update).not.toHaveBeenCalled();
   });
 
+  describe('stock count coverage (REQ-012)', () => {
+    it('does not deduct a sale ordered before the product was counted and reports no shortfall', async () => {
+      const { transaction, service } = applySetup(paidOrder(), [balance()], [{ productId: 5n, confirmedAt: new Date('2026-10-12T23:00:00.000Z') }]);
+
+      const result = await service.applyRange(1n, 7n, 3n, from, to);
+
+      expect(result.summary).toMatchObject({ appliedOrders: 1, unitsApplied: 0, reviewLines: 0, shortfallUnits: 0 });
+      expect(result.issues).toEqual([]);
+      expect(transaction.stockMovement.create).not.toHaveBeenCalled();
+      expect(transaction.posOrderItem.update).toHaveBeenCalledWith({
+        where: { id: 100n },
+        data: { inventoryAppliedQuantity: 0, inventoryReviewReason: 'COVERED_BY_STOCKTAKE' },
+      });
+      expect(transaction.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ afterSummary: expect.objectContaining({ coveredByStocktake: [{ itemId: '100', productId: '5', quantity: 3 }] }) }),
+      });
+    });
+
+    it('deducts sales ordered after the count as usual', async () => {
+      const { transaction, service } = applySetup(paidOrder(), [balance()], [{ productId: 5n, confirmedAt: new Date('2026-10-12T21:00:00.000Z') }]);
+
+      const result = await service.applyRange(1n, 7n, 3n, from, to);
+
+      expect(result.summary).toMatchObject({ unitsApplied: 3, reviewLines: 0 });
+      expect(transaction.stockMovement.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves covered lines out of the preview', async () => {
+      const client = {
+        posOrder: { findMany: jest.fn().mockResolvedValue([paidOrder()] as never), count: jest.fn().mockResolvedValue(0 as never) },
+        inventoryBalance: { findMany: jest.fn().mockResolvedValue([balance(1)] as never) },
+        stockCountTaskItem: { findMany: jest.fn().mockResolvedValue([{ productId: 5n, confirmedAt: new Date('2026-10-13T00:00:00.000Z') }] as never) },
+      };
+      const result = await new PosInventoryApplicationService({ client } as never).previewRange(1n, 3n, from, to);
+
+      expect(result.summary).toMatchObject({ unitsPlanned: 0, reviewLines: 0, shortfallUnits: 0 });
+      expect(client.stockCountTaskItem.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ status: 'CONFIRMED', task: { storeId: 3n } }),
+      }));
+    });
+
+    it('keeps covered lines out of the review list', async () => {
+      const client = {
+        posOrderItem: { findMany: jest.fn().mockResolvedValue([] as never) },
+        posProductMapping: { findMany: jest.fn().mockResolvedValue([] as never) },
+        inventoryBalance: { findMany: jest.fn().mockResolvedValue([] as never) },
+      };
+      await new PosInventoryApplicationService({ client } as never).listReviewLines(1n, 3n);
+
+      expect(client.posOrderItem.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ inventoryReviewReason: { not: null, notIn: ['COVERED_BY_STOCKTAKE'] } }),
+      }));
+    });
+  });
+
   it('reads the store baseline before falling back to the environment value', async () => {
     const findUnique = jest.fn()
       .mockResolvedValueOnce({ posInventoryBaselineAt: new Date('2026-10-20T10:01:47.000Z') } as never)
@@ -199,12 +257,13 @@ describe('PosInventoryApplicationService', () => {
       return {
         id: 200n, externalProductId: 'POS-7', mappingId: null, productId: null, quantity: '3.0000', isMinus: false,
         disposition: 'UNMAPPED', inventoryReviewReason: 'UNMAPPED', inventoryAppliedQuantity: 0,
-        order: { externalOrderNo: 'ORDER-20' }, ...overrides,
+        order: { externalOrderNo: 'ORDER-20', orderedAt: new Date('2026-10-21T01:00:00.000Z') }, ...overrides,
       };
     }
 
-    function reapplySetup(item: ReturnType<typeof reviewItem> | null, balances: ReturnType<typeof balance>[], mapping: unknown = { id: 9n, productId: 5n }) {
+    function reapplySetup(item: ReturnType<typeof reviewItem> | null, balances: ReturnType<typeof balance>[], mapping: unknown = { id: 9n, productId: 5n }, counted: { productId: bigint; confirmedAt: Date }[] = []) {
       const transaction = {
+        stockCountTaskItem: { findMany: jest.fn().mockResolvedValue(counted as never) },
         posOrderItem: { findFirst: jest.fn().mockResolvedValue(item as never), update: jest.fn().mockResolvedValue({} as never) },
         posProductMapping: { findFirst: jest.fn().mockResolvedValue(mapping as never) },
         inventoryBalance: {
@@ -256,6 +315,22 @@ describe('PosInventoryApplicationService', () => {
       expect(await empty.service.reapplyLines(1n, 7n, 3n, [200n])).toMatchObject({ skipped: [{ itemId: '200', reason: 'NO_STOCK' }] });
       expect(empty.transaction.posOrderItem.update).not.toHaveBeenCalled();
       expect(empty.transaction.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it('marks a line covered instead of deducting when the product was counted after the order', async () => {
+      const { transaction, service } = reapplySetup(
+        reviewItem({ productId: 5n, disposition: 'INVENTORY', inventoryReviewReason: 'INSUFFICIENT_INVENTORY', inventoryAppliedQuantity: 1 }),
+        [balance(5)], undefined, [{ productId: 5n, confirmedAt: new Date('2026-10-24T02:00:00.000Z') }],
+      );
+
+      const result = await service.reapplyLines(1n, 7n, 3n, [200n]);
+
+      expect(result).toMatchObject({ unitsApplied: 0, skipped: [{ itemId: '200', reason: 'COVERED_BY_STOCKTAKE' }] });
+      expect(transaction.stockMovement.create).not.toHaveBeenCalled();
+      expect(transaction.posOrderItem.update).toHaveBeenCalledWith({
+        where: { id: 200n },
+        data: expect.objectContaining({ inventoryReviewReason: 'COVERED_BY_STOCKTAKE' }),
+      });
     });
   });
 });

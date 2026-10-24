@@ -9,6 +9,7 @@ import { MovementService } from './movement.service.js';
 import { StocktakeService } from './stocktake.service.js';
 import { InventoryMaintenanceService } from './inventory-maintenance.service.js';
 import { WarehouseLocationService } from './warehouse-location.service.js';
+import { StockCountService } from './stock-count.service.js';
 
 @Module({
   imports: [AuthModule],
@@ -22,6 +23,7 @@ import { WarehouseLocationService } from './warehouse-location.service.js';
     StocktakeService,
     InventoryMaintenanceService,
     WarehouseLocationService,
+    StockCountService,
   ],
 })
 export class InventoryModule {}

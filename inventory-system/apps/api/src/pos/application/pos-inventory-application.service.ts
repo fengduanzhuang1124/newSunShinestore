@@ -3,8 +3,11 @@ import { Injectable } from '@nestjs/common';
 import type { PrismaClient } from '@sunshine/database';
 import { PrismaService } from '../../database/prisma.service.js';
 
-// Why a sale line was not (fully) deducted. The rest of the order is still applied; these lines wait for review.
-export type LineReviewReason = 'UNMAPPED' | 'REVIEW_REQUIRED' | 'RETURN_LINE' | 'INVALID_QUANTITY' | 'INSUFFICIENT_INVENTORY';
+// Why a sale line was not (fully) deducted. The rest of the order is still applied; these lines wait for review,
+// except COVERED_BY_STOCKTAKE: the product was counted after the order, so the count already reflects the sale.
+export type LineReviewReason = 'UNMAPPED' | 'REVIEW_REQUIRED' | 'RETURN_LINE' | 'INVALID_QUANTITY' | 'INSUFFICIENT_INVENTORY' | 'COVERED_BY_STOCKTAKE';
+
+const COVERED_BY_STOCKTAKE = 'COVERED_BY_STOCKTAKE' as const;
 
 type ApplicationIssue = {
   orderId: string;
@@ -38,6 +41,7 @@ type OrderItemSnapshot = {
 type OrderSnapshot = {
   id: bigint;
   externalOrderNo: string;
+  orderedAt: Date;
   sourceStatus: string;
   refundAmount: unknown;
   inventoryStatus: string;
@@ -92,9 +96,10 @@ export class PosInventoryApplicationService {
     from: Date,
     to: Date,
   ) {
-    const [orders, balances, reviewRequired] = await Promise.all([
+    const [orders, balances, coverage, reviewRequired] = await Promise.all([
       this.loadCandidateOrders(organizationId, storeId, from, to),
       this.availableBalances(this.prisma.client, organizationId, storeId),
+      this.stocktakeCoverage(this.prisma.client, storeId),
       this.prisma.client.posOrder.count({
         where: {
           organizationId,
@@ -110,7 +115,7 @@ export class PosInventoryApplicationService {
     let shortfallUnits = 0;
 
     for (const order of orders) {
-      const plan = this.planOrder(order, projected);
+      const plan = this.planOrder(order, projected, coverage);
       unitsPlanned += plan.allocations.reduce((sum, row) => sum + row.quantity, 0);
       shortfallUnits += this.shortfall(plan);
       issues.push(...this.reviewIssues(order, plan));
@@ -185,7 +190,7 @@ export class PosInventoryApplicationService {
   // Lines left for review after an order was applied, with the product they would deduct from today.
   async listReviewLines(organizationId: bigint, storeId: bigint, limit = 300) {
     const items = await this.prisma.client.posOrderItem.findMany({
-      where: { status: 'ACTIVE', inventoryReviewReason: { not: null }, order: { organizationId, storeId, inventoryStatus: 'APPLIED' } },
+      where: { status: 'ACTIVE', inventoryReviewReason: { not: null, notIn: [COVERED_BY_STOCKTAKE] }, order: { organizationId, storeId, inventoryStatus: 'APPLIED' } },
       include: { order: { select: { externalOrderNo: true, orderedAt: true } }, product: { select: { name: true } } },
       orderBy: { id: 'desc' },
       take: limit,
@@ -230,7 +235,7 @@ export class PosInventoryApplicationService {
     let unitsApplied = 0;
     let completed = 0;
     let stillShort = 0;
-    const skipped: { itemId: string; reason: 'NOT_ELIGIBLE' | 'STILL_UNMAPPED' | 'NO_STOCK' }[] = [];
+    const skipped: { itemId: string; reason: 'NOT_ELIGIBLE' | 'STILL_UNMAPPED' | 'NO_STOCK' | 'COVERED_BY_STOCKTAKE' }[] = [];
     for (const itemId of itemIds) {
       const outcome = await this.prisma.client.$transaction(async (tx) => {
         const item = await tx.posOrderItem.findFirst({
@@ -239,7 +244,7 @@ export class PosInventoryApplicationService {
             inventoryReviewReason: { in: ['UNMAPPED', 'REVIEW_REQUIRED', 'INSUFFICIENT_INVENTORY'] },
             order: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, inventoryStatus: 'APPLIED' },
           },
-          include: { order: { select: { externalOrderNo: true } } },
+          include: { order: { select: { externalOrderNo: true, orderedAt: true } } },
         });
         if (!item) return { skipped: 'NOT_ELIGIBLE' as const };
         const required = Number(item.quantity);
@@ -256,6 +261,22 @@ export class PosInventoryApplicationService {
           mappingId = mapping.id;
         }
         const appliedBefore = item.inventoryAppliedQuantity ?? 0;
+        const countedAt = (await this.stocktakeCoverage(tx, storeId, [productId])).get(productId.toString());
+        if (countedAt && countedAt > item.order.orderedAt) {
+          await tx.posOrderItem.update({
+            where: { id: item.id },
+            data: { productId, mappingId, disposition: 'INVENTORY', exclusionReason: null, inventoryReviewReason: COVERED_BY_STOCKTAKE },
+          });
+          await tx.auditLog.create({
+            data: {
+              organizationId, userId, storeId, action: 'pos.inventory.reapply', entityType: 'PosOrderItem', entityId: item.id.toString(),
+              requestId: randomUUID(),
+              beforeSummary: { reason: item.inventoryReviewReason, applied: appliedBefore, productId: item.productId?.toString() ?? null },
+              afterSummary: { reason: COVERED_BY_STOCKTAKE, applied: appliedBefore, productId: productId.toString(), countedAt: countedAt.toISOString() },
+            },
+          });
+          return { skipped: COVERED_BY_STOCKTAKE };
+        }
         let remaining = required - appliedBefore;
         const balances = await this.availableBalances(tx, organizationId, storeId, productId);
         let allocated = 0;
@@ -347,6 +368,22 @@ export class PosInventoryApplicationService {
     });
   }
 
+  // Latest stock count confirmation per product in this store. Sales ordered before it are already reflected in the
+  // counted quantity, so they must not be deducted again (REQ-012).
+  private async stocktakeCoverage(client: Pick<PrismaClient, 'stockCountTaskItem'>, storeId: bigint, productIds?: bigint[]) {
+    const rows = await client.stockCountTaskItem.findMany({
+      where: { status: 'CONFIRMED', confirmedAt: { not: null }, task: { storeId }, ...(productIds ? { productId: { in: productIds } } : {}) },
+      select: { productId: true, confirmedAt: true },
+    });
+    const coverage = new Map<string, Date>();
+    for (const row of rows) {
+      const key = row.productId.toString();
+      const current = coverage.get(key);
+      if (row.confirmedAt && (!current || row.confirmedAt > current)) coverage.set(key, row.confirmedAt);
+    }
+    return coverage;
+  }
+
   // The stock a sale may be deducted from: positive balances in active warehouses and batches, first-expiry-first.
   private availableBalances(client: Pick<PrismaClient, 'inventoryBalance'>, organizationId: bigint, storeId: bigint, productId?: bigint) {
     return client.inventoryBalance.findMany({
@@ -376,7 +413,7 @@ export class PosInventoryApplicationService {
 
   // Each inventory line is deducted on its own, first-expiry-first. A line that cannot be (fully) deducted is
   // recorded with a review reason instead of blocking the whole order; stock is never driven below zero.
-  private planOrder(order: OrderSnapshot, balances: BalanceSnapshot[]): OrderPlan {
+  private planOrder(order: OrderSnapshot, balances: BalanceSnapshot[], coverage: Map<string, Date> = new Map()): OrderPlan {
     const allocations: Allocation[] = [];
     const lines: LinePlan[] = [];
     for (const item of order.items) {
@@ -389,6 +426,11 @@ export class PosInventoryApplicationService {
       else if (item.isMinus) line.reviewReason = 'RETURN_LINE';
       else if (!Number.isInteger(required) || required <= 0) line.reviewReason = 'INVALID_QUANTITY';
       if (line.reviewReason) continue;
+      const countedAt = coverage.get(String(item.productId));
+      if (countedAt && countedAt > order.orderedAt) {
+        line.reviewReason = COVERED_BY_STOCKTAKE;
+        continue;
+      }
 
       let remaining = required;
       for (const balance of balances) {
@@ -421,7 +463,7 @@ export class PosInventoryApplicationService {
 
   private reviewIssues(order: OrderSnapshot, plan: OrderPlan): ApplicationIssue[] {
     return plan.lines
-      .filter((line) => line.reviewReason !== null)
+      .filter((line) => line.reviewReason !== null && line.reviewReason !== COVERED_BY_STOCKTAKE)
       .map((line) => ({
         orderId: order.id.toString(),
         orderNo: order.externalOrderNo,
@@ -464,7 +506,8 @@ export class PosInventoryApplicationService {
         include: { items: { where: { status: 'ACTIVE' }, orderBy: { id: 'asc' } } },
       });
       const balances = await this.availableBalances(tx, organizationId, storeId);
-      const plan = this.planOrder(order, balances);
+      const coverage = await this.stocktakeCoverage(tx, storeId, order.items.flatMap((item) => (item.productId === null ? [] : [item.productId])));
+      const plan = this.planOrder(order, balances, coverage);
       const requestId = randomUUID();
 
       for (const allocation of plan.allocations) {
@@ -543,6 +586,7 @@ export class PosInventoryApplicationService {
             unitsApplied,
             movementCount: plan.allocations.length,
             reviewLines: reviewIssues.map((issue) => ({ itemId: issue.itemId, reason: issue.reason, required: issue.required, applied: issue.available })),
+            coveredByStocktake: plan.lines.filter((line) => line.reviewReason === COVERED_BY_STOCKTAKE).map((line) => ({ itemId: line.itemId.toString(), productId: line.productId?.toString(), quantity: line.required })),
             shortfallUnits,
           },
         },

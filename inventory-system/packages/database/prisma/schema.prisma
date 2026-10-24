@@ -52,6 +52,21 @@ enum StockReceiptStatus {
   CANCELLED
 }
 
+enum StockCountTaskStatus {
+  OPEN
+  COMPLETED
+}
+
+enum StockCountItemStatus {
+  PENDING
+  CONFIRMED
+}
+
+enum StockCountItemSource {
+  PLANNED
+  ADDED
+}
+
 enum PosInventoryStatus {
   OBSERVED
   SIMULATED
@@ -172,6 +187,7 @@ model Organization {
   productInsightTags        ProductInsightTag[]
   productInsightAssignments ProductInsightTagAssignment[]
   purchaseOrders            PurchaseOrder[]
+  stockCountTasks           StockCountTask[]
 
   @@map("organizations")
 }
@@ -201,6 +217,7 @@ model Store {
   posSyncRuns          PosSyncRun[]
   posSimulations       PosInventorySimulation[]
   purchaseOrders       PurchaseOrder[]
+  stockCountTasks      StockCountTask[]
 
   @@unique([organizationId, code])
   @@index([organizationId, status])
@@ -244,6 +261,7 @@ model Warehouse {
   auditLogs            AuditLog[]
   warehouseLocations   WarehouseLocation[]
   inventoryPlacements  InventoryPlacement[]
+  stockCountTasks      StockCountTask[]
 
   @@unique([storeId, code])
   @@index([storeId, status])
@@ -280,6 +298,7 @@ model Product {
   insightAssignments  ProductInsightTagAssignment[]
   purchaseOrderItems  PurchaseOrderItem[]
   inventoryPlacements InventoryPlacement[]
+  stockCountItems     StockCountTaskItem[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, name])
@@ -394,6 +413,8 @@ model User {
   cancelledPurchaseOrders    PurchaseOrder[]               @relation("PurchaseOrderCancelledBy")
   createdWarehouseLocations  WarehouseLocation[]           @relation("WarehouseLocationCreatedBy")
   updatedWarehouseLocations  WarehouseLocation[]           @relation("WarehouseLocationUpdatedBy")
+  createdStockCountTasks     StockCountTask[]              @relation("StockCountCreatedBy")
+  confirmedStockCountItems   StockCountTaskItem[]          @relation("StockCountConfirmedBy")
 
   @@unique([organizationId, username])
   @@map("users")
@@ -590,6 +611,56 @@ model StockReceiptItem {
   @@index([receiptId, createdAt])
   @@index([productId, batchId])
   @@map("stock_receipt_items")
+}
+
+// A recount list worked through product by product (REQ-012). Confirming an item aligns the product's batches
+// with the counted ones through STOCKTAKE movements; POS sales ordered before the confirmation are then not deducted.
+model StockCountTask {
+  id             BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  code           String               @db.VarChar(40)
+  organizationId BigInt               @map("organization_id") @db.UnsignedBigInt
+  storeId        BigInt               @map("store_id") @db.UnsignedBigInt
+  warehouseId    BigInt               @map("warehouse_id") @db.UnsignedBigInt
+  title          String               @db.VarChar(120)
+  status         StockCountTaskStatus @default(OPEN)
+  createdById    BigInt               @map("created_by") @db.UnsignedBigInt
+  completedAt    DateTime?            @map("completed_at")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+  organization   Organization         @relation(fields: [organizationId], references: [id])
+  store          Store                @relation(fields: [storeId], references: [id])
+  warehouse      Warehouse            @relation(fields: [warehouseId], references: [id])
+  createdBy      User                 @relation("StockCountCreatedBy", fields: [createdById], references: [id])
+  items          StockCountTaskItem[]
+
+  @@unique([organizationId, code])
+  @@index([warehouseId, status])
+  @@map("stock_count_tasks")
+}
+
+model StockCountTaskItem {
+  id              BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  taskId          BigInt               @map("task_id") @db.UnsignedBigInt
+  productId       BigInt               @map("product_id") @db.UnsignedBigInt
+  priority        Int                  @db.UnsignedTinyInt
+  reasons         String               @db.VarChar(500)
+  source          StockCountItemSource @default(PLANNED)
+  status          StockCountItemStatus @default(PENDING)
+  systemQuantity  Int?                 @map("system_quantity")
+  countedQuantity Int?                 @map("counted_quantity")
+  confirmCount    Int                  @default(0) @map("confirm_count")
+  confirmedById   BigInt?              @map("confirmed_by") @db.UnsignedBigInt
+  confirmedAt     DateTime?            @map("confirmed_at")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+  task            StockCountTask       @relation(fields: [taskId], references: [id])
+  product         Product              @relation(fields: [productId], references: [id])
+  confirmedBy     User?                @relation("StockCountConfirmedBy", fields: [confirmedById], references: [id])
+
+  @@unique([taskId, productId])
+  @@index([taskId, status, priority])
+  @@index([productId, confirmedAt])
+  @@map("stock_count_task_items")
 }
 
 model PurchaseOrder {

@@ -3,9 +3,10 @@
 import type { IScannerControls } from '@zxing/browser';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ManagementDashboard from './management/ManagementDashboard.vue';
+import StockCountTasks from './stockcount/StockCountTasks.vue';
 import { storeToday } from './store-date';
 
-type Mode = 'home' | 'receive' | 'issue' | 'query' | 'productReview' | 'milkReview' | 'reports' | 'management';
+type Mode = 'home' | 'receive' | 'issue' | 'query' | 'productReview' | 'milkReview' | 'reports' | 'management' | 'stockCount';
 type Theme = 'light' | 'dark';
 type ReviewBatch = { productId: string; productName: string; barcode: string | null; batchId: string; expiryDate: string; quantity: number };
 type ReviewItems = { negative: ReviewBatch[]; expired: ReviewBatch[]; posUnmapped: { productId: string; productName: string; barcode: string | null; quantity: number }[] };
@@ -95,7 +96,7 @@ const warehouseId = ref(storedProfile.warehouses?.find((item: { canReceive?: boo
   ?? '');
 const mustChangePassword = ref(storedProfile.mustChangePassword ?? false);
 const savedMode = localStorage.getItem(modeKey);
-const activeMode = ref<Mode>(savedMode === 'receive' || savedMode === 'issue' || savedMode === 'query' || savedMode === 'reports' || (savedMode === 'management' && roles.value.some((role) => role.code === 'ADMIN'))
+const activeMode = ref<Mode>(savedMode === 'receive' || savedMode === 'issue' || savedMode === 'query' || savedMode === 'reports' || ((savedMode === 'management' || savedMode === 'stockCount') && roles.value.some((role) => role.code === 'ADMIN'))
   ? savedMode
   : 'home');
 const effectiveTheme = computed<Theme>(() => activeMode.value === 'management' ? managementTheme.value : theme.value);
@@ -121,9 +122,12 @@ const scanInput = ref<HTMLInputElement>();
 const expiryMonthInput = ref<HTMLInputElement>();
 const cameraVideo = ref<HTMLVideoElement>();
 const cameraOpen = ref(false);
+// Last barcode scanned for the stock count task; the timestamp lets the same code be scanned twice.
+const countScan = ref<{ code: string; at: number } | null>(null);
+const countTaskSummary = ref<{ id: string; title: string; total: number; confirmed: number; pending: number } | null>(null);
 const cameraStatus = ref('正在准备后置摄像头…');
 const cameraError = ref('');
-type CameraTarget = 'receive' | 'issue' | 'inventory' | 'stocktake';
+type CameraTarget = 'receive' | 'issue' | 'inventory' | 'stocktake' | 'count';
 const cameraTarget = ref<CameraTarget>('receive');
 let cameraControls: IScannerControls | null = null;
 let lastCameraCode = '';
@@ -596,10 +600,14 @@ async function switchMode(mode: Mode) {
     error.value = '只有管理员可以查看经营数据大屏';
     return;
   }
+  if (mode === 'stockCount' && !isAdmin.value) {
+    error.value = '只有管理员可以进行盘点任务';
+    return;
+  }
   activeMode.value = mode;
   showMobileMore.value = false;
   document.documentElement.dataset.theme = effectiveTheme.value;
-  if (mode === 'home' || mode === 'receive' || mode === 'issue' || mode === 'query' || mode === 'reports' || mode === 'management') {
+  if (mode === 'home' || mode === 'receive' || mode === 'issue' || mode === 'query' || mode === 'reports' || mode === 'management' || mode === 'stockCount') {
     localStorage.setItem(modeKey, mode);
   }
   query.value = '';
@@ -650,7 +658,9 @@ async function acceptCameraBarcode(rawValue: string) {
   lastCameraCodeAt = now;
   const target = cameraTarget.value;
   stopCameraScanner();
-  if (target === 'receive') {
+  if (target === 'count') {
+    countScan.value = { code: value, at: now };
+  } else if (target === 'receive') {
     receiveSearch.value = value;
     await lookupForReceive();
   } else if (target === 'stocktake') {
@@ -1223,10 +1233,21 @@ async function loadWorkbench() {
   clearStatus();
   try {
     await Promise.all([loadReceipts(), loadInventoryReport(), loadExpiryReport()]);
+    void loadCountTaskSummary();
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '工作台数据加载失败';
   } finally {
     loading.value = false;
+  }
+}
+
+// Open stock count task for the workbench banner (admins only); the banner simply stays hidden on failure.
+async function loadCountTaskSummary() {
+  if (!isAdmin.value) return;
+  try {
+    countTaskSummary.value = (await apiRequest('/inventory/count-tasks/current/summary')).task;
+  } catch {
+    countTaskSummary.value = null;
   }
 }
 
@@ -1523,6 +1544,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         <button :class="{ active: activeMode === 'issue' }" @click="switchMode('issue')">扫码出库</button>
       </nav>
       <ManagementDashboard v-if="activeMode === 'management'" :api-base-url="apiBaseUrl" :token="token" :store-id="storeId" :store-name="storeName" :administrator="isAdmin" @open-report="openReport" @open-account="showAccountPanel = true" @exit="switchMode('home')" />
+      <StockCountTasks v-else-if="activeMode === 'stockCount'" :api-base-url="apiBaseUrl" :token="token" :scanned="countScan" @scan="startCameraScanner('count')" />
       <template v-else-if="activeMode === 'home'">
         <section class="workbench-page-header report-header">
           <h2>仓管通</h2>
@@ -1546,12 +1568,14 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         </section>
 
         <section class="quick-actions" aria-labelledby="quick-action-title">
+          <button v-if="countTaskSummary && countTaskSummary.pending > 0" class="count-task-banner" type="button" @click="switchMode('stockCount')"><span><strong>盘点任务进行中</strong><small>{{ countTaskSummary.title }} · 已完成 {{ countTaskSummary.confirmed }} / {{ countTaskSummary.total }}</small></span><b>剩余 {{ countTaskSummary.pending }} ›</b></button>
           <div class="section-heading"><h2 id="quick-action-title">快捷操作</h2></div>
           <div class="quick-action-grid">
             <button type="button" @click="switchMode('receive')"><span>⌗</span><strong>扫码入库</strong><small>蓝牙扫码枪或手动条码</small></button>
             <button type="button" @click="switchMode('issue')"><span>↗</span><strong>扫码出库</strong><small>按日期批次扣减库存</small></button>
             <button type="button" @click="switchMode('query')"><span>⌕</span><strong>库存查询</strong><small>查看商品与到期批次</small></button>
             <button type="button" @click="openInventory('stocktake')"><span>✓</span><strong>库存盘点</strong><small>记录盘盈、盘亏及原因</small></button>
+            <button v-if="isAdmin" type="button" @click="switchMode('stockCount')"><span>☑</span><strong>盘点任务</strong><small>按清单逐个核对并确认</small></button>
             <button type="button" @click="openReport('expiry')"><span>!</span><strong>临期预警</strong><small>查看2、3、6个月预警</small></button>
             <button type="button" @click="openReport('receipts')"><span>≡</span><strong>入库记录</strong><small>查看和完成当天入库单</small></button>
           </div>
@@ -1934,13 +1958,14 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         <button :class="{ active: activeMode === 'receive' }" @click="switchMode('receive')"><span>＋</span>入库</button>
         <button :class="{ active: activeMode === 'issue' }" @click="switchMode('issue')"><span>−</span>出库</button>
         <button :class="{ active: activeMode === 'query' }" @click="switchMode('query')"><span>⌕</span>库存</button>
-        <button :class="{ active: ['reports', 'productReview', 'milkReview'].includes(activeMode) }" :aria-expanded="showMobileMore" @click="showMobileMore = true"><span>•••</span>更多</button>
+        <button :class="{ active: ['reports', 'productReview', 'milkReview', 'stockCount'].includes(activeMode) }" :aria-expanded="showMobileMore" @click="showMobileMore = true"><span>•••</span>更多</button>
       </nav>
 
       <div v-if="activeMode !== 'management' && showMobileMore" class="mobile-more-overlay" role="presentation" @click.self="showMobileMore = false">
         <section class="mobile-more-sheet" role="dialog" aria-modal="true" aria-label="更多库存功能">
           <header><div><small>MORE TOOLS</small><h2>更多功能</h2></div><button type="button" aria-label="关闭更多功能" @click="showMobileMore = false">×</button></header>
           <div class="mobile-more-grid">
+            <button v-if="isAdmin" type="button" @click="switchMode('stockCount')"><span>☑</span><strong>盘点任务</strong><small>按清单逐个核对并确认</small></button>
             <button type="button" @click="switchMode('reports')"><span>▤</span><strong>记录与报表</strong><small>流水、到期与库存记录</small></button>
             <button v-if="isAdmin" type="button" @click="switchMode('productReview')"><span>✓</span><strong>商品审核</strong><small>商品资料与 POS 映射</small></button>
             <button v-if="isAdmin" type="button" @click="switchMode('milkReview')"><span>◎</span><strong>奶粉核对</strong><small>奶粉规格与箱规复核</small></button>

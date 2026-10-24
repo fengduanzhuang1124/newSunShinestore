@@ -48,11 +48,15 @@ describe('App', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: {
         warehouseName: '测试仓库', thresholds: { urgentMonths: 2, warningMonths: 3, earlyWarningMonths: 6 },
         summary: { EXPIRED: 1, URGENT: 2, WARNING: 3, EARLY: 4 }, items: [],
+      } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {
+        task: { id: '1', code: 'RECOUNT-20261024', title: '10-24重新点货', total: 664, confirmed: 4, pending: 660 },
       } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
     const wrapper = mount(App);
     await flushPromises();
 
+    expect(wrapper.get('.count-task-banner').text()).toBe('盘点任务进行中10-24重新点货 · 已完成 4 / 664剩余 660 ›');
     expect(wrapper.text()).toContain('仓管通');
     expect(wrapper.text()).toContain('当前库存96');
     expect(wrapper.text()).toContain('今日入库18');
