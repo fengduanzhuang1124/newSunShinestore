@@ -1740,6 +1740,13 @@ img, video { max-width: 100%; }
 }
 
 
+/* REQ-012 · workbench banner for an open stock count task. */
+.count-task-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 64px; margin: 0 0 12px; padding: 12px 16px; color: var(--ink); border: 1px solid var(--ops-blue); border-radius: 16px; background: var(--ops-card); box-shadow: none; text-align: left; }
+.count-task-banner span { display: grid; gap: 2px; min-width: 0; }
+.count-task-banner strong { font-size: 16px; }
+.count-task-banner small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.count-task-banner b { flex: none; color: var(--ops-blue); font-size: 16px; font-variant-numeric: tabular-nums; }
+
 /* REQ-008 · management center phone shell. The page is one viewport-high column:
    the management top bar, the page content (the only scroller) and the bottom
    navigation all live in ManagementDashboard (see management/management-mobile.css).

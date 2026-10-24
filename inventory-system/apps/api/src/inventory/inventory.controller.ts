@@ -26,6 +26,8 @@ import { InventoryMaintenanceService } from './inventory-maintenance.service.js'
 import { CorrectBatchExpiryDto, DeleteExpiryAlertDto, ExpiryAlertActionDto, ExpiryAlertActionStatusDto } from './inventory-maintenance.dto.js';
 import { WarehouseLocationService } from './warehouse-location.service.js';
 import { AssignWarehouseLocationDto, SaveWarehouseLocationDto } from './warehouse-location.dto.js';
+import { StockCountService } from './stock-count.service.js';
+import { AddStockCountItemDto, ConfirmStockCountDto } from './stock-count.dto.js';
 
 @Controller('inventory')
 @UseGuards(JwtAuthGuard)
@@ -38,7 +40,32 @@ export class InventoryController {
     private readonly stocktakes: StocktakeService,
     private readonly maintenance: InventoryMaintenanceService,
     private readonly locations: WarehouseLocationService,
+    private readonly stockCounts: StockCountService,
   ) {}
+
+  @Get('count-tasks/current/summary')
+  async stockCountSummary(@Req() request: AuthenticatedRequest) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '盘点任务进度查询成功', data: await this.stockCounts.summary(user.organizationId, user.id) };
+  }
+
+  @Get('count-tasks/current')
+  async currentStockCount(@Req() request: AuthenticatedRequest) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '盘点任务查询成功', data: await this.stockCounts.current(user.organizationId, user.id) };
+  }
+
+  @Post('count-tasks/:taskId/items')
+  async addStockCountItem(@Req() request: AuthenticatedRequest, @Param('taskId') taskId: string, @Body() input: AddStockCountItemDto) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '已加入盘点任务', data: await this.stockCounts.addItem(user.organizationId, user.id, taskId, input) };
+  }
+
+  @Post('count-tasks/:taskId/items/:itemId/confirm')
+  async confirmStockCount(@Req() request: AuthenticatedRequest, @Param('taskId') taskId: string, @Param('itemId') itemId: string, @Body() input: ConfirmStockCountDto) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '盘点已确认', data: await this.stockCounts.confirm(user.organizationId, user.id, taskId, itemId, input) };
+  }
 
   @Get('locations')
   async warehouseLocations(@Req() request: AuthenticatedRequest) {
