@@ -11,7 +11,8 @@ type CountItem = {
   systemQuantity: number; batches: Batch[]; countedQuantity: number | null; confirmCount: number; confirmedAt: string | null;
 };
 type CountTask = { id: string; code: string; title: string; total: number; confirmed: number; pending: number };
-type Row = { key: number; expiry: string; quantity: number | null };
+// Expiry is picked as a month (native picker) plus an optional day, like the receiving form.
+type Row = { key: number; month: string; day: string; quantity: number | null };
 type View = 1 | 2 | 3 | 'done';
 
 const props = defineProps<{ apiBaseUrl: string; token: string; scanned: { code: string; at: number } | null }>();
@@ -20,7 +21,9 @@ const emit = defineEmits<{ scan: [] }>();
 const PAGE = 50;
 const PRIORITIES = [1, 2, 3] as const;
 const PRIORITY_LABEL: Record<number, string> = { 1: '高', 2: '中', 3: '低' };
-const EXPIRY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/;
+const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const DAYS = Array.from({ length: 31 }, (_, index) => String(index + 1).padStart(2, '0'));
+const expiryOf = (row: Row) => (row.day ? `${row.month}-${row.day}` : row.month);
 
 const task = ref<CountTask | null>(null);
 const items = ref<CountItem[]>([]);
@@ -39,6 +42,7 @@ const saving = ref(false);
 const sheetError = ref('');
 let requestId = '';
 let rowKey = 0;
+const rowFrom = (expiry: string, quantity: number): Row => ({ key: ++rowKey, month: expiry.slice(0, 7), day: expiry.slice(8, 10), quantity });
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -87,14 +91,15 @@ function showToast(text: string) {
 
 function openItem(item: CountItem) {
   open.value = item;
-  rows.value = item.batches.length ? item.batches.map((batch) => ({ key: ++rowKey, expiry: batch.expiry, quantity: batch.quantity })) : [{ key: ++rowKey, expiry: '', quantity: 0 }];
+  rows.value = item.batches.length ? item.batches.map((batch) => rowFrom(batch.expiry, batch.quantity)) : [rowFrom('', 0)];
   sheetError.value = '';
   requestId = crypto.randomUUID();
 }
 function closeSheet() { open.value = null; }
 
 const rowErrors = computed(() => rows.value.map((row) => {
-  if (!EXPIRY_PATTERN.test(row.expiry.trim())) return '到期日格式：2028-03 或 2028-03-11';
+  if (!MONTH_PATTERN.test(row.month)) return '请选择到期年月';
+  if (row.day && Number(row.day) > new Date(Date.UTC(Number(row.month.slice(0, 4)), Number(row.month.slice(5, 7)), 0)).getUTCDate()) return '所选日期超出该月天数';
   if (row.quantity === null || !Number.isInteger(row.quantity) || row.quantity < 0) return '数量需为 0 或正整数';
   return '';
 }));
@@ -103,12 +108,12 @@ const difference = computed(() => countedTotal.value - (open.value?.systemQuanti
 const unchanged = computed(() => {
   if (!open.value) return false;
   const normalize = (list: { expiry: string; quantity: number }[]) => list.filter((row) => row.quantity !== 0).map((row) => `${row.expiry}:${row.quantity}`).sort().join('|');
-  return normalize(rows.value.map((row) => ({ expiry: row.expiry.trim(), quantity: row.quantity ?? 0 }))) === normalize(open.value.batches);
+  return normalize(rows.value.map((row) => ({ expiry: expiryOf(row), quantity: row.quantity ?? 0 }))) === normalize(open.value.batches);
 });
 const canSubmit = computed(() => !saving.value && rowErrors.value.every((message) => !message));
 
 function step(row: Row, delta: number) { row.quantity = Math.max(0, (row.quantity ?? 0) + delta); }
-function addRow() { rows.value.push({ key: ++rowKey, expiry: '', quantity: 0 }); }
+function addRow() { rows.value.push(rowFrom('', 0)); }
 function removeRow(row: Row) { rows.value = rows.value.filter((item) => item !== row); }
 
 async function confirm() {
@@ -120,7 +125,7 @@ async function confirm() {
     const result = await request<{ item: CountItem; task: CountTask }>(`/inventory/count-tasks/${task.value.id}/items/${item.id}/confirm`, {
       method: 'POST',
       body: JSON.stringify({
-        lines: rows.value.filter((row) => (row.quantity ?? 0) > 0).map((row) => ({ expiry: row.expiry.trim(), quantity: row.quantity })),
+        lines: rows.value.filter((row) => (row.quantity ?? 0) > 0).map((row) => ({ expiry: expiryOf(row), quantity: row.quantity })),
         expected: item.batches.map((batch) => ({ batchId: batch.batchId, quantity: batch.quantity })),
         requestId,
       }),
@@ -247,9 +252,9 @@ function timeText(value: string | null) {
           <p class="count-why">{{ open.source === 'ADDED' ? '盘点时临时加入' : open.reasons }}</p>
 
           <div class="count-rows">
-            <div class="count-row-head"><span>到期日</span><span>实点数量</span></div>
             <div v-for="(row, index) in rows" :key="row.key" class="count-row" :class="{ invalid: rowErrors[index] }">
-              <input v-model="row.expiry" type="text" inputmode="numeric" placeholder="2028-03" maxlength="10" :aria-label="`第 ${index + 1} 个批次到期日`" />
+              <input v-model="row.month" class="count-month" type="month" :aria-label="`第 ${index + 1} 个批次到期年月`" />
+              <select v-model="row.day" class="count-day" :aria-label="`第 ${index + 1} 个批次到期日（可不选）`"><option value="">整月</option><option v-for="day in DAYS" :key="day" :value="day">{{ Number(day) }} 日</option></select>
               <div class="count-stepper">
                 <button type="button" aria-label="减一" @click="step(row, -1)">−</button>
                 <input v-model.number="row.quantity" type="number" inputmode="numeric" min="0" :aria-label="`第 ${index + 1} 个批次数量`" />
@@ -319,12 +324,15 @@ function timeText(value: string | null) {
 .count-why { margin: 0; padding: 8px 10px; color: var(--muted); border-radius: 10px; background: var(--ops-bg); font-size: 12px; line-height: 18px; }
 
 .count-rows { display: grid; gap: 8px; }
-.count-row-head { display: grid; grid-template-columns: minmax(0, 1fr) 148px 44px; gap: 8px; color: var(--muted); font-size: 12px; }
-.count-row { display: grid; grid-template-columns: minmax(0, 1fr) 148px 44px; align-items: center; gap: 8px; }
+/* Each batch: expiry month + day on the first line, quantity and delete on the second. */
+.count-row { display: grid; grid-template-columns: minmax(0, 1fr) 104px; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--ops-border); border-radius: 14px; }
+.count-row .count-stepper { grid-column: 1; }
+.count-row .count-remove { justify-self: end; }
 /* The sheet lives under <body>, outside the app's themed input styles. */
 .count-sheet input { color: var(--ink); border: 1px solid var(--ops-border); border-radius: 12px; background: var(--ops-bg); }
-.count-row > input { min-width: 0; min-height: 44px; padding: 0 12px; font-size: 16px; font-variant-numeric: tabular-nums; }
-.count-row.invalid > input { border-color: var(--count-red); }
+.count-row > :is(input, select) { width: 100%; min-width: 0; min-height: 44px; padding: 0 12px; font-size: 16px; font-variant-numeric: tabular-nums; }
+.count-sheet select { color: var(--ink); border: 1px solid var(--ops-border); border-radius: 12px; background: var(--ops-bg); }
+.count-row.invalid > :is(input, select) { border-color: var(--count-red); }
 .count-row small { grid-column: 1 / -1; color: var(--count-red); font-size: 12px; }
 .count-stepper { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; overflow: hidden; border: 1px solid var(--ops-border); border-radius: 12px; }
 .count-stepper button { min-height: 44px; padding: 0; color: var(--ink); border: 0; border-radius: 0; background: var(--ops-bg); box-shadow: none; font-size: 20px; }

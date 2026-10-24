@@ -53,7 +53,8 @@ describe('StockCountTasks', () => {
 
     expect(wrapper.get('.count-confirm').text()).toBe('与系统一致，确认');
     await wrapper.findAll('.count-stepper input')[0].setValue(195);
-    await wrapper.findAll('.count-row > input')[1].setValue('2028-04');
+    await wrapper.findAll('.count-month')[1].setValue('2028-04');
+    expect((wrapper.findAll('.count-day')[0].element as HTMLSelectElement).value).toBe('11');
     expect(wrapper.get('.count-total').text()).toContain('实点 216 件（-6）');
     expect(wrapper.get('.count-confirm').text()).toBe('确认修改');
     await wrapper.get('.count-confirm').trigger('click'); await flushPromises();
@@ -78,14 +79,30 @@ describe('StockCountTasks', () => {
     }); await flushPromises();
     await wrapper.findAll('.count-list button')[0].trigger('click');
 
-    await wrapper.findAll('.count-row > input')[0].setValue('2028-3');
-    expect(wrapper.get('.count-row small').text()).toContain('到期日格式');
+    await wrapper.findAll('.count-month')[0].setValue('');
+    expect(wrapper.get('.count-row small').text()).toBe('请选择到期年月');
     expect(wrapper.get('.count-confirm').attributes('disabled')).toBeDefined();
-    await wrapper.findAll('.count-row > input')[0].setValue('2028-03-11');
+    await wrapper.findAll('.count-month')[0].setValue('2028-03');
+    expect(wrapper.find('.count-row small').exists()).toBe(false);
     await wrapper.get('.count-confirm').trigger('click'); await flushPromises();
 
     expect(wrapper.get('.count-error').text()).toContain('已刷新为最新库存');
     expect(wrapper.get('.count-sheet h3').text()).toBe('TheraLady 大金瓶精华液');
+  });
+
+  it('picks the expiry as a month and an optional day', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises();
+    await wrapper.findAll('.count-list button')[0].trigger('click');
+
+    expect(wrapper.findAll('.count-month').map((input) => (input.element as HTMLInputElement).type)).toEqual(['month', 'month']);
+    await wrapper.findAll('.count-day')[0].setValue('31');
+    await wrapper.findAll('.count-month')[0].setValue('2028-02');
+    expect(wrapper.get('.count-row small').text()).toBe('所选日期超出该月天数');
+    await wrapper.findAll('.count-day')[0].setValue('');
+    await wrapper.get('.count-confirm').trigger('click'); await flushPromises();
+
+    const call = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/confirm'))!;
+    expect(JSON.parse(String((call[1] as RequestInit).body)).lines).toEqual([{ expiry: '2028-02', quantity: 201 }, { expiry: '2028-03', quantity: 21 }]);
   });
 
   it('opens a scanned product from the list or offers to add an unlisted one', async () => {
