@@ -3,7 +3,7 @@ import type { PrismaClient } from '@sunshine/database';
 import { PrismaService } from '../database/prisma.service.js';
 import { InventoryPermissionService } from './inventory-permission.service.js';
 import { parseExpiryInput } from './expiry-date.js';
-import { AddStockCountItemDto, ConfirmStockCountDto } from './stock-count.dto.js';
+import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto } from './stock-count.dto.js';
 import { planStockCount, type CurrentBatch, type ExpiryPrecision } from './stock-count-plan.js';
 
 const CONFIRM_ACTION = 'inventory.stock_count.confirm';
@@ -15,6 +15,13 @@ type CountItemRecord = {
   countedQuantity: number | null; confirmCount: number; confirmedAt: Date | null;
   product: { name: string; brandName: string | null; barcodes: { barcode: string }[] };
 };
+
+// Task progress from item counts per status; ignored products are done without a count (CR-004).
+function progress(groups: { status: string; _count: { _all: number } }[]) {
+  const count = (status: string) => groups.find((group) => group.status === status)?._count._all ?? 0;
+  const [confirmed, ignored, pending] = [count('CONFIRMED'), count('IGNORED'), count('PENDING')];
+  return { total: confirmed + ignored + pending, confirmed, ignored, pending };
+}
 
 const itemInclude = {
   product: {
@@ -58,9 +65,62 @@ export class StockCountService {
     });
     if (!task) return { task: null };
     const groups = await this.prisma.client.stockCountTaskItem.groupBy({ by: ['status'], where: { taskId: task.id }, _count: { _all: true } });
-    const confirmed = groups.find((group) => group.status === 'CONFIRMED')?._count._all ?? 0;
-    const pending = groups.find((group) => group.status === 'PENDING')?._count._all ?? 0;
-    return { task: { id: task.id.toString(), code: task.code, title: task.title, total: confirmed + pending, confirmed, pending } };
+    return { task: { id: task.id.toString(), code: task.code, title: task.title, ...progress(groups) } };
+  }
+
+  // Takes a discontinued product off the list without counting it (CR-004); stock is left as it is. Optionally the
+  // product also stops being suggested for purchase, as with "忽略" in the management center.
+  async ignore(organizationId: bigint, userId: bigint, taskIdValue: string, itemIdValue: string, input: IgnoreStockCountItemDto) {
+    const permission = await this.adminPermission(organizationId, userId);
+    const taskId = this.id(taskIdValue, '盘点任务');
+    const itemId = this.id(itemIdValue, '盘点商品');
+    return this.prisma.client.$transaction(async (tx) => {
+      const item = await tx.stockCountTaskItem.findFirst({ where: { id: itemId, taskId, task: { organizationId, warehouseId: permission.warehouseId, status: 'OPEN' } }, include: { task: true } });
+      if (!item) throw new NotFoundException('盘点商品不存在或任务已结束');
+      if (item.status !== 'PENDING') throw new ConflictException(item.status === 'IGNORED' ? '该商品已忽略' : '该商品已确认盘点，无需忽略');
+      const stock = await tx.inventoryBalance.aggregate({ where: { organizationId, warehouseId: permission.warehouseId, productId: item.productId }, _sum: { quantity: true } });
+      const ignoredAt = new Date();
+      await tx.stockCountTaskItem.update({ where: { id: item.id }, data: { status: 'IGNORED' } });
+      if (input.alsoHidePurchasing) {
+        await tx.purchaseSuggestionIgnore.upsert({
+          where: { organizationId_storeId_productId: { organizationId, storeId: item.task.storeId, productId: item.productId } },
+          create: { organizationId, storeId: item.task.storeId, productId: item.productId, reason: '盘点时标记不再销售', ignoredById: userId, ignoredAt },
+          update: { reason: '盘点时标记不再销售', ignoredById: userId, ignoredAt, restoredById: null, restoredAt: null },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          organizationId, userId, storeId: item.task.storeId, warehouseId: permission.warehouseId,
+          action: 'inventory.stock_count.ignore', entityType: 'StockCountTaskItem', entityId: item.id.toString(), requestId: `count-ignore:${item.id}:${ignoredAt.getTime()}`,
+          afterSummary: { taskCode: item.task.code, productId: item.productId.toString(), stockLeftUnchanged: stock._sum.quantity ?? 0, alsoHidePurchasing: input.alsoHidePurchasing },
+        },
+      });
+      const pending = await tx.stockCountTaskItem.count({ where: { taskId: item.taskId, status: 'PENDING' } });
+      if (pending === 0) await tx.stockCountTask.update({ where: { id: item.taskId }, data: { status: 'COMPLETED', completedAt: ignoredAt } });
+      return this.confirmResult(tx, item.task, item.id, organizationId, permission.warehouseId);
+    });
+  }
+
+  // Puts an ignored product back on the list. A purchase-suggestion ignore stays until restored in the management center.
+  async restore(organizationId: bigint, userId: bigint, taskIdValue: string, itemIdValue: string) {
+    const permission = await this.adminPermission(organizationId, userId);
+    const taskId = this.id(taskIdValue, '盘点任务');
+    const itemId = this.id(itemIdValue, '盘点商品');
+    return this.prisma.client.$transaction(async (tx) => {
+      const item = await tx.stockCountTaskItem.findFirst({ where: { id: itemId, taskId, task: { organizationId, warehouseId: permission.warehouseId, status: 'OPEN' } }, include: { task: true } });
+      if (!item) throw new NotFoundException('盘点商品不存在或任务已结束');
+      if (item.status !== 'IGNORED') throw new ConflictException('该商品没有被忽略');
+      await tx.stockCountTaskItem.update({ where: { id: item.id }, data: { status: 'PENDING' } });
+      const restoredAt = new Date();
+      await tx.auditLog.create({
+        data: {
+          organizationId, userId, storeId: item.task.storeId, warehouseId: permission.warehouseId,
+          action: 'inventory.stock_count.restore', entityType: 'StockCountTaskItem', entityId: item.id.toString(), requestId: `count-restore:${item.id}:${restoredAt.getTime()}`,
+          afterSummary: { taskCode: item.task.code, productId: item.productId.toString() },
+        },
+      });
+      return this.confirmResult(tx, item.task, item.id, organizationId, permission.warehouseId);
+    });
   }
 
   async addItem(organizationId: bigint, userId: bigint, taskIdValue: string, input: AddStockCountItemDto) {
@@ -109,6 +169,7 @@ export class StockCountService {
       if (!item) throw new NotFoundException('盘点商品不存在');
       if (replay) return this.confirmResult(tx, item.task, item.id, organizationId, permission.warehouseId);
       if (item.task.status !== 'OPEN') throw new ConflictException('该盘点任务已结束');
+      if (item.status === 'IGNORED') throw new ConflictException('该商品已忽略，请先恢复为待盘点');
 
       const balances = await tx.inventoryBalance.findMany({
         where: { organizationId, warehouseId: permission.warehouseId, productId: item.productId },
@@ -201,11 +262,9 @@ export class StockCountService {
       tx.stockCountTaskItem.groupBy({ by: ['status'], where: { taskId: task.id }, _count: { _all: true } }),
     ]);
     const batches = await this.batchesByProduct(tx, organizationId, warehouseId, [item.productId]);
-    const confirmed = groups.find((group) => group.status === 'CONFIRMED')?._count._all ?? 0;
-    const pending = groups.find((group) => group.status === 'PENDING')?._count._all ?? 0;
     return {
       item: this.itemView(item, batches.get(item.productId.toString()) ?? []),
-      task: { id: task.id.toString(), code: task.code, total: confirmed + pending, confirmed, pending },
+      task: { id: task.id.toString(), code: task.code, ...progress(groups) },
     };
   }
 
@@ -235,8 +294,8 @@ export class StockCountService {
   }
 
   private taskView(task: { id: bigint; code: string; title: string; status: string; createdAt: Date }, items: { status: string }[]) {
-    const confirmed = items.filter((item) => item.status === 'CONFIRMED').length;
-    return { id: task.id.toString(), code: task.code, title: task.title, status: task.status, createdAt: task.createdAt.toISOString(), total: items.length, confirmed, pending: items.length - confirmed };
+    const count = (status: string) => items.filter((item) => item.status === status).length;
+    return { id: task.id.toString(), code: task.code, title: task.title, status: task.status, createdAt: task.createdAt.toISOString(), total: items.length, confirmed: count('CONFIRMED'), ignored: count('IGNORED'), pending: count('PENDING') };
   }
 
   private itemView(

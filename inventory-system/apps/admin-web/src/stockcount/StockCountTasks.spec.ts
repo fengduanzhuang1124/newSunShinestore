@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import StockCountTasks from './StockCountTasks.vue';
 
-const task = { id: '3', code: 'RECOUNT-20261024', title: '10-24 重新点货', total: 3, confirmed: 0, pending: 3 };
+const task = { id: '3', code: 'RECOUNT-20261024', title: '10-24 重新点货', total: 3, confirmed: 0, ignored: 0, pending: 3 };
 const item = (id: string, name: string, overrides: Record<string, unknown> = {}) => ({
   id, productId: `p${id}`, productName: name, brandName: null, barcode: `9421${id}`, priority: 1, reasons: '10-20 入库单叠加在基准数上；多次入库录入',
   source: 'PLANNED', status: 'PENDING', systemQuantity: 222, countedQuantity: null, confirmCount: 0, confirmedAt: null,
@@ -43,7 +43,7 @@ describe('StockCountTasks', () => {
     const { wrapper } = setup(); await flushPromises();
 
     expect(wrapper.get('.count-header strong').text()).toBe('剩余 3');
-    expect(wrapper.findAll('.count-tabs button').map((button) => button.text())).toEqual(['高2', '中1', '低0', '已完成0']);
+    expect(wrapper.findAll('.count-tabs button').map((button) => button.text())).toEqual(['高2', '中1', '低0', '已完成0', '已忽略0']);
     expect(wrapper.findAll('.count-list .count-name').map((name) => name.text())).toEqual(['TheraLady 大金瓶精华液', '8+面膜 提亮']);
   });
 
@@ -103,6 +103,34 @@ describe('StockCountTasks', () => {
 
     const call = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/confirm'))!;
     expect(JSON.parse(String((call[1] as RequestInit).body)).lines).toEqual([{ expiry: '2028-02', quantity: 201 }, { expiry: '2028-03', quantity: 21 }]);
+  });
+
+  it('ignores a discontinued product without counting it and can restore it', async () => {
+    const { wrapper, fetchSpy } = setup((path, init) => {
+      if (path.endsWith('/items/1/ignore')) return json(200, { data: { item: item('1', 'TheraLady 大金瓶精华液', { status: 'IGNORED' }), task: { ...task, ignored: 1, pending: 2 } } });
+      if (path.endsWith('/items/1/restore')) return json(200, { data: { item: item('1', 'TheraLady 大金瓶精华液'), task } });
+      return undefined;
+    }); await flushPromises();
+    await wrapper.findAll('.count-list button')[0].trigger('click');
+
+    await wrapper.get('.count-ignore').trigger('click');
+    expect(wrapper.get('.count-ignore-confirm').text()).toContain('系统库存 222 件保持不变');
+    expect((wrapper.get('.count-ignore-confirm input').element as HTMLInputElement).checked).toBe(true);
+    await wrapper.get('.count-ignore-ok').trigger('click'); await flushPromises();
+
+    const call = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/items/1/ignore'))!;
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({ alsoHidePurchasing: true });
+    expect(wrapper.get('.count-toast').text()).toBe('已忽略：TheraLady 大金瓶精华液');
+    expect(wrapper.get('.count-sheet h3').text()).toBe('8+面膜 提亮');
+    expect(wrapper.get('.count-progress-text').text()).toBe('已完成 0 · 已忽略 1 / 3');
+    await wrapper.get('.count-sheet header button').trigger('click');
+
+    await wrapper.findAll('.count-tabs button')[4].trigger('click');
+    expect(wrapper.get('.count-list .count-result').text()).toBe('已忽略 · 系统 222 件保持不变');
+    await wrapper.get('.count-list button').trigger('click');
+    await wrapper.get('.count-ignored .count-confirm').trigger('click'); await flushPromises();
+    expect(wrapper.get('.count-toast').text()).toBe('已恢复为待盘点：TheraLady 大金瓶精华液');
+    expect(wrapper.find('.count-ignore').exists()).toBe(true);
   });
 
   it('opens a scanned product from the list or offers to add an unlisted one', async () => {

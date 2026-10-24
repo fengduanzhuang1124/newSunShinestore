@@ -27,7 +27,7 @@ import { CorrectBatchExpiryDto, DeleteExpiryAlertDto, ExpiryAlertActionDto, Expi
 import { WarehouseLocationService } from './warehouse-location.service.js';
 import { AssignWarehouseLocationDto, SaveWarehouseLocationDto } from './warehouse-location.dto.js';
 import { StockCountService } from './stock-count.service.js';
-import { AddStockCountItemDto, ConfirmStockCountDto } from './stock-count.dto.js';
+import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto } from './stock-count.dto.js';
 
 @Controller('inventory')
 @UseGuards(JwtAuthGuard)
@@ -65,6 +65,18 @@ export class InventoryController {
   async confirmStockCount(@Req() request: AuthenticatedRequest, @Param('taskId') taskId: string, @Param('itemId') itemId: string, @Body() input: ConfirmStockCountDto) {
     const user = request.inventoryUser!;
     return { code: 200, message: '盘点已确认', data: await this.stockCounts.confirm(user.organizationId, user.id, taskId, itemId, input) };
+  }
+
+  @Post('count-tasks/:taskId/items/:itemId/ignore')
+  async ignoreStockCountItem(@Req() request: AuthenticatedRequest, @Param('taskId') taskId: string, @Param('itemId') itemId: string, @Body() input: IgnoreStockCountItemDto) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '已忽略该商品', data: await this.stockCounts.ignore(user.organizationId, user.id, taskId, itemId, input) };
+  }
+
+  @Post('count-tasks/:taskId/items/:itemId/restore')
+  async restoreStockCountItem(@Req() request: AuthenticatedRequest, @Param('taskId') taskId: string, @Param('itemId') itemId: string) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '已恢复为待盘点', data: await this.stockCounts.restore(user.organizationId, user.id, taskId, itemId) };
   }
 
   @Get('locations')
