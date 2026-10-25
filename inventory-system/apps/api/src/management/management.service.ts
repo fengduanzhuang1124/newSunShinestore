@@ -669,7 +669,7 @@ export class ManagementService {
       const directShipExcluded = isDirectShip(product.storeProducts[0]?.directShip, productNames(product));
       const currentInventory = inventory.get(key)?.quantity ?? 0;
       const ignoreRow = hidden.get(key);
-      const hiddenRow = ignoreRow && ignoreIsActive(ignoreRow, currentInventory, now) ? ignoreRow : undefined;
+      const hiddenRow = ignoreRow && ignoreIsActive(ignoreRow, now) ? ignoreRow : undefined;
       const configuredMinimumStock = product.storeProducts[0]?.minimumStock ?? null;
       // Low-stock alerts only for steadily selling core brands and lanolin unless a minimum is set by hand.
       const coreProduct = isCoreReplenishmentProduct(product.brandName, product.chineseName, product.name, product.englishName, product.categoryName);
@@ -816,7 +816,7 @@ export class ManagementService {
         ? 'THIS_WEEK' as const
         : 'FOLLOW_UP' as const;
       const ignoreRow = ignored.get(productId);
-      const ignoredRow = ignoreRow && ignoreIsActive(ignoreRow, currentInventory) ? ignoreRow : undefined;
+      const ignoredRow = ignoreRow && ignoreIsActive(ignoreRow) ? ignoreRow : undefined;
       return {
         productId, sku: product.sku, barcode: product.barcodes[0]?.barcode ?? null,
         productName: product.chineseName || product.name || product.englishName || '未命名商品',

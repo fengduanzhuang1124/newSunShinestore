@@ -19,13 +19,13 @@ describe('replenishment rules (CR-005)', () => {
     expect(isDirectShip(false, 'Anchor Blue Milk Powder 1kg')).toBe(false);
   });
 
-  it('expires manual ignores after 30 days or once out of stock, but keeps snoozes and discontinued marks', () => {
-    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(10), restoredAt: null }, 5, now)).toBe(true);
-    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(31), restoredAt: null }, 5, now)).toBe(false);
-    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(2), restoredAt: null }, 0, now)).toBe(false);
-    expect(ignoreIsActive({ reason: '下周继续显示', ignoredAt: daysAgo(2), restoredAt: new Date(now.getTime() + 86_400_000) }, 0, now)).toBe(true);
-    expect(ignoreIsActive({ reason: '下周继续显示', ignoredAt: daysAgo(9), restoredAt: daysAgo(2) }, 5, now)).toBe(false);
-    expect(ignoreIsActive({ reason: DISCONTINUED_IGNORE_REASON, ignoredAt: daysAgo(90), restoredAt: null }, 0, now)).toBe(true);
+  it('keeps manual ignores for 30 days even when out of stock, snoozes until their date and discontinued marks for good', () => {
+    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(10), restoredAt: null }, now)).toBe(true);
+    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(31), restoredAt: null }, now)).toBe(false);
+    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(2), restoredAt: null }, now)).toBe(true);
+    expect(ignoreIsActive({ reason: '下周继续显示', ignoredAt: daysAgo(2), restoredAt: new Date(now.getTime() + 86_400_000) }, now)).toBe(true);
+    expect(ignoreIsActive({ reason: '下周继续显示', ignoredAt: daysAgo(9), restoredAt: daysAgo(2) }, now)).toBe(false);
+    expect(ignoreIsActive({ reason: DISCONTINUED_IGNORE_REASON, ignoredAt: daysAgo(90), restoredAt: null }, now)).toBe(true);
   });
 
   it('records the direct-ship flag with an audit row', async () => {
