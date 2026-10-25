@@ -20,12 +20,19 @@ export function productNames(product: { name: string; chineseName?: string | nul
   return [product.chineseName, product.name, product.englishName].filter(Boolean).join(' ');
 }
 
+// Records whose display names match once case, spaces and punctuation are ignored are one product for purchasing:
+// the same goods under several barcodes or packagings (REQ-013 follow-up). "swiss" is the common misspelling of Swisse.
+export function productGroupKey(name: string) {
+  return name.toLowerCase().replace(/swiss(?!e)/g, 'swisse').replace(/[\s\p{P}\p{S}_]+/gu, '');
+}
+
 // Whether a purchase-suggestion ignore still applies (CR-005 C3): "下周显示" until its date; "不再销售" from a stock
-// count until restored; any other ignore for 30 days, and no longer once the product is out of stock.
-export function ignoreIsActive(row: { reason: string | null; ignoredAt: Date; restoredAt: Date | null }, currentInventory: number, now = new Date()) {
+// count until restored; any other ignore for 30 days (most ignores are made on out-of-stock products, so stock
+// level must not end them).
+export function ignoreIsActive(row: { reason: string | null; ignoredAt: Date; restoredAt: Date | null }, now = new Date()) {
   if (row.restoredAt) return row.restoredAt > now;
   if (row.reason === DISCONTINUED_IGNORE_REASON) return true;
-  return currentInventory > 0 && now.getTime() - row.ignoredAt.getTime() < MANUAL_IGNORE_DAYS * 86_400_000;
+  return now.getTime() - row.ignoredAt.getTime() < MANUAL_IGNORE_DAYS * 86_400_000;
 }
 
 // Marks or clears a store product as direct-ship, with an audit row. Runs inside the caller's transaction.

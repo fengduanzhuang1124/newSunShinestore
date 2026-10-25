@@ -156,6 +156,49 @@ describe('ManagementService.purchaseSuggestions', () => {
   });
 });
 
+describe('ManagementService.purchaseSuggestions same-name records', () => {
+  it('sums stock and sales of records with the same name and suggests once', async () => {
+    const client = {
+      userStoreRole: { findMany: jest.fn().mockResolvedValue([{ store: { id: 1n, name: 'City' }, role: { code: 'ADMIN', permissions: [] } }] as never) },
+      organization: { findUniqueOrThrow: jest.fn().mockResolvedValue({ timezone: 'Pacific/Auckland' } as never) },
+      product: {
+        findMany: jest.fn().mockResolvedValue([
+          { ...product(10n, 'swiss120粒护肝'), barcodes: [{ barcode: '9311770609432' }] },
+          { ...product(11n, 'swisse 120粒护肝'), barcodes: [{ barcode: '9311770593380' }] },
+          { ...product(20n, 'Good Health 好健康 更年期平衡片60 片'), barcodes: [] },
+          { ...product(21n, 'Good Health 好健康更年期平衡片 60 片'), barcodes: [] },
+        ] as never),
+      },
+      inventoryBalance: {
+        findMany: jest.fn().mockResolvedValue([
+          { productId: 10n, quantity: 63, updatedAt: new Date() },
+          { productId: 20n, quantity: 9, updatedAt: new Date() },
+          { productId: 21n, quantity: 15, updatedAt: new Date() },
+        ] as never),
+      },
+      posOrderItem: {
+        findMany: jest.fn().mockResolvedValue([
+          { productId: 11n, quantity: '20', isMinus: false },
+          { productId: 20n, quantity: '20', isMinus: false },
+          { productId: 21n, quantity: '40', isMinus: false },
+        ] as never),
+        groupBy: jest.fn().mockResolvedValue([] as never),
+      },
+      purchaseOrder: { findUnique: jest.fn().mockResolvedValue(null as never) },
+      purchaseSuggestionIgnore: { findMany: jest.fn().mockResolvedValue([] as never) },
+      stockMovement: { groupBy: jest.fn().mockResolvedValue([] as never) },
+    };
+    const service = new ManagementService({ client } as never, {} as never, {} as never, {} as never);
+
+    const result = await service.purchaseSuggestions(1n, 2n, 1n);
+
+    // 63 in stock across both liver records covers 20 sales a month, so nothing to buy.
+    expect(result.suggestions.map((row) => row.productId)).toEqual(['21']);
+    expect(result.suggestions[0]).toMatchObject({ currentInventory: 24, recent28DayQty: 60, weeklyVelocity: 15, suggestedQuantity: 51 });
+    expect(result.suggestions[0].mergedProducts.map((member) => [member.productId, member.currentInventory, member.recent28DayQty])).toEqual([['21', 15, 40], ['20', 9, 20]]);
+  });
+});
+
 describe('ManagementService.posDataCheck', () => {
   it('flags recent MISC sales because they cannot be deducted from a product', async () => {
     const aggregate = jest.fn()

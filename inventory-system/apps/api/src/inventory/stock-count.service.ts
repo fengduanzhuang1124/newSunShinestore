@@ -285,7 +285,7 @@ export class StockCountService {
       let item = await tx.stockCountTaskItem.findUnique({ where: { taskId_productId: { taskId, productId } }, include: itemInclude });
       if (!item) {
         item = await tx.stockCountTaskItem.create({
-          data: { taskId, productId, priority: 1, reasons: '盘点时临时加入', source: 'ADDED' },
+          data: { taskId, productId, priority: 1, reasons: input.reason?.trim() || '盘点时临时加入', source: 'ADDED' },
           include: itemInclude,
         });
         await tx.auditLog.create({

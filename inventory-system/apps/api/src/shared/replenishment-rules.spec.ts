@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { DISCONTINUED_IGNORE_REASON, ignoreIsActive, isDirectShip, setDirectShip } from './replenishment-rules.js';
+import { DISCONTINUED_IGNORE_REASON, ignoreIsActive, isDirectShip, productGroupKey, setDirectShip } from './replenishment-rules.js';
 
 const now = new Date('2026-10-25T00:00:00.000Z');
 const daysAgo = (days: number) => new Date(now.getTime() - days * 86_400_000);
@@ -19,13 +19,19 @@ describe('replenishment rules (CR-005)', () => {
     expect(isDirectShip(false, 'Anchor Blue Milk Powder 1kg')).toBe(false);
   });
 
-  it('expires manual ignores after 30 days or once out of stock, but keeps snoozes and discontinued marks', () => {
-    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(10), restoredAt: null }, 5, now)).toBe(true);
-    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(31), restoredAt: null }, 5, now)).toBe(false);
-    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(2), restoredAt: null }, 0, now)).toBe(false);
-    expect(ignoreIsActive({ reason: '下周继续显示', ignoredAt: daysAgo(2), restoredAt: new Date(now.getTime() + 86_400_000) }, 0, now)).toBe(true);
-    expect(ignoreIsActive({ reason: '下周继续显示', ignoredAt: daysAgo(9), restoredAt: daysAgo(2) }, 5, now)).toBe(false);
-    expect(ignoreIsActive({ reason: DISCONTINUED_IGNORE_REASON, ignoredAt: daysAgo(90), restoredAt: null }, 0, now)).toBe(true);
+  it('keeps manual ignores for 30 days even when out of stock, snoozes until their date and discontinued marks for good', () => {
+    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(10), restoredAt: null }, now)).toBe(true);
+    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(31), restoredAt: null }, now)).toBe(false);
+    expect(ignoreIsActive({ reason: '当前库存足够', ignoredAt: daysAgo(2), restoredAt: null }, now)).toBe(true);
+    expect(ignoreIsActive({ reason: '下周继续显示', ignoredAt: daysAgo(2), restoredAt: new Date(now.getTime() + 86_400_000) }, now)).toBe(true);
+    expect(ignoreIsActive({ reason: '下周继续显示', ignoredAt: daysAgo(9), restoredAt: daysAgo(2) }, now)).toBe(false);
+    expect(ignoreIsActive({ reason: DISCONTINUED_IGNORE_REASON, ignoredAt: daysAgo(90), restoredAt: null }, now)).toBe(true);
+  });
+
+  it('groups names that differ only in case, spaces, punctuation or the swiss spelling', () => {
+    expect(productGroupKey('swiss120粒护肝')).toBe(productGroupKey('Swisse 120粒护肝'));
+    expect(productGroupKey('EAORON Hyaluronic 爽肤水 120ml')).toBe(productGroupKey('eaoron hyaluronic 爽肤水120ml'));
+    expect(productGroupKey('swisse 120粒护肝')).not.toBe(productGroupKey('swisse200粒护肝'));
   });
 
   it('records the direct-ship flag with an audit row', async () => {

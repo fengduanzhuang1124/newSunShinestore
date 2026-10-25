@@ -198,6 +198,25 @@ describe('StockCountTasks', () => {
     expect(wrapper.get('.count-sheet h3').text()).toBe('纽乐辅酶300mg 60粒');
   });
 
+  it('starts negative batches from 0 and asks twice when the count is far below the system (REQ-013)', async () => {
+    const { wrapper, fetchSpy } = setup((path) => {
+      if (path === '/inventory/count-tasks/current') return json(200, { data: { task, items: [
+        item('1', 'Nutralife辅酶q10 150mg', { systemQuantity: -11, batches: [{ batchId: 'b1', expiry: '2028-06-30', quantity: -11 }] }),
+        item('2', 'swiss120粒护肝', { systemQuantity: 63, batches: [{ batchId: 'b2', expiry: '2028-08', quantity: 63 }] }),
+      ] } });
+      return undefined;
+    }); await flushPromises();
+
+    await wrapper.findAll('.count-list button')[0].trigger('click');
+    expect((wrapper.get('.count-stepper input').element as HTMLInputElement).value).toBe('0');
+
+    await wrapper.findAll('.count-list button')[1].trigger('click');
+    await wrapper.get('.count-stepper input').setValue(3);
+    await wrapper.get('.count-confirm').trigger('click'); await flushPromises();
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).endsWith('/confirm'))).toBe(false);
+    expect(wrapper.get('.count-error').text()).toContain('不到系统 63 件的一半');
+  });
+
   it('opens a scanned product from the list or offers to add an unlisted one', async () => {
     const { wrapper } = setup((path, init) => {
       if (path === '/inventory/barcode/9400000000001') return json(200, { data: { productId: 'p99', productName: '康维他蜂胶喷雾' } });
