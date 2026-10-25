@@ -35,7 +35,7 @@ const fixtures: Record<string, unknown> = {
     return { generatedAt: '2026-10-25T00:00:00Z', inventoryLatestUpdatedAt: null, period: { from: '2026-09-27', to: '2026-10-25' }, calculation: '按近28天销量折算周销', summary: { products: 2, suggestedUnits: 20, thisWeekProducts: 2, followUpProducts: 0, alreadyIncluded: 0, ignored: 0 },
       suggestions: [
         { ...base, productId: '11', productName: '高之源白瓶', currentInventory: 0, recent28DayQty: 8, weeklyVelocity: 2, coverageWeeks: 0, targetInventory: 12, suggestedQuantity: 12, salesBasis: '90_DAYS' },
-        { ...base, productId: '12', productName: '科立纯妇科益生菌', currentInventory: 4, recent28DayQty: 8, weeklyVelocity: 2, coverageWeeks: 2, targetInventory: 12, suggestedQuantity: 8, recentReceivedQty: 4, salesBasis: '28_DAYS' },
+        { ...base, productId: '12', productName: '科立纯妇科益生菌', currentInventory: 4, recent28DayQty: 8, weeklyVelocity: 2, coverageWeeks: 2, targetInventory: 12, suggestedQuantity: 8, recentReceivedQty: 4, salesBasis: '28_DAYS', mergedProducts: [{ productId: '12', productName: '科立纯妇科益生菌', barcode: '1', currentInventory: 4, recent28DayQty: 8 }, { productId: '13', productName: '科立纯 妇科益生菌', barcode: '2', currentInventory: 0, recent28DayQty: 0 }] },
       ], ignoredSuggestions: [] };
   })(),
   'purchase-orders/current': { order: null },
@@ -80,6 +80,7 @@ describe('经营管理页面组织', () => {
     expect(rows[1].findAll('td').map((cell) => cell.text()).slice(1, 6)).toEqual(['4', '2', '2 周', '8', '中']);
     expect(rows[1].get('.buy-product em').text()).toBe('近 7 天已入库 4 件，仍不足');
     expect(rows[1].get('.buy-btn').text()).toBe('加入进货单');
+    expect(rows[1].get('.buy-merged').text()).toBe('已合并 2 个同名档案（库存 4 + 0）');
     expect(wrapper.find('.buy-rules').exists()).toBe(false);
   });
 

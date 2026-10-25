@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsInt, IsOptional, IsString, IsUUID, Matches, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 
 export class CountedBatchDto {
   // YYYY-MM (month precision) or YYYY-MM-DD.
@@ -46,6 +46,12 @@ export class AddStockCountItemDto {
   @IsString()
   @Matches(/^\d+$/)
   productId!: string;
+
+  // Why the product joins the list; defaults to "盘点时临时加入" (scanned during the count).
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  reason?: string;
 }
 
 export class IgnoreStockCountItemDto {

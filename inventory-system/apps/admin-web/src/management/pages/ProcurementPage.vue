@@ -38,6 +38,11 @@ function coverageText(item: PurchaseSuggestion) {
   return item.coverageWeeks === null ? '—' : `${number(item.coverageWeeks)} 周`;
 }
 
+// Same-name records summed into this row, listed with barcode, stock and 28-day sales.
+function mergedTitle(item: PurchaseSuggestion) {
+  return (item.mergedProducts ?? []).map((member) => `${member.productName}（${member.barcode ?? '无条码'}）库存 ${member.currentInventory} · 28天 ${member.recent28DayQty}`).join('\n');
+}
+
 // CR-005: explain suggestions that would otherwise look surprising.
 function suggestionNote(item: PurchaseSuggestion) {
   if (item.salesBasis === '90_DAYS') return '断货中，按近 90 天销量估算';
@@ -65,7 +70,7 @@ function suggestionNote(item: PurchaseSuggestion) {
             <thead><tr><th>商品</th><th>当前库存</th><th>周销量</th><th>可卖</th><th>建议进货</th><th>优先级</th><th>操作</th></tr></thead>
             <tbody>
               <tr v-for="item in suggestionRows" :key="item.productId">
-                <td class="buy-product"><strong>{{ item.productName }}</strong><small>{{ item.brandName }}<template v-if="suggestionNote(item)"> · <em>{{ suggestionNote(item) }}</em></template><template v-if="item.ignoredReason"> · 忽略原因：{{ item.ignoredReason }}</template></small></td>
+                <td class="buy-product"><strong>{{ item.productName }}</strong><small>{{ item.brandName }}<template v-if="suggestionNote(item)"> · <em>{{ suggestionNote(item) }}</em></template><template v-if="item.ignoredReason"> · 忽略原因：{{ item.ignoredReason }}</template></small><small v-if="item.mergedProducts?.length" class="buy-merged" :title="mergedTitle(item)">已合并 {{ item.mergedProducts.length }} 个同名档案（库存 {{ item.mergedProducts.map((member) => member.currentInventory).join(' + ') }}）</small></td>
                 <td class="buy-num" data-k="库存" :class="{ out: item.currentInventory <= 0 }">{{ number(item.currentInventory) }}</td>
                 <td class="buy-num" data-k="周销">{{ number(item.weeklyVelocity) }}</td>
                 <td class="buy-num" data-k="可卖">{{ coverageText(item) }}</td>
@@ -120,6 +125,7 @@ function suggestionNote(item: PurchaseSuggestion) {
 :root .management-workspace .buy-product strong{display:block;color:var(--buy-ink);font-size:13.5px;font-weight:600;line-height:1.4}
 :root .management-workspace .buy-product small{display:block;margin-top:2px;color:var(--buy-muted);font-size:12px}
 :root .management-workspace .buy-product em{color:var(--buy-mid);font-style:normal}
+:root .management-workspace .buy-product .buy-merged{color:var(--buy-accent)}
 :root .management-workspace .buy-num{font-variant-numeric:tabular-nums;white-space:nowrap}
 :root .management-workspace .buy-num.out{color:var(--buy-high);font-weight:600}
 :root .management-workspace .buy-qty{color:var(--buy-accent);font-size:15px;font-weight:700}

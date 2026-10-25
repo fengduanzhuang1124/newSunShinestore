@@ -20,6 +20,12 @@ export function productNames(product: { name: string; chineseName?: string | nul
   return [product.chineseName, product.name, product.englishName].filter(Boolean).join(' ');
 }
 
+// Records whose display names match once case, spaces and punctuation are ignored are one product for purchasing:
+// the same goods under several barcodes or packagings (REQ-013 follow-up). "swiss" is the common misspelling of Swisse.
+export function productGroupKey(name: string) {
+  return name.toLowerCase().replace(/swiss(?!e)/g, 'swisse').replace(/[\s\p{P}\p{S}_]+/gu, '');
+}
+
 // Whether a purchase-suggestion ignore still applies (CR-005 C3): "下周显示" until its date; "不再销售" from a stock
 // count until restored; any other ignore for 30 days (most ignores are made on out-of-stock products, so stock
 // level must not end them).

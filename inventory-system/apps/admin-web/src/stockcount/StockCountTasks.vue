@@ -100,7 +100,8 @@ function showToast(text: string) {
 
 function openItem(item: CountItem) {
   open.value = item;
-  rows.value = item.batches.length ? item.batches.map((batch) => rowFrom(batch.expiry, batch.quantity)) : [rowFrom('', 0)];
+  // Negative system batches (sales without stock) start from 0: counting up from -11 gave wrong totals.
+  rows.value = item.batches.length ? item.batches.map((batch) => rowFrom(batch.expiry, Math.max(0, batch.quantity))) : [rowFrom('', 0)];
   sheetError.value = '';
   ignoring.value = false;
   alsoHidePurchasing.value = true;
@@ -224,10 +225,16 @@ const unchanged = computed(() => {
   return normalize(rows.value.map((row) => ({ expiry: expiryOf(row), quantity: row.quantity ?? 0 }))) === normalize(open.value.batches);
 });
 // Unusually large counts need a second tap (CR-005): 500 or more, or 10x the system quantity and 100 more.
-const needsDoubleCheck = computed(() => {
+// Unusually large counts, or counts far below the system quantity, need a second tap.
+const tooHigh = computed(() => {
   const system = open.value?.systemQuantity ?? 0;
   return countedTotal.value >= 500 || (countedTotal.value >= system * 10 && countedTotal.value - system >= 100);
 });
+const tooLow = computed(() => {
+  const system = open.value?.systemQuantity ?? 0;
+  return system >= 10 && countedTotal.value <= system / 2;
+});
+const needsDoubleCheck = computed(() => tooHigh.value || tooLow.value);
 const doubleChecked = ref(false);
 watch(countedTotal, () => { doubleChecked.value = false; });
 const canSubmit = computed(() => !saving.value && rowErrors.value.every((message) => !message));
@@ -363,7 +370,7 @@ function timeText(value: string | null) {
             <span v-if="item.status === 'CONFIRMED'" class="count-result">实点 {{ item.countedQuantity }} 件 · {{ timeText(item.confirmedAt) }}</span>
             <span v-else-if="item.status === 'IGNORED'" class="count-result">已忽略 · 系统 {{ item.systemQuantity }} 件保持不变</span>
             <span v-else class="count-result">系统 {{ item.systemQuantity }} 件 · {{ item.batches.length }} 个批次</span>
-            <span class="count-reason">{{ item.source === 'ADDED' ? '临时加入' : item.reasons.split('；')[0] }}</span>
+            <span class="count-reason">{{ item.reasons.split('；')[0] }}</span>
           </button>
         </li>
       </ul>
@@ -379,7 +386,7 @@ function timeText(value: string | null) {
             <div><h3>{{ open.productName }}</h3><small>{{ open.barcode || '无条码' }}<template v-if="open.brandName"> · {{ open.brandName }}</template></small></div>
             <button type="button" aria-label="关闭" @click="closeSheet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
           </header>
-          <p class="count-why">{{ open.source === 'ADDED' ? '盘点时临时加入' : open.reasons }}</p>
+          <p class="count-why">{{ open.reasons }}</p>
           <p v-if="open.directShip" class="count-flag">直邮商品：POS 卖出不扣库存，不进入缺货和进货建议</p>
           <div v-else-if="open.posMapped === false && open.status !== 'IGNORED'" class="count-link">
             <p class="count-flag warn">POS 未对应，卖出不会扣库存。扫商品包装上的条码完成对应。</p>
@@ -426,7 +433,7 @@ function timeText(value: string | null) {
           </div>
 
           <p class="count-total">系统 {{ open.systemQuantity }} 件 → 实点 <strong>{{ countedTotal }}</strong> 件<b v-if="!unchanged" :class="difference > 0 ? 'up' : difference < 0 ? 'down' : ''">（{{ difference > 0 ? '+' : '' }}{{ difference }}）</b></p>
-          <p v-if="doubleChecked" class="count-error" role="alert">实点 {{ countedTotal }} 件，明显多于系统 {{ open.systemQuantity }} 件。请核对数量没有多输位数，无误再点一次确认。</p>
+          <p v-if="doubleChecked" class="count-error" role="alert"><template v-if="tooHigh">实点 {{ countedTotal }} 件，明显多于系统 {{ open.systemQuantity }} 件。请核对数量没有多输位数，无误再点一次确认。</template><template v-else>实点 {{ countedTotal }} 件，不到系统 {{ open.systemQuantity }} 件的一半。请确认所有批次和位置都点到了、数量没有少输位数，无误再点一次确认。</template></p>
           <p v-if="sheetError" class="count-error" role="alert">{{ sheetError }}</p>
           <button class="count-confirm" :class="{ same: unchanged }" type="button" :disabled="!canSubmit" @click="confirm">{{ saving ? '正在保存…' : doubleChecked ? '数量无误，再次确认' : unchanged ? '与系统一致，确认' : '确认修改' }}</button>
           <template v-if="open.status === 'PENDING'">

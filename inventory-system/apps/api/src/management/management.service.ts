@@ -7,7 +7,7 @@ import { PosInventoryApplicationService } from '../pos/application/pos-inventory
 import { PosRealtimeSyncService } from '../pos/application/pos-realtime-sync.service.js';
 import { isCoreReplenishmentProduct } from './core-replenishment.js';
 import { purchaseCoverage } from './purchase-coverage.js';
-import { ignoreIsActive, isDirectShip, productNames, setDirectShip } from '../shared/replenishment-rules.js';
+import { ignoreIsActive, isDirectShip, productGroupKey, productNames, setDirectShip } from '../shared/replenishment-rules.js';
 
 type SalesLine = { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number };
 type SalesAnalysisInput = { from: string; to: string; dimension: 'DAY' | 'WEEK' | 'MONTH'; brand?: string; category?: string };
@@ -801,11 +801,24 @@ export class ManagementService {
     }
     const included = new Set(currentOrder?.items.map((item) => item.productId.toString()) ?? []);
     const ignored = new Map(ignoredRows.map((row) => [row.productId.toString(), row]));
-    const rows = products.filter((product) => !isDirectShip(product.storeProducts[0]?.directShip, productNames(product))).map((product) => {
+    // Same-name records are summed into one suggestion; the record selling most stands for the group (it is what the
+    // POS sells and what goes onto the purchase order).
+    const displayName = (product: (typeof products)[number]) => product.chineseName || product.name || product.englishName || '未命名商品';
+    const groups = new Map<string, (typeof products)[number][]>();
+    for (const product of products) {
+      if (isDirectShip(product.storeProducts[0]?.directShip, productNames(product))) continue;
+      const key = productGroupKey(displayName(product)) || product.id.toString();
+      groups.set(key, [...(groups.get(key) ?? []), product]);
+    }
+    const sum = (members: (typeof products)[number][], values: Map<string, number>) => members.reduce((total, member) => total + (values.get(member.id.toString()) ?? 0), 0);
+    const rows = [...groups.values()].map((members) => {
+      const ranked = [...members].sort((a, b) => (sales.get(b.id.toString()) ?? 0) - (sales.get(a.id.toString()) ?? 0)
+        || (inventory.get(b.id.toString()) ?? 0) - (inventory.get(a.id.toString()) ?? 0) || Number(a.id - b.id));
+      const product = ranked[0];
       const productId = product.id.toString();
-      const currentInventory = inventory.get(productId) ?? 0;
-      const actual28DayQty = Math.max(0, Math.round(sales.get(productId) ?? 0));
-      const longTerm28DayQty = currentInventory <= 0 ? Math.round(((longSales.get(productId) ?? 0) * 28) / LONG_SALES_WINDOW_DAYS) : 0;
+      const currentInventory = sum(members, inventory);
+      const actual28DayQty = Math.max(0, Math.round(sum(members, sales)));
+      const longTerm28DayQty = currentInventory <= 0 ? Math.round((sum(members, longSales) * 28) / LONG_SALES_WINDOW_DAYS) : 0;
       const recent28DayQty = Math.max(actual28DayQty, longTerm28DayQty);
       const salesBasis = longTerm28DayQty > actual28DayQty ? '90_DAYS' as const : '28_DAYS' as const;
       const { weeklyVelocity, targetWeeks, targetInventory, gap: suggestedQuantity } = purchaseCoverage(recent28DayQty, currentInventory);
@@ -815,19 +828,24 @@ export class ManagementService {
       const priority = currentInventory <= 0 || (coverageWeeks !== null && coverageWeeks <= 1) || (minimumStock !== null && currentInventory <= minimumStock)
         ? 'THIS_WEEK' as const
         : 'FOLLOW_UP' as const;
-      const ignoreRow = ignored.get(productId);
-      const ignoredRow = ignoreRow && ignoreIsActive(ignoreRow) ? ignoreRow : undefined;
+      const ignoredRow = members.map((member) => ignored.get(member.id.toString())).filter((row) => row && ignoreIsActive(row))
+        .sort((a, b) => b!.ignoredAt.getTime() - a!.ignoredAt.getTime())[0];
+      const receivedRows = members.map((member) => received.get(member.id.toString())).filter(Boolean);
       return {
         productId, sku: product.sku, barcode: product.barcodes[0]?.barcode ?? null,
-        productName: product.chineseName || product.name || product.englishName || '未命名商品',
+        productName: displayName(product),
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
         categoryName: product.categoryName || '未标注品类', currentInventory, minimumStock,
         recent28DayQty, salesBasis, weeklyVelocity, coverageWeeks, targetWeeks, targetInventory,
-        suggestedQuantity, source, priority, alreadyIncluded: included.has(productId),
+        suggestedQuantity, source, priority, alreadyIncluded: members.some((member) => included.has(member.id.toString())),
         ignored: Boolean(ignoredRow), ignoredReason: ignoredRow?.reason ?? null,
         ignoredAt: ignoredRow?.ignoredAt.toISOString() ?? null,
-        recentReceivedQty: received.get(productId)?._sum.quantityDelta ?? 0,
-        lastReceivedAt: received.get(productId)?._max.createdAt?.toISOString() ?? null,
+        recentReceivedQty: receivedRows.reduce((total, row) => total + (row!._sum.quantityDelta ?? 0), 0),
+        lastReceivedAt: receivedRows.map((row) => row!._max.createdAt).filter(Boolean).sort((a, b) => b!.getTime() - a!.getTime())[0]?.toISOString() ?? null,
+        mergedProducts: members.length > 1 ? ranked.map((member) => ({
+          productId: member.id.toString(), productName: displayName(member), barcode: member.barcodes[0]?.barcode ?? null,
+          currentInventory: inventory.get(member.id.toString()) ?? 0, recent28DayQty: Math.max(0, Math.round(sales.get(member.id.toString()) ?? 0)),
+        })) : [],
       };
     }).filter((row) => row.suggestedQuantity > 0);
     // Goods received in the last 7 days that are still short stay suggested, flagged with what arrived (CR-005 C4).
@@ -840,7 +858,7 @@ export class ManagementService {
       generatedAt: new Date().toISOString(),
       inventoryLatestUpdatedAt: latestInventoryUpdatedAt?.toISOString() ?? null,
       store: { id: store.id.toString(), name: store.name }, period: { from: calendarDateInZone(start, organization.timezone), to: today },
-      calculation: '这是备货4–6周的候选清单，不是一周必须买完。按最近28天销量折算周均（断货商品取近90天折算值与近28天的较大者）：低于1件/周不建议；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。近7天已入库但仍不足的商品照常建议并标注；直邮商品不建议。',
+      calculation: '这是备货4–6周的候选清单，不是一周必须买完。按最近28天销量折算周均（断货商品取近90天折算值与近28天的较大者）：低于1件/周不建议；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。近7天已入库但仍不足的商品照常建议并标注；直邮商品不建议；名称相同的多个档案（不同条码或包装）合并计算库存与销量。',
       summary: {
         products: suggestions.length,
         suggestedUnits: suggestions.reduce((sum, row) => sum + row.suggestedQuantity, 0),
