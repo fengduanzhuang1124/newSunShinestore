@@ -4,10 +4,14 @@ import type { PrismaClient } from '@sunshine/database';
 import { PrismaService } from '../../database/prisma.service.js';
 
 // Why a sale line was not (fully) deducted. The rest of the order is still applied; these lines wait for review,
-// except COVERED_BY_STOCKTAKE: the product was counted after the order, so the count already reflects the sale.
-export type LineReviewReason = 'UNMAPPED' | 'REVIEW_REQUIRED' | 'RETURN_LINE' | 'INVALID_QUANTITY' | 'INSUFFICIENT_INVENTORY' | 'COVERED_BY_STOCKTAKE';
+// except COVERED_BY_STOCKTAKE (the product was counted after the order, so the count already reflects the sale) and
+// DIRECT_SHIP (the product is shipped from elsewhere and never held in store stock, CR-005).
+export type LineReviewReason = 'UNMAPPED' | 'REVIEW_REQUIRED' | 'RETURN_LINE' | 'INVALID_QUANTITY' | 'INSUFFICIENT_INVENTORY' | 'COVERED_BY_STOCKTAKE' | 'DIRECT_SHIP';
 
 const COVERED_BY_STOCKTAKE = 'COVERED_BY_STOCKTAKE' as const;
+const DIRECT_SHIP = 'DIRECT_SHIP' as const;
+// Reasons that close a line without deducting and without asking anyone to review it.
+const SETTLED_WITHOUT_DEDUCTION: string[] = [COVERED_BY_STOCKTAKE, DIRECT_SHIP];
 
 type ApplicationIssue = {
   orderId: string;
@@ -96,10 +100,11 @@ export class PosInventoryApplicationService {
     from: Date,
     to: Date,
   ) {
-    const [orders, balances, coverage, reviewRequired] = await Promise.all([
+    const [orders, balances, coverage, directShip, reviewRequired] = await Promise.all([
       this.loadCandidateOrders(organizationId, storeId, from, to),
       this.availableBalances(this.prisma.client, organizationId, storeId),
       this.stocktakeCoverage(this.prisma.client, storeId),
+      this.directShipProducts(this.prisma.client, storeId),
       this.prisma.client.posOrder.count({
         where: {
           organizationId,
@@ -115,7 +120,7 @@ export class PosInventoryApplicationService {
     let shortfallUnits = 0;
 
     for (const order of orders) {
-      const plan = this.planOrder(order, projected, coverage);
+      const plan = this.planOrder(order, projected, coverage, directShip);
       unitsPlanned += plan.allocations.reduce((sum, row) => sum + row.quantity, 0);
       shortfallUnits += this.shortfall(plan);
       issues.push(...this.reviewIssues(order, plan));
@@ -190,7 +195,7 @@ export class PosInventoryApplicationService {
   // Lines left for review after an order was applied, with the product they would deduct from today.
   async listReviewLines(organizationId: bigint, storeId: bigint, limit = 300) {
     const items = await this.prisma.client.posOrderItem.findMany({
-      where: { status: 'ACTIVE', inventoryReviewReason: { not: null, notIn: [COVERED_BY_STOCKTAKE] }, order: { organizationId, storeId, inventoryStatus: 'APPLIED' } },
+      where: { status: 'ACTIVE', inventoryReviewReason: { not: null, notIn: SETTLED_WITHOUT_DEDUCTION }, order: { organizationId, storeId, inventoryStatus: 'APPLIED' } },
       include: { order: { select: { externalOrderNo: true, orderedAt: true } }, product: { select: { name: true } } },
       orderBy: { id: 'desc' },
       take: limit,
@@ -235,7 +240,7 @@ export class PosInventoryApplicationService {
     let unitsApplied = 0;
     let completed = 0;
     let stillShort = 0;
-    const skipped: { itemId: string; reason: 'NOT_ELIGIBLE' | 'STILL_UNMAPPED' | 'NO_STOCK' | 'COVERED_BY_STOCKTAKE' }[] = [];
+    const skipped: { itemId: string; reason: 'NOT_ELIGIBLE' | 'STILL_UNMAPPED' | 'NO_STOCK' | 'COVERED_BY_STOCKTAKE' | 'DIRECT_SHIP' }[] = [];
     for (const itemId of itemIds) {
       const outcome = await this.prisma.client.$transaction(async (tx) => {
         const item = await tx.posOrderItem.findFirst({
@@ -261,6 +266,13 @@ export class PosInventoryApplicationService {
           mappingId = mapping.id;
         }
         const appliedBefore = item.inventoryAppliedQuantity ?? 0;
+        if ((await this.directShipProducts(tx, storeId, [productId])).has(productId.toString())) {
+          await tx.posOrderItem.update({
+            where: { id: item.id },
+            data: { productId, mappingId, disposition: 'INVENTORY', exclusionReason: null, inventoryReviewReason: DIRECT_SHIP },
+          });
+          return { skipped: DIRECT_SHIP };
+        }
         const countedAt = (await this.stocktakeCoverage(tx, storeId, [productId])).get(productId.toString());
         if (countedAt && countedAt > item.order.orderedAt) {
           await tx.posOrderItem.update({
@@ -384,6 +396,15 @@ export class PosInventoryApplicationService {
     return coverage;
   }
 
+  // Products marked direct-ship for this store: their sales never come out of store stock (CR-005).
+  private async directShipProducts(client: Pick<PrismaClient, 'storeProduct'>, storeId: bigint, productIds?: bigint[]) {
+    const rows = await client.storeProduct.findMany({
+      where: { storeId, directShip: true, ...(productIds ? { productId: { in: productIds } } : {}) },
+      select: { productId: true },
+    });
+    return new Set(rows.map((row) => row.productId.toString()));
+  }
+
   // The stock a sale may be deducted from: positive balances in active warehouses and batches, first-expiry-first.
   private availableBalances(client: Pick<PrismaClient, 'inventoryBalance'>, organizationId: bigint, storeId: bigint, productId?: bigint) {
     return client.inventoryBalance.findMany({
@@ -413,7 +434,7 @@ export class PosInventoryApplicationService {
 
   // Each inventory line is deducted on its own, first-expiry-first. A line that cannot be (fully) deducted is
   // recorded with a review reason instead of blocking the whole order; stock is never driven below zero.
-  private planOrder(order: OrderSnapshot, balances: BalanceSnapshot[], coverage: Map<string, Date> = new Map()): OrderPlan {
+  private planOrder(order: OrderSnapshot, balances: BalanceSnapshot[], coverage: Map<string, Date> = new Map(), directShip: Set<string> = new Set()): OrderPlan {
     const allocations: Allocation[] = [];
     const lines: LinePlan[] = [];
     for (const item of order.items) {
@@ -426,6 +447,10 @@ export class PosInventoryApplicationService {
       else if (item.isMinus) line.reviewReason = 'RETURN_LINE';
       else if (!Number.isInteger(required) || required <= 0) line.reviewReason = 'INVALID_QUANTITY';
       if (line.reviewReason) continue;
+      if (directShip.has(String(item.productId))) {
+        line.reviewReason = DIRECT_SHIP;
+        continue;
+      }
       const countedAt = coverage.get(String(item.productId));
       if (countedAt && countedAt > order.orderedAt) {
         line.reviewReason = COVERED_BY_STOCKTAKE;
@@ -463,7 +488,7 @@ export class PosInventoryApplicationService {
 
   private reviewIssues(order: OrderSnapshot, plan: OrderPlan): ApplicationIssue[] {
     return plan.lines
-      .filter((line) => line.reviewReason !== null && line.reviewReason !== COVERED_BY_STOCKTAKE)
+      .filter((line) => line.reviewReason !== null && !SETTLED_WITHOUT_DEDUCTION.includes(line.reviewReason))
       .map((line) => ({
         orderId: order.id.toString(),
         orderNo: order.externalOrderNo,
@@ -506,8 +531,9 @@ export class PosInventoryApplicationService {
         include: { items: { where: { status: 'ACTIVE' }, orderBy: { id: 'asc' } } },
       });
       const balances = await this.availableBalances(tx, organizationId, storeId);
-      const coverage = await this.stocktakeCoverage(tx, storeId, order.items.flatMap((item) => (item.productId === null ? [] : [item.productId])));
-      const plan = this.planOrder(order, balances, coverage);
+      const productIds = order.items.flatMap((item) => (item.productId === null ? [] : [item.productId]));
+      const coverage = await this.stocktakeCoverage(tx, storeId, productIds);
+      const plan = this.planOrder(order, balances, coverage, await this.directShipProducts(tx, storeId, productIds));
       const requestId = randomUUID();
 
       for (const allocation of plan.allocations) {
@@ -586,6 +612,7 @@ export class PosInventoryApplicationService {
             unitsApplied,
             movementCount: plan.allocations.length,
             reviewLines: reviewIssues.map((issue) => ({ itemId: issue.itemId, reason: issue.reason, required: issue.required, applied: issue.available })),
+            directShip: plan.lines.filter((line) => line.reviewReason === DIRECT_SHIP).map((line) => ({ itemId: line.itemId.toString(), productId: line.productId?.toString(), quantity: line.required })),
             coveredByStocktake: plan.lines.filter((line) => line.reviewReason === COVERED_BY_STOCKTAKE).map((line) => ({ itemId: line.itemId.toString(), productId: line.productId?.toString(), quantity: line.required })),
             shortfallUnits,
           },

@@ -7,9 +7,10 @@ export class CountedBatchDto {
   @Matches(/^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/)
   expiry!: string;
 
+  // At most 9,999 per batch: larger numbers are typing mistakes in this store (CR-005 C5).
   @IsInt()
   @Min(0)
-  @Max(100000)
+  @Max(9999, { message: '单个批次数量不能超过 9999，请核对' })
   quantity!: number;
 }
 
@@ -51,4 +52,9 @@ export class IgnoreStockCountItemDto {
   // Also stop suggesting the product for purchase (same as "忽略" in the management center).
   @IsBoolean()
   alsoHidePurchasing!: boolean;
+}
+
+export class DirectShipStockCountItemDto {
+  @IsBoolean()
+  directShip!: boolean;
 }

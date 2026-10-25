@@ -133,6 +133,44 @@ describe('StockCountTasks', () => {
     expect(wrapper.find('.count-ignore').exists()).toBe(true);
   });
 
+  it('caps a batch at 9999 and asks twice before saving an unusually large count (CR-005)', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises();
+    await wrapper.findAll('.count-list button')[0].trigger('click');
+
+    await wrapper.findAll('.count-stepper input')[0].setValue(100000);
+    expect(wrapper.get('.count-row small').text()).toBe('单个批次最多 9999 件，请核对');
+    expect(wrapper.get('.count-confirm').attributes('disabled')).toBeDefined();
+
+    await wrapper.findAll('.count-stepper input')[0].setValue(2010);
+    await wrapper.get('.count-confirm').trigger('click'); await flushPromises();
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).endsWith('/confirm'))).toBe(false);
+    expect(wrapper.get('.count-error').text()).toContain('实点 2031 件');
+    expect(wrapper.get('.count-confirm').text()).toBe('数量无误，再次确认');
+
+    await wrapper.get('.count-confirm').trigger('click'); await flushPromises();
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).endsWith('/count-tasks/3/items/1/confirm'))).toBe(true);
+  });
+
+  it('flags POS-unmapped products and marks a product as direct-ship (CR-005)', async () => {
+    const { wrapper, fetchSpy } = setup((path) => {
+      if (path === '/inventory/count-tasks/current') return json(200, { data: { task, items: [item('1', 'Anchor Blue Milk Powder 1kg', { posMapped: true }), item('2', '8+面膜 提亮', { posMapped: false })] } });
+      if (path.endsWith('/direct-ship')) return json(200, { data: { item: item('1', 'Anchor Blue Milk Powder 1kg', { posMapped: true, directShip: true, status: 'IGNORED' }), task: { ...task, ignored: 1, pending: 2 } } });
+      return undefined;
+    }); await flushPromises();
+
+    await wrapper.findAll('.count-list button')[1].trigger('click');
+    expect(wrapper.get('.count-flag').text()).toContain('POS 未对应');
+
+    await wrapper.findAll('.count-list button')[0].trigger('click');
+    expect(wrapper.find('.count-flag').exists()).toBe(false);
+    await wrapper.get('.count-direct').trigger('click'); await flushPromises();
+
+    const call = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/count-tasks/3/items/1/direct-ship'))!;
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({ directShip: true });
+    expect(wrapper.get('.count-toast').text()).toBe('已设为直邮：Anchor Blue Milk Powder 1kg');
+    expect(wrapper.findAll('.count-tabs button')[4].text()).toBe('已忽略1');
+  });
+
   it('opens a scanned product from the list or offers to add an unlisted one', async () => {
     const { wrapper } = setup((path, init) => {
       if (path === '/inventory/barcode/9400000000001') return json(200, { data: { productId: 'p99', productName: '康维他蜂胶喷雾' } });

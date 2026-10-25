@@ -270,6 +270,23 @@ export class ManagementController {
     };
   }
 
+  @Post('products/direct-ship')
+  async setProductDirectShip(
+    @Req() request: AuthenticatedRequest,
+    @Query('storeId') storeIdValue: string | undefined,
+    @Body() input: { productId?: string; directShip?: boolean },
+  ) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.productId || !/^\d+$/.test(input.productId)) throw new BadRequestException('商品参数无效');
+    if (typeof input.directShip !== 'boolean') throw new BadRequestException('直邮参数无效');
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: input.directShip ? '已设为直邮商品，不再扣减门店库存' : '已取消直邮，恢复门店库存管理',
+      data: await this.management.setProductDirectShip(user.organizationId, user.id, storeId, BigInt(input.productId), input.directShip),
+    };
+  }
+
   @Get('purchase-orders/current')
   async currentPurchaseOrder(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue?: string) {
     const storeId = this.storeId(storeIdValue);

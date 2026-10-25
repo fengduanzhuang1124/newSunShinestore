@@ -3,7 +3,8 @@ import type { PrismaClient } from '@sunshine/database';
 import { PrismaService } from '../database/prisma.service.js';
 import { InventoryPermissionService } from './inventory-permission.service.js';
 import { parseExpiryInput } from './expiry-date.js';
-import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto } from './stock-count.dto.js';
+import { AddStockCountItemDto, ConfirmStockCountDto, DirectShipStockCountItemDto, IgnoreStockCountItemDto } from './stock-count.dto.js';
+import { DISCONTINUED_IGNORE_REASON, setDirectShip } from '../shared/replenishment-rules.js';
 import { planStockCount, type CurrentBatch, type ExpiryPrecision } from './stock-count-plan.js';
 
 const CONFIRM_ACTION = 'inventory.stock_count.confirm';
@@ -13,7 +14,10 @@ const COVERABLE_REVIEW_REASONS = ['INSUFFICIENT_INVENTORY'];
 type CountItemRecord = {
   id: bigint; productId: bigint; priority: number; reasons: string; source: string; status: string;
   countedQuantity: number | null; confirmCount: number; confirmedAt: Date | null;
-  product: { name: string; brandName: string | null; barcodes: { barcode: string }[] };
+  product: {
+    name: string; brandName: string | null; barcodes: { barcode: string }[];
+    storeProducts: { storeId: bigint; directShip: boolean }[]; posProductMappings: { storeId: bigint }[];
+  };
 };
 
 // Task progress from item counts per status; ignored products are done without a count (CR-004).
@@ -28,6 +32,8 @@ const itemInclude = {
     select: {
       name: true, brandName: true,
       barcodes: { where: { status: 'ACTIVE' as const }, orderBy: [{ isPrimary: 'desc' as const }, { id: 'asc' as const }], select: { barcode: true }, take: 1 },
+      storeProducts: { select: { storeId: true, directShip: true } },
+      posProductMappings: { where: { status: 'ACTIVE' as const }, select: { storeId: true } },
     },
   },
 };
@@ -52,7 +58,7 @@ export class StockCountService {
     const batches = await this.batchesByProduct(this.prisma.client, organizationId, permission.warehouseId, items.map((item) => item.productId));
     return {
       task: this.taskView(task, items),
-      items: items.map((item) => this.itemView(item, batches.get(item.productId.toString()) ?? [])),
+      items: items.map((item) => this.itemView(item, batches.get(item.productId.toString()) ?? [], task.storeId)),
     };
   }
 
@@ -84,8 +90,8 @@ export class StockCountService {
       if (input.alsoHidePurchasing) {
         await tx.purchaseSuggestionIgnore.upsert({
           where: { organizationId_storeId_productId: { organizationId, storeId: item.task.storeId, productId: item.productId } },
-          create: { organizationId, storeId: item.task.storeId, productId: item.productId, reason: '盘点时标记不再销售', ignoredById: userId, ignoredAt },
-          update: { reason: '盘点时标记不再销售', ignoredById: userId, ignoredAt, restoredById: null, restoredAt: null },
+          create: { organizationId, storeId: item.task.storeId, productId: item.productId, reason: DISCONTINUED_IGNORE_REASON, ignoredById: userId, ignoredAt },
+          update: { reason: DISCONTINUED_IGNORE_REASON, ignoredById: userId, ignoredAt, restoredById: null, restoredAt: null },
         });
       }
       await tx.auditLog.create({
@@ -97,6 +103,25 @@ export class StockCountService {
       });
       const pending = await tx.stockCountTaskItem.count({ where: { taskId: item.taskId, status: 'PENDING' } });
       if (pending === 0) await tx.stockCountTask.update({ where: { id: item.taskId }, data: { status: 'COMPLETED', completedAt: ignoredAt } });
+      return this.confirmResult(tx, item.task, item.id, organizationId, permission.warehouseId);
+    });
+  }
+
+  // Marks a product as direct-ship (or clears it) from the count sheet (CR-005). A pending product leaves the list:
+  // it is not held in store stock, so there is nothing to count.
+  async setDirectShip(organizationId: bigint, userId: bigint, taskIdValue: string, itemIdValue: string, input: DirectShipStockCountItemDto) {
+    const permission = await this.adminPermission(organizationId, userId);
+    const taskId = this.id(taskIdValue, '盘点任务');
+    const itemId = this.id(itemIdValue, '盘点商品');
+    return this.prisma.client.$transaction(async (tx) => {
+      const item = await tx.stockCountTaskItem.findFirst({ where: { id: itemId, taskId, task: { organizationId, warehouseId: permission.warehouseId, status: 'OPEN' } }, include: { task: true } });
+      if (!item) throw new NotFoundException('盘点商品不存在或任务已结束');
+      await setDirectShip(tx, { organizationId, userId, storeId: item.task.storeId, productId: item.productId, directShip: input.directShip, source: `stock_count:${item.task.code}` });
+      if (input.directShip && item.status === 'PENDING') {
+        await tx.stockCountTaskItem.update({ where: { id: item.id }, data: { status: 'IGNORED' } });
+        const pending = await tx.stockCountTaskItem.count({ where: { taskId: item.taskId, status: 'PENDING' } });
+        if (pending === 0) await tx.stockCountTask.update({ where: { id: item.taskId }, data: { status: 'COMPLETED', completedAt: new Date() } });
+      }
       return this.confirmResult(tx, item.task, item.id, organizationId, permission.warehouseId);
     });
   }
@@ -147,7 +172,7 @@ export class StockCountService {
         });
       }
       const batches = await this.batchesByProduct(tx, organizationId, permission.warehouseId, [productId]);
-      return this.itemView(item, batches.get(productId.toString()) ?? []);
+      return this.itemView(item, batches.get(productId.toString()) ?? [], task.storeId);
     });
   }
 
@@ -256,14 +281,14 @@ export class StockCountService {
   }
 
   // The confirmed item with its batches as they are now (so the phone can recount it) and the task progress.
-  private async confirmResult(tx: Pick<PrismaClient, 'stockCountTaskItem' | 'inventoryBalance'>, task: { id: bigint; code: string }, itemId: bigint, organizationId: bigint, warehouseId: bigint) {
+  private async confirmResult(tx: Pick<PrismaClient, 'stockCountTaskItem' | 'inventoryBalance'>, task: { id: bigint; code: string; storeId: bigint }, itemId: bigint, organizationId: bigint, warehouseId: bigint) {
     const [item, groups] = await Promise.all([
       tx.stockCountTaskItem.findUniqueOrThrow({ where: { id: itemId }, include: itemInclude }),
       tx.stockCountTaskItem.groupBy({ by: ['status'], where: { taskId: task.id }, _count: { _all: true } }),
     ]);
     const batches = await this.batchesByProduct(tx, organizationId, warehouseId, [item.productId]);
     return {
-      item: this.itemView(item, batches.get(item.productId.toString()) ?? []),
+      item: this.itemView(item, batches.get(item.productId.toString()) ?? [], task.storeId),
       task: { id: task.id.toString(), code: task.code, ...progress(groups) },
     };
   }
@@ -301,12 +326,15 @@ export class StockCountService {
   private itemView(
     item: CountItemRecord,
     batches: { batchId: string; expiry: string; quantity: number }[],
+    storeId: bigint,
   ) {
     return {
       id: item.id.toString(), productId: item.productId.toString(), productName: item.product.name, brandName: item.product.brandName,
       barcode: item.product.barcodes[0]?.barcode ?? null, priority: item.priority, reasons: item.reasons, source: item.source, status: item.status,
       systemQuantity: batches.reduce((sum, batch) => sum + batch.quantity, 0), batches,
       countedQuantity: item.countedQuantity, confirmCount: item.confirmCount, confirmedAt: item.confirmedAt?.toISOString() ?? null,
+      posMapped: item.product.posProductMappings.some((mapping) => mapping.storeId === storeId),
+      directShip: item.product.storeProducts.some((storeProduct) => storeProduct.storeId === storeId && storeProduct.directShip),
     };
   }
 

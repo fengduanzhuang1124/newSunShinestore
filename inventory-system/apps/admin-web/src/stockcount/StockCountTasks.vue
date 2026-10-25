@@ -9,6 +9,7 @@ type CountItem = {
   id: string; productId: string; productName: string; brandName: string | null; barcode: string | null;
   priority: number; reasons: string; source: 'PLANNED' | 'ADDED'; status: 'PENDING' | 'CONFIRMED' | 'IGNORED';
   systemQuantity: number; batches: Batch[]; countedQuantity: number | null; confirmCount: number; confirmedAt: string | null;
+  posMapped?: boolean; directShip?: boolean;
 };
 type CountTask = { id: string; code: string; title: string; total: number; confirmed: number; ignored: number; pending: number };
 // Expiry is picked as a month (native picker) plus an optional day, like the receiving form.
@@ -22,6 +23,8 @@ const PAGE = 50;
 const PRIORITIES = [1, 2, 3] as const;
 const PRIORITY_LABEL: Record<number, string> = { 1: '高', 2: '中', 3: '低' };
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+// CR-005: guard against typos such as 100000 for 10.
+const MAX_BATCH_QUANTITY = 9999;
 const DAYS = Array.from({ length: 31 }, (_, index) => String(index + 1).padStart(2, '0'));
 const expiryOf = (row: Row) => (row.day ? `${row.month}-${row.day}` : row.month);
 
@@ -96,6 +99,7 @@ function openItem(item: CountItem) {
   sheetError.value = '';
   ignoring.value = false;
   alsoHidePurchasing.value = true;
+  doubleChecked.value = false;
   requestId = crypto.randomUUID();
 }
 function closeSheet() { open.value = null; }
@@ -129,6 +133,27 @@ async function ignoreItem() {
     saving.value = false;
   }
 }
+// Direct-ship products (CR-005): the POS no longer deducts them; a pending one also leaves the list.
+async function toggleDirectShip() {
+  const item = open.value;
+  if (!item || !task.value || saving.value) return;
+  saving.value = true;
+  sheetError.value = '';
+  try {
+    const result = await request<{ item: CountItem; task: CountTask }>(`/inventory/count-tasks/${task.value.id}/items/${item.id}/direct-ship`, {
+      method: 'POST', body: JSON.stringify({ directShip: !item.directShip }),
+    });
+    const wasPending = item.status === 'PENDING';
+    Object.assign(item, result.item);
+    task.value = { ...task.value, ...result.task };
+    showToast(item.directShip ? `已设为直邮：${item.productName}` : `已取消直邮：${item.productName}`);
+    if (wasPending && item.status !== 'PENDING') advance(item);
+  } catch (reason) {
+    sheetError.value = reason instanceof Error ? reason.message : '直邮设置失败，请重试';
+  } finally {
+    saving.value = false;
+  }
+}
 async function restoreItem() {
   const item = open.value;
   if (!item || !task.value || saving.value) return;
@@ -151,6 +176,7 @@ const rowErrors = computed(() => rows.value.map((row) => {
   if (!MONTH_PATTERN.test(row.month)) return '请选择到期年月';
   if (row.day && Number(row.day) > new Date(Date.UTC(Number(row.month.slice(0, 4)), Number(row.month.slice(5, 7)), 0)).getUTCDate()) return '所选日期超出该月天数';
   if (row.quantity === null || !Number.isInteger(row.quantity) || row.quantity < 0) return '数量需为 0 或正整数';
+  if (row.quantity > MAX_BATCH_QUANTITY) return `单个批次最多 ${MAX_BATCH_QUANTITY} 件，请核对`;
   return '';
 }));
 const countedTotal = computed(() => rows.value.reduce((sum, row) => sum + (row.quantity ?? 0), 0));
@@ -160,6 +186,13 @@ const unchanged = computed(() => {
   const normalize = (list: { expiry: string; quantity: number }[]) => list.filter((row) => row.quantity !== 0).map((row) => `${row.expiry}:${row.quantity}`).sort().join('|');
   return normalize(rows.value.map((row) => ({ expiry: expiryOf(row), quantity: row.quantity ?? 0 }))) === normalize(open.value.batches);
 });
+// Unusually large counts need a second tap (CR-005): 500 or more, or 10x the system quantity and 100 more.
+const needsDoubleCheck = computed(() => {
+  const system = open.value?.systemQuantity ?? 0;
+  return countedTotal.value >= 500 || (countedTotal.value >= system * 10 && countedTotal.value - system >= 100);
+});
+const doubleChecked = ref(false);
+watch(countedTotal, () => { doubleChecked.value = false; });
 const canSubmit = computed(() => !saving.value && rowErrors.value.every((message) => !message));
 
 function step(row: Row, delta: number) { row.quantity = Math.max(0, (row.quantity ?? 0) + delta); }
@@ -169,6 +202,7 @@ function removeRow(row: Row) { rows.value = rows.value.filter((item) => item !==
 async function confirm() {
   const item = open.value;
   if (!item || !task.value || !canSubmit.value) return;
+  if (needsDoubleCheck.value && !doubleChecked.value) { doubleChecked.value = true; return; }
   saving.value = true;
   sheetError.value = '';
   try {
@@ -300,9 +334,11 @@ function timeText(value: string | null) {
             <button type="button" aria-label="关闭" @click="closeSheet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
           </header>
           <p class="count-why">{{ open.source === 'ADDED' ? '盘点时临时加入' : open.reasons }}</p>
+          <p v-if="open.directShip" class="count-flag">直邮商品：POS 卖出不扣库存，不进入缺货和进货建议</p>
+          <p v-else-if="open.posMapped === false" class="count-flag warn">POS 未对应，卖出不会扣库存，请在“数据中心 → 商品映射”中补上</p>
 
           <div v-if="open.status === 'IGNORED'" class="count-ignored">
-            <p>已标记为不再销售，不参与本次盘点；系统库存 {{ open.systemQuantity }} 件保持不变。</p>
+            <p>{{ open.directShip ? '已设为直邮商品' : '已标记为不再销售' }}，不参与本次盘点；系统库存 {{ open.systemQuantity }} 件保持不变。</p>
             <p v-if="sheetError" class="count-error" role="alert">{{ sheetError }}</p>
             <button class="count-confirm" type="button" :disabled="saving" @click="restoreItem">{{ saving ? '正在恢复…' : '恢复为待盘点' }}</button>
           </div>
@@ -323,8 +359,9 @@ function timeText(value: string | null) {
           </div>
 
           <p class="count-total">系统 {{ open.systemQuantity }} 件 → 实点 <strong>{{ countedTotal }}</strong> 件<b v-if="!unchanged" :class="difference > 0 ? 'up' : difference < 0 ? 'down' : ''">（{{ difference > 0 ? '+' : '' }}{{ difference }}）</b></p>
+          <p v-if="doubleChecked" class="count-error" role="alert">实点 {{ countedTotal }} 件，明显多于系统 {{ open.systemQuantity }} 件。请核对数量没有多输位数，无误再点一次确认。</p>
           <p v-if="sheetError" class="count-error" role="alert">{{ sheetError }}</p>
-          <button class="count-confirm" :class="{ same: unchanged }" type="button" :disabled="!canSubmit" @click="confirm">{{ saving ? '正在保存…' : unchanged ? '与系统一致，确认' : '确认修改' }}</button>
+          <button class="count-confirm" :class="{ same: unchanged }" type="button" :disabled="!canSubmit" @click="confirm">{{ saving ? '正在保存…' : doubleChecked ? '数量无误，再次确认' : unchanged ? '与系统一致，确认' : '确认修改' }}</button>
           <template v-if="open.status === 'PENDING'">
             <button v-if="!ignoring" class="count-ignore" type="button" @click="ignoring = true">不再销售，忽略</button>
             <div v-else class="count-ignore-confirm" role="group" aria-label="确认忽略">
@@ -333,6 +370,7 @@ function timeText(value: string | null) {
               <div><button type="button" class="count-ignore-cancel" @click="ignoring = false">取消</button><button type="button" class="count-ignore-ok" :disabled="saving" @click="ignoreItem">确认忽略</button></div>
             </div>
           </template>
+          <button v-if="!ignoring" class="count-direct" type="button" :disabled="saving" @click="toggleDirectShip">{{ open.directShip ? '取消直邮' : '直邮商品，不占门店库存' }}</button>
           </template>
         </section>
       </div>
@@ -413,6 +451,9 @@ function timeText(value: string | null) {
 .count-confirm { min-height: 48px; border-radius: 12px; font-size: 16px; font-weight: 600; }
 .count-confirm.same { background: var(--ops-green); }
 .count-ignore { min-height: 44px; color: var(--count-red); border: 0; background: transparent; box-shadow: none; font-size: 14px; font-weight: 600; }
+.count-direct { min-height: 44px; color: var(--muted); border: 0; background: transparent; box-shadow: none; font-size: 14px; font-weight: 600; }
+.count-flag { margin: 0; padding: 8px 10px; color: var(--ink); border: 1px solid var(--ops-border); border-radius: 10px; font-size: 13px; line-height: 18px; }
+.count-flag.warn { color: #b26a00; border-color: #e0a640; }
 .count-ignore-confirm { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--count-red); border-radius: 12px; font-size: 14px; line-height: 20px; }
 .count-ignore-confirm p, .count-ignored p { margin: 0; }
 .count-ignore-confirm label { display: flex; align-items: center; gap: 8px; min-height: 44px; }

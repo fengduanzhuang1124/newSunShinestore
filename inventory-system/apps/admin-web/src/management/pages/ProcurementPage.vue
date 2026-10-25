@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { useManagementContext } from '../useManagementDashboard';
+import { computed } from 'vue';
+import { useManagementContext, type PurchaseSuggestion } from '../useManagementDashboard';
 
 const {
   purchaseSuggestions, currentPurchaseOrder, purchaseLoading, purchaseView, showIgnoredSuggestions,
@@ -7,6 +8,24 @@ const {
   ignorePurchaseSuggestion, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem, changePurchaseStatus,
   exportPurchaseOrderExcel, purchaseSourceLabel, purchaseStatusLabel
 } = useManagementContext();
+
+const suggestionGroups = computed(() => [
+  { key: 'this-week', title: '本周优先', hint: '库存风险较高，建议先处理', items: thisWeekPurchaseSuggestions.value },
+  { key: 'follow-up', title: '后续跟进', hint: '备货周期候选，可按预算分批处理', items: followUpPurchaseSuggestions.value },
+].filter((group) => group.items.length));
+
+function coverageText(item: PurchaseSuggestion) {
+  if (item.currentInventory <= 0) return '已断货';
+  return item.coverageWeeks === null ? '可卖 —' : `可卖 ${number(item.coverageWeeks)} 周`;
+}
+
+// CR-005: explain suggestions that would otherwise look surprising.
+function suggestionNotes(item: PurchaseSuggestion) {
+  const notes: string[] = [];
+  if (item.salesBasis === '90_DAYS') notes.push('断货中，按近 90 天销量估算');
+  if (item.recentReceivedQty) notes.push(`近 7 天已入库 ${number(item.recentReceivedQty)} 件，仍不足`);
+  return notes;
+}
 </script>
 
 <template>
@@ -20,11 +39,17 @@ const {
         <div class="card-title"><div><h3>库存覆盖进货建议</h3><p>{{ purchaseSuggestions.calculation }}</p><small class="inventory-source-time">本页库存读取：{{ dateTime(purchaseSuggestions.generatedAt) }} · 最近库存变更：{{ dateTime(purchaseSuggestions.inventoryLatestUpdatedAt) }}</small></div><div class="purchase-suggestion-actions"><button class="text-action" type="button" @click="showIgnoredSuggestions = !showIgnoredSuggestions">{{ showIgnoredSuggestions ? '查看当前建议' : `查看已忽略 (${purchaseSuggestions.summary.ignored})` }}</button><button class="text-action" type="button" @click="purchaseView = 'order'">查看本周进货单 →</button></div></div>
         <div class="purchase-suggestion-scroll">
           <template v-if="!showIgnoredSuggestions">
-            <section v-if="thisWeekPurchaseSuggestions.length" class="suggestion-priority-group"><header><span><b>本周优先</b><small>库存风险较高，建议先处理</small></span><em>{{ thisWeekPurchaseSuggestions.length }} 种</em></header><div class="purchase-suggestion-grid"><article v-for="item in thisWeekPurchaseSuggestions" :key="item.productId"><header><strong>{{ item.productName }}</strong><small>{{ item.brandName }}</small></header><dl><div class="inventory-focus"><dt>库存</dt><dd>{{ number(item.currentInventory) }}</dd></div><div><dt>周销量</dt><dd>{{ number(item.weeklyVelocity) }}</dd></div><div class="suggested"><dt>建议进货</dt><dd>{{ number(item.suggestedQuantity) }}</dd></div></dl><footer><button class="table-action" type="button" :disabled="purchaseLoading || item.alreadyIncluded" @click="addToPurchaseOrder(item.productId, item.source, item.suggestedQuantity)">{{ item.alreadyIncluded ? '已加入' : '加入进货单' }}</button><button class="table-action muted" type="button" :disabled="purchaseLoading" @click="ignorePurchaseSuggestion(item)">忽略</button></footer></article></div></section>
-            <section v-if="followUpPurchaseSuggestions.length" class="suggestion-priority-group follow-up"><header><span><b>后续跟进</b><small>备货周期候选，可按预算分批处理</small></span><em>{{ followUpPurchaseSuggestions.length }} 种</em></header><div class="purchase-suggestion-grid"><article v-for="item in followUpPurchaseSuggestions" :key="item.productId"><header><strong>{{ item.productName }}</strong><small>{{ item.brandName }}</small></header><dl><div class="inventory-focus"><dt>库存</dt><dd>{{ number(item.currentInventory) }}</dd></div><div><dt>周销量</dt><dd>{{ number(item.weeklyVelocity) }}</dd></div><div class="suggested"><dt>建议进货</dt><dd>{{ number(item.suggestedQuantity) }}</dd></div></dl><footer><button class="table-action" type="button" :disabled="purchaseLoading || item.alreadyIncluded" @click="addToPurchaseOrder(item.productId, item.source, item.suggestedQuantity)">{{ item.alreadyIncluded ? '已加入' : '加入进货单' }}</button><button class="table-action muted" type="button" :disabled="purchaseLoading" @click="ignorePurchaseSuggestion(item)">忽略</button></footer></article></div></section>
-          <details v-if="purchaseSuggestions.arrivedSuggestions?.length" class="suggestion-priority-group arrived-group"><summary><span><b>已到货</b><small>近7天已入库，不再建议进货</small></span><em>{{ purchaseSuggestions.arrivedSuggestions.length }} 种</em></summary><div class="purchase-suggestion-grid"><article v-for="item in purchaseSuggestions.arrivedSuggestions" :key="item.productId"><header><strong>{{ item.productName }}</strong><small>{{ item.brandName }}</small></header><dl><div class="inventory-focus"><dt>库存</dt><dd>{{ number(item.currentInventory) }}</dd></div><div><dt>周销量</dt><dd>{{ number(item.weeklyVelocity) }}</dd></div><div><dt>近7天入库</dt><dd>{{ number(item.recentReceivedQty ?? 0) }}</dd></div><div><dt>入库时间</dt><dd>{{ item.lastReceivedAt ? new Date(item.lastReceivedAt).toLocaleDateString('zh-CN') : '—' }}</dd></div></dl></article></div></details>
+            <section v-for="group in suggestionGroups" :key="group.key" class="suggestion-priority-group" :class="{ 'follow-up': group.key === 'follow-up' }"><header><span><b>{{ group.title }}</b><small>{{ group.hint }}</small></span><em>{{ group.items.length }} 种</em></header>
+              <div class="buy-card-grid"><article v-for="item in group.items" :key="item.productId" class="buy-card">
+                <div class="buy-card-main"><strong>{{ item.productName }}</strong><small>{{ item.brandName }}</small><p>库存 <b :class="{ out: item.currentInventory <= 0 }">{{ number(item.currentInventory) }}</b> · 周销 {{ number(item.weeklyVelocity) }} · {{ coverageText(item) }}</p><p v-for="note in suggestionNotes(item)" :key="note" class="buy-card-note">{{ note }}</p></div>
+                <div class="buy-card-side"><span>建议</span><strong>{{ number(item.suggestedQuantity) }}</strong><button class="buy-card-add" type="button" :disabled="purchaseLoading || item.alreadyIncluded" @click="addToPurchaseOrder(item.productId, item.source, item.suggestedQuantity)">{{ item.alreadyIncluded ? '已加入' : '加入' }}</button><button class="buy-card-ignore" type="button" :disabled="purchaseLoading" @click="ignorePurchaseSuggestion(item)">忽略</button></div>
+              </article></div>
+            </section>
           </template>
-          <div v-else class="purchase-suggestion-grid"><article v-for="item in purchaseSuggestions.ignoredSuggestions" :key="item.productId"><header><strong>{{ item.productName }}</strong><small>{{ item.brandName }}</small></header><dl><div class="inventory-focus"><dt>库存</dt><dd>{{ number(item.currentInventory) }}</dd></div><div><dt>周销量</dt><dd>{{ number(item.weeklyVelocity) }}</dd></div><div class="suggested"><dt>建议进货</dt><dd>{{ number(item.suggestedQuantity) }}</dd></div></dl><small v-if="item.ignoredReason">忽略原因：{{ item.ignoredReason }}</small><footer><button class="table-action" type="button" :disabled="purchaseLoading" @click="restorePurchaseSuggestion(item)">恢复建议</button></footer></article></div>
+          <div v-else class="buy-card-grid"><article v-for="item in purchaseSuggestions.ignoredSuggestions" :key="item.productId" class="buy-card">
+            <div class="buy-card-main"><strong>{{ item.productName }}</strong><small>{{ item.brandName }}</small><p>库存 <b :class="{ out: item.currentInventory <= 0 }">{{ number(item.currentInventory) }}</b> · 周销 {{ number(item.weeklyVelocity) }}</p><p v-if="item.ignoredReason" class="buy-card-note">忽略原因：{{ item.ignoredReason }}</p></div>
+            <div class="buy-card-side"><span>建议</span><strong>{{ number(item.suggestedQuantity) }}</strong><button class="buy-card-add" type="button" :disabled="purchaseLoading" @click="restorePurchaseSuggestion(item)">恢复</button></div>
+          </article></div>
           <p v-if="!(showIgnoredSuggestions ? purchaseSuggestions.ignoredSuggestions : purchaseSuggestions.suggestions).length" class="system-empty">{{ showIgnoredSuggestions ? '当前没有已忽略的建议。' : '当前没有需要补货的商品。' }}</p>
         </div>
       </section>
@@ -42,4 +67,39 @@ const {
 
 <style scoped>
 /* Shares the ManagementDashboard style scope (see vite.config.ts); page-specific styles go here. */
+.buy-card-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.buy-card{display:flex;gap:12px;align-items:stretch;padding:12px 14px;border:1px solid #2a3a52;border-radius:12px;background:#0f1a2a}
+.buy-card-main{flex:1;min-width:0;display:grid;align-content:start;gap:3px}
+.buy-card-main strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:14px;line-height:1.35;color:#eef3fb}
+.buy-card-main small{font-size:12px;color:#8d9bb0}
+.buy-card-main p{margin:4px 0 0;font-size:13px;color:#b9c5d6}
+.buy-card-main p b{color:#eef3fb}.buy-card-main p b.out{color:#ff8a8a}
+.buy-card-main .buy-card-note{margin:2px 0 0;font-size:12px;color:#f3c26b}
+.buy-card-side{flex:0 0 76px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding-left:12px;border-left:1px solid #2a3a52}
+.buy-card-side>span{font-size:11px;color:#8d9bb0}
+.buy-card-side>strong{font-size:26px;line-height:1;font-weight:700;color:#66e0e7}
+.buy-card-add{width:100%;min-height:30px;margin-top:4px;padding:0 8px;border:0;border-radius:8px;background:#2f9fa8;color:#fff;font-size:13px;font-weight:600;cursor:pointer}
+.buy-card-add:disabled{background:#2a3a52;color:#8d9bb0;cursor:default}
+.buy-card-ignore{padding:2px 6px;border:0;background:none;color:#8d9bb0;font-size:12px;cursor:pointer}
+.buy-card-ignore:hover:not(:disabled){color:#eef3fb;text-decoration:underline}
+:root:not([data-theme="dark"]) .management-workspace .buy-card{border-color:#dde5ef;background:#fff}
+:root:not([data-theme="dark"]) .management-workspace .buy-card-side{border-left-color:#e6ecf3}
+:root:not([data-theme="dark"]) .management-workspace .buy-card-main strong,:root:not([data-theme="dark"]) .management-workspace .buy-card-main p b{color:#24314d}
+:root:not([data-theme="dark"]) .management-workspace .buy-card-main p{color:#4a5874}
+:root:not([data-theme="dark"]) .management-workspace .buy-card-main p b.out{color:#d64545}
+:root:not([data-theme="dark"]) .management-workspace .buy-card-main .buy-card-note{color:#b26a00}
+:root:not([data-theme="dark"]) .management-workspace .buy-card-side>strong{color:#167f8e}
+:root:not([data-theme="dark"]) .management-workspace .buy-card-add{background:#167f8e;color:#fff}
+:root:not([data-theme="dark"]) .management-workspace .buy-card-add:disabled{background:#e6ecf3;color:#8a96a8}
+:root:not([data-theme="dark"]) .management-workspace .buy-card-ignore{color:#718096}
+@media(max-width:1200px){.buy-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){
+  .buy-card-grid{grid-template-columns:1fr}
+  .buy-card{flex-direction:column;gap:10px}
+  .buy-card-side{flex:none;flex-direction:row;justify-content:flex-start;gap:8px;padding:10px 0 0;border-left:0;border-top:1px solid #2a3a52}
+  .buy-card-side>strong{font-size:22px;margin-right:auto}
+  .buy-card-add{width:auto;min-width:88px;margin-top:0;order:3}
+  .buy-card-ignore{order:2}
+  :root:not([data-theme="dark"]) .management-workspace .buy-card-side{border-top-color:#e6ecf3}
+}
 </style>

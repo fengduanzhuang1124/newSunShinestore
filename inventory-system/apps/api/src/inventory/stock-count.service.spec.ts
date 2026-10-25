@@ -17,7 +17,7 @@ function setup(options: { balances?: unknown[]; replay?: boolean; pendingAfter?:
       count: jest.fn().mockResolvedValue((options.pendingAfter ?? 5) as never),
       findUniqueOrThrow: jest.fn().mockResolvedValue({
         id: 40n, productId: 1994n, priority: 1, reasons: '10-20 入库单叠加', source: 'PLANNED', status: 'CONFIRMED', countedQuantity: 216, confirmCount: 1,
-        confirmedAt: new Date('2026-10-24T03:00:00.000Z'), product: { name: 'TheraLady 大金瓶精华液', brandName: null, barcodes: [{ barcode: '9421' }] },
+        confirmedAt: new Date('2026-10-24T03:00:00.000Z'), product: { name: 'TheraLady 大金瓶精华液', brandName: null, barcodes: [{ barcode: '9421' }], storeProducts: [{ storeId: 1n, directShip: false }], posProductMappings: [{ storeId: 1n }] },
       } as never),
       groupBy: jest.fn().mockResolvedValue([{ status: 'CONFIRMED', _count: { _all: 1 } }, { status: 'PENDING', _count: { _all: 5 } }] as never),
     },
@@ -32,6 +32,7 @@ function setup(options: { balances?: unknown[]; replay?: boolean; pendingAfter?:
       aggregate: jest.fn().mockResolvedValue({ _sum: { quantity: 222 } } as never),
     },
     purchaseSuggestionIgnore: { upsert: jest.fn().mockResolvedValue({} as never) },
+    storeProduct: { upsert: jest.fn().mockResolvedValue({ productId: 1994n, directShip: true } as never) },
     productBatch: { upsert: jest.fn().mockResolvedValue({ id: 9n } as never) },
     stockMovement: { create: jest.fn().mockResolvedValue({} as never) },
     posOrderItem: { updateMany: jest.fn().mockResolvedValue({ count: 2 } as never) },
@@ -176,5 +177,26 @@ describe('StockCountService ignore and restore (CR-004)', () => {
     expect(tx.stockCountTaskItem.update).toHaveBeenCalledWith({ where: { id: 40n }, data: { status: 'PENDING' } });
     expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'inventory.stock_count.restore' }) });
     await expect(setup().service.restore(1n, 2n, '3', '40')).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe('StockCountService.setDirectShip (CR-005)', () => {
+  it('marks the product direct-ship and takes a pending product off the list', async () => {
+    const { tx, service } = setup();
+
+    await service.setDirectShip(1n, 2n, '3', '40', { directShip: true });
+
+    expect(tx.storeProduct.upsert).toHaveBeenCalledWith(expect.objectContaining({ update: { directShip: true } }));
+    expect(tx.stockCountTaskItem.update).toHaveBeenCalledWith({ where: { id: 40n }, data: { status: 'IGNORED' } });
+    expect(tx.stockMovement.create).not.toHaveBeenCalled();
+  });
+
+  it('leaves a confirmed product confirmed', async () => {
+    const { tx, service } = setup({ status: 'CONFIRMED' });
+
+    await service.setDirectShip(1n, 2n, '3', '40', { directShip: true });
+
+    expect(tx.storeProduct.upsert).toHaveBeenCalled();
+    expect(tx.stockCountTaskItem.update).not.toHaveBeenCalled();
   });
 });

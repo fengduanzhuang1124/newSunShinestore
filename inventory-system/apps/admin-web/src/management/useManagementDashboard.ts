@@ -123,10 +123,10 @@ type InventoryOperationRow = {
   currentInventory: number; minimumStock: number | null; configuredMinimumStock: number | null; minimumStockSource: 'DEFAULT' | 'MANUAL' | 'NONE'; coreProduct?: boolean; posMapped?: boolean; soldUnits: number; dailyVelocity: number; coverageDays: number | null; shortageVisible: boolean;
   lastSoldAt: string | null; daysSinceLastSale: number | null; lastMovementAt: string | null; inventoryUpdatedAt: string | null;
   stockStatus: 'OUT_OF_STOCK' | 'LOW' | 'IN_STOCK'; slowMoving: boolean;
-  replenishmentHidden: boolean; replenishmentHiddenUntil: string | null; directShipExcluded: boolean;
+  replenishmentHidden: boolean; replenishmentHiddenUntil: string | null; directShipExcluded: boolean; directShip?: boolean;
 };
 type PurchaseSource = 'MANUAL' | 'OUT_OF_STOCK' | 'LOW_STOCK' | 'HOT_SALES' | 'WEEKLY_FORECAST';
-type PurchaseSuggestion = { productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; currentInventory: number; minimumStock: number | null; recent28DayQty: number; weeklyVelocity: number; coverageWeeks: number | null; targetWeeks: number | null; targetInventory: number; suggestedQuantity: number; source: PurchaseSource; priority: 'THIS_WEEK' | 'FOLLOW_UP'; alreadyIncluded: boolean; ignored: boolean; ignoredReason: string | null; ignoredAt: string | null; recentReceivedQty?: number; lastReceivedAt?: string | null };
+export type PurchaseSuggestion = { productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; currentInventory: number; minimumStock: number | null; recent28DayQty: number; weeklyVelocity: number; coverageWeeks: number | null; targetWeeks: number | null; targetInventory: number; suggestedQuantity: number; source: PurchaseSource; priority: 'THIS_WEEK' | 'FOLLOW_UP'; alreadyIncluded: boolean; ignored: boolean; ignoredReason: string | null; ignoredAt: string | null; recentReceivedQty?: number; lastReceivedAt?: string | null; salesBasis?: '28_DAYS' | '90_DAYS' };
 type PurchaseSuggestions = { generatedAt: string; inventoryLatestUpdatedAt: string | null; period: { from: string; to: string }; calculation: string; summary: { products: number; suggestedUnits: number; thisWeekProducts: number; followUpProducts: number; alreadyIncluded: number; ignored: number; arrived?: number }; suggestions: PurchaseSuggestion[]; ignoredSuggestions: PurchaseSuggestion[]; arrivedSuggestions?: PurchaseSuggestion[] };
 type PurchaseOrderItem = { id: string; productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; source: PurchaseSource; currentInventory: number; recentSevenDayQty: number; suggestedQuantity: number; orderedQuantity: number; receivedQuantity: number; supplierName: string | null; unitCostCents: number | null; caseSize: number | null; notes: string | null };
 type PurchaseOrder = { id: string; orderNo: string; weekStart: string; status: 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'; createdAt: string; updatedAt: string; confirmedAt: string | null; orderedAt: string | null; summary: { productCount: number; suggestedUnits: number; orderedUnits: number; receivedUnits: number; totalCostCents: number }; items: PurchaseOrderItem[] };
@@ -315,6 +315,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
   const STOCK_STATUS_LABEL: Record<'OUT_OF_STOCK' | 'LOW' | 'IN_STOCK', string> = { IN_STOCK: '正常', LOW: '低库存', OUT_OF_STOCK: '缺货' };
 
   function inventoryStatusLabel(item: InventoryOperationRow) {
+    if (item.directShip) return '直邮';
     if (item.stockStatus === 'IN_STOCK') return item.slowMoving ? '滞销关注' : '正常';
     if (item.stockStatus === 'LOW') return '低库存';
     return item.shortageVisible ? '缺货' : '长期停卖';
@@ -814,6 +815,19 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     finally { inventoryActionProductId.value = ''; }
   }
 
+  // CR-005: direct-ship products are not deducted by the POS and leave shortage and purchase suggestions.
+  async function setProductDirectShip(item: InventoryOperationRow) {
+    if (!props.storeId) return;
+    const directShip = !item.directShip;
+    if (directShip && !window.confirm(`将「${item.productName}」设为直邮？\n直邮商品 POS 卖出不扣库存，不再出现在缺货和进货建议中。`)) return;
+    inventoryActionProductId.value = item.productId; error.value = '';
+    try {
+      await managementRequest(`/management/products/direct-ship?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ productId: item.productId, directShip }) });
+      await loadInventoryOperations();
+    } catch (reason) { error.value = reason instanceof Error ? reason.message : '直邮设置失败'; }
+    finally { inventoryActionProductId.value = ''; }
+  }
+
   async function loadProcurement() {
     if (!props.storeId) return;
     purchaseLoading.value = true; error.value = '';
@@ -1124,7 +1138,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     previewPosInventory, openPosInventoryConfirmation, reapplyReviewLines, applyPosInventory, loadSalesAnalysis,
     loadProductsBrands, loadInventoryOperations, configureMinimumStock, saveMinimumStock, setInventoryVisibility,
     loadProcurement, addToPurchaseOrder, performAddToPurchaseOrder, showPurchaseMessage, isProductInCurrentOrder,
-    ignorePurchaseSuggestion, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem,
+    ignorePurchaseSuggestion, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem, setProductDirectShip,
     performRemovePurchaseItem, PURCHASE_STATUS_CONSEQUENCE, changePurchaseStatus, performPurchaseStatusChange,
     confirmPurchaseAction, escapeXml, downloadSpreadsheet, exportPurchaseOrderExcel, exportUnlistedStockExcel,
     openProcurement, purchaseSourceLabel, purchaseStatusLabel, loadStoreComparison, loadProductInsights,

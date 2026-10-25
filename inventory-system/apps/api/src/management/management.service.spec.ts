@@ -91,12 +91,13 @@ describe('ManagementService.inventoryOperations', () => {
 });
 
 describe('ManagementService.purchaseSuggestions', () => {
-  it('lists products received in the last 7 days as arrived instead of suggesting them again', async () => {
+  it('applies the CR-005 purchase rules: arrivals still short, out-of-stock history, ignore expiry and direct-ship', async () => {
     const stockMovement = {
       groupBy: jest.fn().mockResolvedValue([
         { productId: 1n, _sum: { quantityDelta: 40 }, _max: { createdAt: new Date('2026-10-20T03:00:00.000Z') } },
       ] as never),
     };
+    const fortyDaysAgo = new Date(Date.now() - 40 * 86_400_000);
     const client = {
       userStoreRole: {
         findMany: jest.fn().mockResolvedValue([{ store: { id: 1n, name: 'City' }, role: { code: 'ADMIN', permissions: [] } }] as never),
@@ -106,6 +107,10 @@ describe('ManagementService.purchaseSuggestions', () => {
         findMany: jest.fn().mockResolvedValue([
           { ...product(1n, 'lifespace 60+益生菌'), barcodes: [] },
           { ...product(2n, 'GoodHealth 液体钙'), barcodes: [] },
+          { ...product(3n, '高之源白瓶'), barcodes: [] },
+          { ...product(4n, '爱乐维女性'), barcodes: [] },
+          { ...product(5n, '停售奶粉'), barcodes: [] },
+          { ...product(6n, 'Anchor Blue Milk Powder 1kg'), storeProducts: [{ minimumStock: null, directShip: true }], barcodes: [] },
         ] as never),
       },
       inventoryBalance: {
@@ -118,21 +123,33 @@ describe('ManagementService.purchaseSuggestions', () => {
         findMany: jest.fn().mockResolvedValue([
           { productId: 1n, quantity: '41', isMinus: false },
           { productId: 2n, quantity: '40', isMinus: false },
+          { productId: 4n, quantity: '8', isMinus: false },
+          { productId: 5n, quantity: '20', isMinus: false },
+          { productId: 6n, quantity: '30', isMinus: false },
         ] as never),
+        // 90-day sales: product 3 sold 45 before it ran out.
+        groupBy: jest.fn().mockResolvedValue([{ productId: 3n, _sum: { quantity: '45' } }] as never),
       },
       purchaseOrder: { findUnique: jest.fn().mockResolvedValue(null as never) },
-      purchaseSuggestionIgnore: { findMany: jest.fn().mockResolvedValue([] as never) },
+      purchaseSuggestionIgnore: {
+        findMany: jest.fn().mockResolvedValue([
+          { productId: 4n, reason: '当前库存足够', ignoredAt: fortyDaysAgo, restoredAt: null },
+          { productId: 5n, reason: '盘点时标记不再销售', ignoredAt: fortyDaysAgo, restoredAt: null },
+        ] as never),
+      },
       stockMovement,
     };
     const service = new ManagementService({ client } as never, {} as never, {} as never, {} as never);
 
     const result = await service.purchaseSuggestions(1n, 2n, 1n);
+    const byId = new Map(result.suggestions.map((row) => [row.productId, row]));
 
-    expect(result.suggestions.map((row) => row.productId)).toEqual(['2']);
-    expect(result.arrivedSuggestions).toEqual([expect.objectContaining({
-      productId: '1', recentReceivedQty: 40, lastReceivedAt: '2026-10-20T03:00:00.000Z',
-    })]);
-    expect(result.summary).toMatchObject({ products: 1, arrived: 1 });
+    expect([...byId.keys()].sort()).toEqual(['1', '2', '3', '4']);
+    expect(byId.get('1')).toMatchObject({ suggestedQuantity: 15, recentReceivedQty: 40, lastReceivedAt: '2026-10-20T03:00:00.000Z' });
+    expect(byId.get('3')).toMatchObject({ recent28DayQty: 14, salesBasis: '90_DAYS', suggestedQuantity: 21 });
+    expect(byId.get('4')).toMatchObject({ ignored: false, suggestedQuantity: 12 });
+    expect(result.ignoredSuggestions.map((row) => row.productId)).toEqual(['5']);
+    expect(result.arrivedSuggestions).toEqual([]);
     expect(stockMovement.groupBy).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ movementType: 'RECEIPT', reversedBy: { is: null } }),
     }));

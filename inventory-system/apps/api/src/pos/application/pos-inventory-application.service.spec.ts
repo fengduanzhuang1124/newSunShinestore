@@ -43,6 +43,7 @@ describe('PosInventoryApplicationService', () => {
         count: jest.fn().mockResolvedValue(2 as never),
       },
       inventoryBalance: { findMany: jest.fn().mockResolvedValue([balance()] as never) },
+      storeProduct: { findMany: jest.fn().mockResolvedValue([] as never) },
       stockCountTaskItem: { findMany: jest.fn().mockResolvedValue([] as never) },
     };
     const service = new PosInventoryApplicationService({ client } as never);
@@ -69,6 +70,7 @@ describe('PosInventoryApplicationService', () => {
 
   function applySetup(order: ReturnType<typeof paidOrder>, balances: ReturnType<typeof balance>[], counted: { productId: bigint; confirmedAt: Date }[] = []) {
     const transaction = {
+      storeProduct: { findMany: jest.fn().mockResolvedValue([] as never) },
       stockCountTaskItem: { findMany: jest.fn().mockResolvedValue(counted as never) },
       posOrder: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 } as never),
@@ -212,7 +214,8 @@ describe('PosInventoryApplicationService', () => {
       const client = {
         posOrder: { findMany: jest.fn().mockResolvedValue([paidOrder()] as never), count: jest.fn().mockResolvedValue(0 as never) },
         inventoryBalance: { findMany: jest.fn().mockResolvedValue([balance(1)] as never) },
-        stockCountTaskItem: { findMany: jest.fn().mockResolvedValue([{ productId: 5n, confirmedAt: new Date('2026-10-13T00:00:00.000Z') }] as never) },
+        storeProduct: { findMany: jest.fn().mockResolvedValue([] as never) },
+      stockCountTaskItem: { findMany: jest.fn().mockResolvedValue([{ productId: 5n, confirmedAt: new Date('2026-10-13T00:00:00.000Z') }] as never) },
       };
       const result = await new PosInventoryApplicationService({ client } as never).previewRange(1n, 3n, from, to);
 
@@ -231,8 +234,22 @@ describe('PosInventoryApplicationService', () => {
       await new PosInventoryApplicationService({ client } as never).listReviewLines(1n, 3n);
 
       expect(client.posOrderItem.findMany).toHaveBeenCalledWith(expect.objectContaining({
-        where: expect.objectContaining({ inventoryReviewReason: { not: null, notIn: ['COVERED_BY_STOCKTAKE'] } }),
+        where: expect.objectContaining({ inventoryReviewReason: { not: null, notIn: ['COVERED_BY_STOCKTAKE', 'DIRECT_SHIP'] } }),
       }));
+    });
+  });
+
+  describe('direct-ship products (CR-005)', () => {
+    it('settles direct-ship lines without deducting or asking for review', async () => {
+      const { transaction, service } = applySetup(paidOrder(), [balance()]);
+      transaction.storeProduct.findMany.mockResolvedValue([{ productId: 5n }] as never);
+
+      const result = await service.applyRange(1n, 7n, 3n, from, to);
+
+      expect(result.summary).toMatchObject({ unitsApplied: 0, reviewLines: 0, shortfallUnits: 0 });
+      expect(transaction.stockMovement.create).not.toHaveBeenCalled();
+      expect(transaction.posOrderItem.update).toHaveBeenCalledWith({ where: { id: 100n }, data: { inventoryAppliedQuantity: 0, inventoryReviewReason: 'DIRECT_SHIP' } });
+      expect(transaction.storeProduct.findMany).toHaveBeenCalledWith({ where: { storeId: 3n, directShip: true, productId: { in: [5n] } }, select: { productId: true } });
     });
   });
 
@@ -263,7 +280,8 @@ describe('PosInventoryApplicationService', () => {
 
     function reapplySetup(item: ReturnType<typeof reviewItem> | null, balances: ReturnType<typeof balance>[], mapping: unknown = { id: 9n, productId: 5n }, counted: { productId: bigint; confirmedAt: Date }[] = []) {
       const transaction = {
-        stockCountTaskItem: { findMany: jest.fn().mockResolvedValue(counted as never) },
+        storeProduct: { findMany: jest.fn().mockResolvedValue([] as never) },
+      stockCountTaskItem: { findMany: jest.fn().mockResolvedValue(counted as never) },
         posOrderItem: { findFirst: jest.fn().mockResolvedValue(item as never), update: jest.fn().mockResolvedValue({} as never) },
         posProductMapping: { findFirst: jest.fn().mockResolvedValue(mapping as never) },
         inventoryBalance: {
@@ -315,6 +333,16 @@ describe('PosInventoryApplicationService', () => {
       expect(await empty.service.reapplyLines(1n, 7n, 3n, [200n])).toMatchObject({ skipped: [{ itemId: '200', reason: 'NO_STOCK' }] });
       expect(empty.transaction.posOrderItem.update).not.toHaveBeenCalled();
       expect(empty.transaction.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it('skips direct-ship products when re-applying', async () => {
+      const { transaction, service } = reapplySetup(reviewItem({ productId: 5n, disposition: 'INVENTORY', inventoryReviewReason: 'INSUFFICIENT_INVENTORY' }), [balance(5)]);
+      transaction.storeProduct.findMany.mockResolvedValue([{ productId: 5n }] as never);
+
+      const result = await service.reapplyLines(1n, 7n, 3n, [200n]);
+
+      expect(result).toMatchObject({ unitsApplied: 0, skipped: [{ itemId: '200', reason: 'DIRECT_SHIP' }] });
+      expect(transaction.stockMovement.create).not.toHaveBeenCalled();
     });
 
     it('marks a line covered instead of deducting when the product was counted after the order', async () => {

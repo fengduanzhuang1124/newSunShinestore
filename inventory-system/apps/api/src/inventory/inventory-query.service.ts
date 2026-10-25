@@ -484,7 +484,7 @@ export class InventoryQueryService {
     const sourceLabels: Record<string, string> = {
       MANUAL_INCREASE: '库存增加', MANUAL_DECREASE: '库存减少', STOCKTAKE: '盘点',
       SALES_BACKFILL: '销量补扣', BASELINE_REBUILD: '基准重建', BASELINE_RECON: '基准校准', NEGATIVE_CLEAR: '负库存清理',
-      PRODUCT_MERGE: '档案合并', RECOUNT_TODAY: '点货修正', POS_RECONCILIATION: 'POS核对扣减', POS_NEGATIVE_AUDIT: 'POS核对扣减',
+      PRODUCT_MERGE: '档案合并', RECOUNT_TODAY: '点货修正', STOCK_COUNT: '盘点任务', POS_RECONCILIATION: 'POS核对扣减', POS_NEGATIVE_AUDIT: 'POS核对扣减',
     };
     return {
       warehouseName: permission.warehouse.name,

@@ -234,6 +234,8 @@ model StoreProduct {
   level4PriceId       String?   @map("level4_price_id") @db.VarChar(64)
   level4PriceSyncedAt DateTime? @map("level4_price_synced_at")
   minimumStock        Int?      @map("minimum_stock")
+  // Shipped directly to customers: POS sales do not deduct store stock and no purchase is suggested (CR-005).
+  directShip          Boolean   @default(false) @map("direct_ship")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
   store               Store     @relation(fields: [storeId], references: [id])
