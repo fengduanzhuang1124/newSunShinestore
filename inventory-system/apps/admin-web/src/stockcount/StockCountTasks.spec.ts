@@ -133,6 +133,71 @@ describe('StockCountTasks', () => {
     expect(wrapper.find('.count-ignore').exists()).toBe(true);
   });
 
+  it('caps a batch at 9999 and asks twice before saving an unusually large count (CR-005)', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises();
+    await wrapper.findAll('.count-list button')[0].trigger('click');
+
+    await wrapper.findAll('.count-stepper input')[0].setValue(100000);
+    expect(wrapper.get('.count-row small').text()).toBe('单个批次最多 9999 件，请核对');
+    expect(wrapper.get('.count-confirm').attributes('disabled')).toBeDefined();
+
+    await wrapper.findAll('.count-stepper input')[0].setValue(2010);
+    await wrapper.get('.count-confirm').trigger('click'); await flushPromises();
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).endsWith('/confirm'))).toBe(false);
+    expect(wrapper.get('.count-error').text()).toContain('实点 2031 件');
+    expect(wrapper.get('.count-confirm').text()).toBe('数量无误，再次确认');
+
+    await wrapper.get('.count-confirm').trigger('click'); await flushPromises();
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).endsWith('/count-tasks/3/items/1/confirm'))).toBe(true);
+  });
+
+  it('flags POS-unmapped and direct-ship products in the sheet (CR-005)', async () => {
+    const { wrapper } = setup((path) => {
+      if (path === '/inventory/count-tasks/current') return json(200, { data: { task, items: [item('1', 'Anchor Full cream 1kg SF *6', { posMapped: true, directShip: true }), item('2', '8+面膜 提亮', { posMapped: false })] } });
+      return undefined;
+    }); await flushPromises();
+
+    await wrapper.findAll('.count-list button')[1].trigger('click');
+    expect(wrapper.get('.count-flag').text()).toContain('POS 未对应');
+
+    await wrapper.findAll('.count-list button')[0].trigger('click');
+    expect(wrapper.get('.count-flag').text()).toContain('直邮商品');
+  });
+
+  it('links a POS-unmapped product by scanning, merging the duplicate after confirmation (REQ-013)', async () => {
+    const linkBodies: unknown[] = [];
+    const unmapped = item('2', '纽乐辅酶300mg 60粒', { posMapped: false, systemQuantity: 5, batches: [{ batchId: 'b2', expiry: '2028-01', quantity: 5 }] });
+    const { wrapper } = setup((path, init) => {
+      if (path === '/inventory/count-tasks/current') return json(200, { data: { task, items: [item('1', 'TheraLady 大金瓶精华液', { posMapped: true }), unmapped] } });
+      if (path.endsWith('/pos-link')) {
+        const body = JSON.parse(String(init?.body));
+        linkBodies.push(body);
+        const other = { productId: '1250', name: 'nutralife q10 300mg 60cap', posName: 'nutralife q10 300mg 60cap', posMapped: true, stock: 270 };
+        return json(200, { data: body.confirm
+          ? { result: 'LINKED', merged: other, item: { ...unmapped, posMapped: true }, task }
+          : { result: 'CONFIRM_MERGE', other } });
+      }
+      return undefined;
+    }); await flushPromises();
+
+    expect(wrapper.get('.count-unmapped').text()).toContain('POS 未对应 1 种');
+    await wrapper.get('.count-unmapped').trigger('click');
+    expect(wrapper.findAll('.count-list .count-name').map((name) => name.text())).toEqual(['纽乐辅酶300mg 60粒']);
+    await wrapper.get('.count-list button').trigger('click');
+
+    await wrapper.get('.count-link-actions button').trigger('click');
+    expect(wrapper.emitted('scan')).toHaveLength(1);
+    await wrapper.setProps({ scanned: { code: '9415', at: 1 } }); await flushPromises();
+    expect(wrapper.get('.count-link-confirm').text()).toContain('nutralife q10 300mg 60cap');
+    expect(wrapper.get('.count-link-warn').text()).toContain('270 件将清零');
+
+    await wrapper.get('.count-link-ok').trigger('click'); await flushPromises();
+    expect(linkBodies).toEqual([{ barcode: '9415' }, { barcode: '9415', confirm: true }]);
+    expect(wrapper.get('.count-toast').text()).toBe('已对应 POS：nutralife q10 300mg 60cap');
+    expect(wrapper.find('.count-link').exists()).toBe(false);
+    expect(wrapper.get('.count-sheet h3').text()).toBe('纽乐辅酶300mg 60粒');
+  });
+
   it('opens a scanned product from the list or offers to add an unlisted one', async () => {
     const { wrapper } = setup((path, init) => {
       if (path === '/inventory/barcode/9400000000001') return json(200, { data: { productId: 'p99', productName: '康维他蜂胶喷雾' } });

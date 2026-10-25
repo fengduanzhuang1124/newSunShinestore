@@ -30,6 +30,15 @@ const fixtures: Record<string, unknown> = {
   'pos-sync/issues': { summary: { itemIssues: 0, pendingRefunds: 0 }, itemIssues: { items: [], pagination: { total: 0 } }, pendingRefunds: { items: [] } },
   'pos-inventory/preview': { mode: 'PREVIEW', period: { from: '2026-10-12T05:15:22.401Z', toExclusive: '2026-10-17T11:00:00.000Z' }, summary: { ordersScanned: 178, eligibleOrders: 105, unitsPlanned: 455, reviewRequiredOrders: 6, blockedOrders: 0, reviewLines: 73, shortfallUnits: 12 }, issues: [{ orderId: '9', orderNo: 'POS-9', reason: 'INSUFFICIENT_INVENTORY', itemId: '90', productId: '33', required: 4, available: 0 }] },
   'store-comparison': { storeCount: 1, comparisonAvailable: false, period: { from: '2026-10-01', to: '2026-10-06' }, stores: [{ store: { id: '1', name: '测试门店', code: 'ONE' }, selected: true, sales: salesSummary, inventory: { totalQuantity: 20, outOfStockProducts: 0, lowStockProducts: 0 } }], ranking: { byRevenue: [], byOrders: [], byInventory: [] } },
+  'purchase-suggestions': (() => {
+    const base = { sku: 'S', barcode: null, brandName: '品牌A', categoryName: '保健品', minimumStock: null, targetWeeks: 6, source: 'WEEKLY_FORECAST', priority: 'THIS_WEEK', alreadyIncluded: false, ignored: false, ignoredReason: null, ignoredAt: null };
+    return { generatedAt: '2026-10-25T00:00:00Z', inventoryLatestUpdatedAt: null, period: { from: '2026-09-27', to: '2026-10-25' }, calculation: '按近28天销量折算周销', summary: { products: 2, suggestedUnits: 20, thisWeekProducts: 2, followUpProducts: 0, alreadyIncluded: 0, ignored: 0 },
+      suggestions: [
+        { ...base, productId: '11', productName: '高之源白瓶', currentInventory: 0, recent28DayQty: 8, weeklyVelocity: 2, coverageWeeks: 0, targetInventory: 12, suggestedQuantity: 12, salesBasis: '90_DAYS' },
+        { ...base, productId: '12', productName: '科立纯妇科益生菌', currentInventory: 4, recent28DayQty: 8, weeklyVelocity: 2, coverageWeeks: 2, targetInventory: 12, suggestedQuantity: 8, recentReceivedQty: 4, salesBasis: '28_DAYS' },
+      ], ignoredSuggestions: [] };
+  })(),
+  'purchase-orders/current': { order: null },
 };
 
 function setup(options: { failPos?: boolean; limited?: boolean; multipleStores?: boolean } = {}) {
@@ -59,6 +68,21 @@ async function click(wrapper: VueWrapper, label: string) {
 afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ''; });
 
 describe('经营管理页面组织', () => {
+  it('lists purchase suggestions as a table with priority labels and CR-005 notes', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    await go(wrapper, '本周进货');
+
+    expect(wrapper.findAll('.buy-tabs button').map((tab) => tab.text())).toEqual(['全部（2）', '本周优先（2）', '后续跟进（0）', '已忽略（0）']);
+    const rows = wrapper.findAll('.buy-table tbody tr');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].findAll('td').map((cell) => cell.text()).slice(1, 6)).toEqual(['0', '2', '已断货', '12', '高']);
+    expect(rows[0].get('.buy-product em').text()).toBe('断货中，按近 90 天销量估算');
+    expect(rows[1].findAll('td').map((cell) => cell.text()).slice(1, 6)).toEqual(['4', '2', '2 周', '8', '中']);
+    expect(rows[1].get('.buy-product em').text()).toBe('近 7 天已入库 4 件，仍不足');
+    expect(rows[1].get('.buy-btn').text()).toBe('加入进货单');
+    expect(wrapper.find('.buy-rules').exists()).toBe(false);
+  });
+
   it('moves the built-in current-page marker with the selected module', async () => {
     const { wrapper } = setup(); await flushPromises();
     expect(wrapper.findAll('.nav-current-marker')).toHaveLength(1);

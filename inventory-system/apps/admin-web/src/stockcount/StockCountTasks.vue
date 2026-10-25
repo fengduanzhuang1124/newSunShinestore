@@ -9,11 +9,15 @@ type CountItem = {
   id: string; productId: string; productName: string; brandName: string | null; barcode: string | null;
   priority: number; reasons: string; source: 'PLANNED' | 'ADDED'; status: 'PENDING' | 'CONFIRMED' | 'IGNORED';
   systemQuantity: number; batches: Batch[]; countedQuantity: number | null; confirmCount: number; confirmedAt: string | null;
+  posMapped?: boolean; directShip?: boolean;
 };
 type CountTask = { id: string; code: string; title: string; total: number; confirmed: number; ignored: number; pending: number };
 // Expiry is picked as a month (native picker) plus an optional day, like the receiving form.
 type Row = { key: number; month: string; day: string; quantity: number | null };
-type View = 1 | 2 | 3 | 'done' | 'ignored';
+type View = 1 | 2 | 3 | 'done' | 'ignored' | 'unmapped';
+type PosProduct = { productId: string; name: string; posName: string | null; barcode?: string | null; stock: number; posMapped?: boolean };
+type LinkRequest = { barcode?: string; fromProductId?: string };
+type LinkResult = { result: 'LINKED' | 'NOT_IN_POS' | 'CONFIRM_MERGE'; item?: CountItem; task?: CountTask; other?: PosProduct; merged?: PosProduct; barcodeSaved?: boolean };
 
 const props = defineProps<{ apiBaseUrl: string; token: string; scanned: { code: string; at: number } | null }>();
 const emit = defineEmits<{ scan: [] }>();
@@ -22,6 +26,8 @@ const PAGE = 50;
 const PRIORITIES = [1, 2, 3] as const;
 const PRIORITY_LABEL: Record<number, string> = { 1: '高', 2: '中', 3: '低' };
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+// CR-005: guard against typos such as 100000 for 10.
+const MAX_BATCH_QUANTITY = 9999;
 const DAYS = Array.from({ length: 31 }, (_, index) => String(index + 1).padStart(2, '0'));
 const expiryOf = (row: Row) => (row.day ? `${row.month}-${row.day}` : row.month);
 
@@ -74,11 +80,13 @@ onMounted(load);
 const pendingByPriority = computed(() => [1, 2, 3].map((priority) => items.value.filter((item) => item.status === 'PENDING' && item.priority === priority).length));
 const confirmedCount = computed(() => items.value.filter((item) => item.status === 'CONFIRMED').length);
 const ignoredCount = computed(() => items.value.filter((item) => item.status === 'IGNORED').length);
+const isUnmapped = (item: CountItem) => item.posMapped === false && item.status !== 'IGNORED';
+const unmappedCount = computed(() => items.value.filter(isUnmapped).length);
 const progress = computed(() => (items.value.length ? Math.round(((confirmedCount.value + ignoredCount.value) / items.value.length) * 100) : 0));
 const visible = computed(() => {
   const text = search.value.trim().toLowerCase();
   return items.value
-    .filter((item) => (view.value === 'done' ? item.status === 'CONFIRMED' : view.value === 'ignored' ? item.status === 'IGNORED' : item.status === 'PENDING' && item.priority === view.value))
+    .filter((item) => (view.value === 'unmapped' ? isUnmapped(item) : view.value === 'done' ? item.status === 'CONFIRMED' : view.value === 'ignored' ? item.status === 'IGNORED' : item.status === 'PENDING' && item.priority === view.value))
     .filter((item) => !text || item.productName.toLowerCase().includes(text) || (item.barcode ?? '').includes(text) || (item.brandName ?? '').toLowerCase().includes(text))
     .sort((a, b) => (view.value === 'done' ? (b.confirmedAt ?? '').localeCompare(a.confirmedAt ?? '') : (a.source === 'ADDED' ? -1 : 0) - (b.source === 'ADDED' ? -1 : 0)));
 });
@@ -96,6 +104,10 @@ function openItem(item: CountItem) {
   sheetError.value = '';
   ignoring.value = false;
   alsoHidePurchasing.value = true;
+  doubleChecked.value = false;
+  linkWaiting.value = false;
+  linkPanel.value = null;
+  manualBarcode.value = '';
   requestId = crypto.randomUUID();
 }
 function closeSheet() { open.value = null; }
@@ -103,7 +115,7 @@ function closeSheet() { open.value = null; }
 // After an item is done, keep going with the next pending product of the same group.
 function advance(item: CountItem) {
   const next = visible.value.find((candidate) => candidate.status === 'PENDING' && candidate.id !== item.id);
-  if (typeof view.value === 'number' && next) openItem(next);
+  if ((typeof view.value === 'number' || view.value === 'unmapped') && next) openItem(next);
   else closeSheet();
 }
 
@@ -129,6 +141,56 @@ async function ignoreItem() {
     saving.value = false;
   }
 }
+// POS-unmapped products (REQ-013): scan the package barcode, or pick the POS product by name. A barcode owned by
+// another record (usually a duplicate created from the POS catalogue) is merged into this product after confirmation.
+const linkWaiting = ref(false);
+const linkPanel = ref<{ kind: 'confirm'; other: PosProduct; request: LinkRequest } | { kind: 'search'; barcodeSaved: boolean } | null>(null);
+const manualBarcode = ref('');
+const posQuery = ref('');
+const posResults = ref<PosProduct[]>([]);
+const posSearching = ref(false);
+function startLinkScan() { linkWaiting.value = true; sheetError.value = ''; emit('scan'); }
+async function linkPos(body: LinkRequest & { confirm?: boolean }) {
+  const item = open.value;
+  if (!item || !task.value || saving.value) return;
+  saving.value = true;
+  sheetError.value = '';
+  try {
+    const result = await request<LinkResult>(`/inventory/count-tasks/${task.value.id}/items/${item.id}/pos-link`, { method: 'POST', body: JSON.stringify(body) });
+    if (result.item) Object.assign(item, result.item);
+    if (result.task) task.value = { ...task.value, ...result.task };
+    if (result.result === 'CONFIRM_MERGE' && result.other) {
+      linkPanel.value = { kind: 'confirm', other: result.other, request: { barcode: body.barcode, fromProductId: body.fromProductId } };
+    } else if (result.result === 'NOT_IN_POS') {
+      linkPanel.value = { kind: 'search', barcodeSaved: Boolean(result.barcodeSaved) };
+      posQuery.value = item.productName.split(/[\s（(]/)[0] ?? '';
+      void searchPos();
+    } else {
+      const merged = result.merged;
+      const duplicate = merged && items.value.find((candidate) => candidate.productId === merged.productId);
+      if (duplicate && duplicate.status === 'PENDING') duplicate.status = 'IGNORED';
+      linkPanel.value = null;
+      manualBarcode.value = '';
+      showToast(`已对应 POS：${merged?.posName || merged?.name || item.productName}`);
+    }
+  } catch (reason) {
+    sheetError.value = reason instanceof Error ? reason.message : '对应失败，请重试';
+  } finally {
+    saving.value = false;
+  }
+}
+async function searchPos() {
+  if (!task.value || posQuery.value.trim().length < 2) { posResults.value = []; return; }
+  posSearching.value = true;
+  try {
+    posResults.value = await request<PosProduct[]>(`/inventory/count-tasks/${task.value.id}/pos-products?q=${encodeURIComponent(posQuery.value.trim())}`);
+  } catch (reason) {
+    sheetError.value = reason instanceof Error ? reason.message : 'POS 商品查询失败';
+  } finally {
+    posSearching.value = false;
+  }
+}
+
 async function restoreItem() {
   const item = open.value;
   if (!item || !task.value || saving.value) return;
@@ -151,6 +213,7 @@ const rowErrors = computed(() => rows.value.map((row) => {
   if (!MONTH_PATTERN.test(row.month)) return '请选择到期年月';
   if (row.day && Number(row.day) > new Date(Date.UTC(Number(row.month.slice(0, 4)), Number(row.month.slice(5, 7)), 0)).getUTCDate()) return '所选日期超出该月天数';
   if (row.quantity === null || !Number.isInteger(row.quantity) || row.quantity < 0) return '数量需为 0 或正整数';
+  if (row.quantity > MAX_BATCH_QUANTITY) return `单个批次最多 ${MAX_BATCH_QUANTITY} 件，请核对`;
   return '';
 }));
 const countedTotal = computed(() => rows.value.reduce((sum, row) => sum + (row.quantity ?? 0), 0));
@@ -160,6 +223,13 @@ const unchanged = computed(() => {
   const normalize = (list: { expiry: string; quantity: number }[]) => list.filter((row) => row.quantity !== 0).map((row) => `${row.expiry}:${row.quantity}`).sort().join('|');
   return normalize(rows.value.map((row) => ({ expiry: expiryOf(row), quantity: row.quantity ?? 0 }))) === normalize(open.value.batches);
 });
+// Unusually large counts need a second tap (CR-005): 500 or more, or 10x the system quantity and 100 more.
+const needsDoubleCheck = computed(() => {
+  const system = open.value?.systemQuantity ?? 0;
+  return countedTotal.value >= 500 || (countedTotal.value >= system * 10 && countedTotal.value - system >= 100);
+});
+const doubleChecked = ref(false);
+watch(countedTotal, () => { doubleChecked.value = false; });
 const canSubmit = computed(() => !saving.value && rowErrors.value.every((message) => !message));
 
 function step(row: Row, delta: number) { row.quantity = Math.max(0, (row.quantity ?? 0) + delta); }
@@ -169,6 +239,7 @@ function removeRow(row: Row) { rows.value = rows.value.filter((item) => item !==
 async function confirm() {
   const item = open.value;
   if (!item || !task.value || !canSubmit.value) return;
+  if (needsDoubleCheck.value && !doubleChecked.value) { doubleChecked.value = true; return; }
   saving.value = true;
   sheetError.value = '';
   try {
@@ -221,7 +292,12 @@ async function lookup(code: string) {
     showToast(reason instanceof Error ? reason.message : '未找到该条码');
   }
 }
-watch(() => props.scanned, (value) => { if (value) { search.value = ''; void lookup(value.code); } });
+watch(() => props.scanned, (value) => {
+  if (!value) return;
+  if (linkWaiting.value && open.value) { linkWaiting.value = false; void linkPos({ barcode: value.code.trim() }); return; }
+  search.value = '';
+  void lookup(value.code);
+});
 function submitSearch() { if (/^\d{6,}$/.test(search.value.trim())) void lookup(search.value); }
 
 async function addNotListed() {
@@ -257,6 +333,10 @@ function timeText(value: string | null) {
       </header>
       <div class="count-progress" role="progressbar" :aria-valuenow="progress" aria-valuemin="0" aria-valuemax="100"><i :style="{ width: `${progress}%` }"></i></div>
       <p class="count-progress-text">已完成 {{ confirmedCount }}<template v-if="ignoredCount"> · 已忽略 {{ ignoredCount }}</template> / {{ items.length }}</p>
+
+      <button v-if="unmappedCount || view === 'unmapped'" class="count-unmapped" :class="{ active: view === 'unmapped' }" type="button" @click="view = view === 'unmapped' ? 1 : 'unmapped'">
+        <span><b>POS 未对应 {{ unmappedCount }} 种</b><small>卖出不会扣库存，打开商品扫码对应</small></span><em>{{ view === 'unmapped' ? '返回清单' : '去处理' }}</em>
+      </button>
 
       <nav class="count-tabs" aria-label="盘点清单分组">
         <button v-for="priority in PRIORITIES" :key="priority" type="button" :class="{ active: view === priority }" @click="view = priority">{{ PRIORITY_LABEL[priority] }}<b>{{ pendingByPriority[priority - 1] }}</b></button>
@@ -300,9 +380,32 @@ function timeText(value: string | null) {
             <button type="button" aria-label="关闭" @click="closeSheet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
           </header>
           <p class="count-why">{{ open.source === 'ADDED' ? '盘点时临时加入' : open.reasons }}</p>
+          <p v-if="open.directShip" class="count-flag">直邮商品：POS 卖出不扣库存，不进入缺货和进货建议</p>
+          <div v-else-if="open.posMapped === false && open.status !== 'IGNORED'" class="count-link">
+            <p class="count-flag warn">POS 未对应，卖出不会扣库存。扫商品包装上的条码完成对应。</p>
+            <div v-if="!linkPanel" class="count-link-actions">
+              <button type="button" :disabled="saving" @click="startLinkScan">扫码对应</button>
+              <form @submit.prevent="manualBarcode.trim() && linkPos({ barcode: manualBarcode.trim() })"><input v-model="manualBarcode" inputmode="numeric" placeholder="或输入条码" aria-label="输入条码对应 POS" /><button type="submit" :disabled="saving || !manualBarcode.trim()">确定</button></form>
+              <button class="count-link-text" type="button" @click="linkPanel = { kind: 'search', barcodeSaved: false }; posQuery = open.productName.split(/[\s（(]/)[0] ?? ''; searchPos()">按名称找 POS 商品</button>
+            </div>
+            <div v-else-if="linkPanel.kind === 'confirm'" class="count-link-confirm" role="group" aria-label="确认合并">
+              <p>「{{ linkPanel.other.name }}」<template v-if="linkPanel.other.posName && linkPanel.other.posName !== linkPanel.other.name">（POS：{{ linkPanel.other.posName }}）</template>是同一商品的另一份档案。合并后它的条码、POS 对应和销售记录转到当前商品，该档案停用。</p>
+              <p v-if="linkPanel.other.stock" class="count-link-warn">该档案系统库存 {{ linkPanel.other.stock }} 件将清零，以本次盘点为准。</p>
+              <div><button type="button" class="count-ignore-cancel" @click="linkPanel = null">取消</button><button type="button" class="count-link-ok" :disabled="saving" @click="linkPos({ ...linkPanel.request, confirm: true })">确认合并</button></div>
+            </div>
+            <div v-else class="count-link-search">
+              <p v-if="linkPanel.barcodeSaved">条码已保存到当前商品，但 POS 中没有这个条码。POS 上可能用了别的条码，请按名称找到它：</p>
+              <form @submit.prevent="searchPos"><input v-model="posQuery" type="search" placeholder="POS 商品名称或条码" aria-label="搜索 POS 商品" /><button type="submit" :disabled="posSearching">搜索</button></form>
+              <ul v-if="posResults.length">
+                <li v-for="product in posResults" :key="product.productId"><span><b>{{ product.posName || product.name }}</b><small>{{ product.barcode || '无条码' }} · 库存 {{ product.stock }}</small></span><button type="button" :disabled="saving" @click="linkPos({ fromProductId: product.productId })">选这个</button></li>
+              </ul>
+              <p v-else-if="!posSearching && posQuery.trim().length >= 2" class="count-link-empty">没有找到，可换个关键词；POS 中确实没有的，可在下方选“不再销售，忽略”。</p>
+              <button class="count-link-text" type="button" @click="linkPanel = null">收起</button>
+            </div>
+          </div>
 
           <div v-if="open.status === 'IGNORED'" class="count-ignored">
-            <p>已标记为不再销售，不参与本次盘点；系统库存 {{ open.systemQuantity }} 件保持不变。</p>
+            <p>{{ open.directShip ? '已设为直邮商品' : '已标记为不再销售' }}，不参与本次盘点；系统库存 {{ open.systemQuantity }} 件保持不变。</p>
             <p v-if="sheetError" class="count-error" role="alert">{{ sheetError }}</p>
             <button class="count-confirm" type="button" :disabled="saving" @click="restoreItem">{{ saving ? '正在恢复…' : '恢复为待盘点' }}</button>
           </div>
@@ -323,8 +426,9 @@ function timeText(value: string | null) {
           </div>
 
           <p class="count-total">系统 {{ open.systemQuantity }} 件 → 实点 <strong>{{ countedTotal }}</strong> 件<b v-if="!unchanged" :class="difference > 0 ? 'up' : difference < 0 ? 'down' : ''">（{{ difference > 0 ? '+' : '' }}{{ difference }}）</b></p>
+          <p v-if="doubleChecked" class="count-error" role="alert">实点 {{ countedTotal }} 件，明显多于系统 {{ open.systemQuantity }} 件。请核对数量没有多输位数，无误再点一次确认。</p>
           <p v-if="sheetError" class="count-error" role="alert">{{ sheetError }}</p>
-          <button class="count-confirm" :class="{ same: unchanged }" type="button" :disabled="!canSubmit" @click="confirm">{{ saving ? '正在保存…' : unchanged ? '与系统一致，确认' : '确认修改' }}</button>
+          <button class="count-confirm" :class="{ same: unchanged }" type="button" :disabled="!canSubmit" @click="confirm">{{ saving ? '正在保存…' : doubleChecked ? '数量无误，再次确认' : unchanged ? '与系统一致，确认' : '确认修改' }}</button>
           <template v-if="open.status === 'PENDING'">
             <button v-if="!ignoring" class="count-ignore" type="button" @click="ignoring = true">不再销售，忽略</button>
             <div v-else class="count-ignore-confirm" role="group" aria-label="确认忽略">
@@ -413,6 +517,34 @@ function timeText(value: string | null) {
 .count-confirm { min-height: 48px; border-radius: 12px; font-size: 16px; font-weight: 600; }
 .count-confirm.same { background: var(--ops-green); }
 .count-ignore { min-height: 44px; color: var(--count-red); border: 0; background: transparent; box-shadow: none; font-size: 14px; font-weight: 600; }
+.count-flag { margin: 0; padding: 8px 10px; color: var(--ink); border: 1px solid var(--ops-border); border-radius: 10px; font-size: 13px; line-height: 18px; }
+.count-flag.warn { color: #b26a00; border-color: #e0a640; }
+.count-unmapped { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px; padding: 8px 12px; color: var(--ink); border: 1px solid #e0a640; border-radius: 12px; background: var(--ops-card); box-shadow: none; text-align: left; }
+.count-unmapped span { display: grid; gap: 2px; }
+.count-unmapped b { color: #b26a00; font-size: 14px; }
+.count-unmapped small { color: var(--muted); font-size: 12px; font-weight: 400; }
+.count-unmapped em { color: #b26a00; font-size: 13px; font-style: normal; font-weight: 600; white-space: nowrap; }
+.count-unmapped.active { background: color-mix(in srgb, #e0a640 14%, var(--ops-card)); }
+.count-link { display: grid; gap: 8px; }
+.count-link-actions, .count-link-search { display: grid; gap: 8px; }
+.count-link-actions > button:first-child { min-height: 44px; color: #fff; border: 0; border-radius: 12px; background: #b26a00; font-size: 15px; font-weight: 600; box-shadow: none; }
+.count-link form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.count-link input { min-height: 44px; padding: 0 12px; color: var(--ink); border: 1px solid var(--ops-border); border-radius: 12px; background: var(--ops-bg); font-size: 15px; }
+.count-link form button { min-height: 44px; padding: 0 16px; color: var(--ink); border: 1px solid var(--ops-border); border-radius: 12px; background: var(--ops-card); font-size: 14px; font-weight: 600; box-shadow: none; }
+.count-link-text { min-height: 36px; color: var(--muted); border: 0; background: transparent; box-shadow: none; font-size: 13px; font-weight: 600; }
+.count-link p { margin: 0; font-size: 13px; line-height: 19px; }
+.count-link-warn { color: var(--count-red); font-weight: 600; }
+.count-link-confirm { display: grid; gap: 10px; padding: 12px; border: 1px solid #e0a640; border-radius: 12px; }
+.count-link-confirm > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.count-link-confirm button { min-height: 44px; border-radius: 12px; font-size: 15px; font-weight: 600; box-shadow: none; }
+.count-link-ok { color: #fff; border: 0; background: #b26a00; }
+.count-link-search ul { display: grid; gap: 6px; max-height: 240px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.count-link-search li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--ops-border); border-radius: 10px; }
+.count-link-search li span { display: grid; min-width: 0; gap: 2px; }
+.count-link-search li b { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.count-link-search li small { color: var(--muted); font-size: 12px; }
+.count-link-search li button { flex: none; min-height: 36px; padding: 0 12px; color: #b26a00; border: 1px solid #e0a640; border-radius: 10px; background: transparent; font-size: 13px; font-weight: 600; box-shadow: none; }
+.count-link-empty { color: var(--muted); }
 .count-ignore-confirm { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--count-red); border-radius: 12px; font-size: 14px; line-height: 20px; }
 .count-ignore-confirm p, .count-ignored p { margin: 0; }
 .count-ignore-confirm label { display: flex; align-items: center; gap: 8px; min-height: 44px; }

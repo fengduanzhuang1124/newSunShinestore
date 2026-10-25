@@ -3,7 +3,9 @@ import type { PrismaClient } from '@sunshine/database';
 import { PrismaService } from '../database/prisma.service.js';
 import { InventoryPermissionService } from './inventory-permission.service.js';
 import { parseExpiryInput } from './expiry-date.js';
-import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto } from './stock-count.dto.js';
+import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto, LinkPosStockCountItemDto } from './stock-count.dto.js';
+import { barcodeSpellings, pickBarcodeMatch } from './barcode-lookup.js';
+import { DISCONTINUED_IGNORE_REASON, isDirectShip, productNames } from '../shared/replenishment-rules.js';
 import { planStockCount, type CurrentBatch, type ExpiryPrecision } from './stock-count-plan.js';
 
 const CONFIRM_ACTION = 'inventory.stock_count.confirm';
@@ -13,7 +15,10 @@ const COVERABLE_REVIEW_REASONS = ['INSUFFICIENT_INVENTORY'];
 type CountItemRecord = {
   id: bigint; productId: bigint; priority: number; reasons: string; source: string; status: string;
   countedQuantity: number | null; confirmCount: number; confirmedAt: Date | null;
-  product: { name: string; brandName: string | null; barcodes: { barcode: string }[] };
+  product: {
+    name: string; chineseName: string | null; englishName: string | null; brandName: string | null; barcodes: { barcode: string }[];
+    storeProducts: { storeId: bigint; directShip: boolean }[]; posProductMappings: { storeId: bigint }[];
+  };
 };
 
 // Task progress from item counts per status; ignored products are done without a count (CR-004).
@@ -26,8 +31,10 @@ function progress(groups: { status: string; _count: { _all: number } }[]) {
 const itemInclude = {
   product: {
     select: {
-      name: true, brandName: true,
+      name: true, chineseName: true, englishName: true, brandName: true,
       barcodes: { where: { status: 'ACTIVE' as const }, orderBy: [{ isPrimary: 'desc' as const }, { id: 'asc' as const }], select: { barcode: true }, take: 1 },
+      storeProducts: { select: { storeId: true, directShip: true } },
+      posProductMappings: { where: { status: 'ACTIVE' as const }, select: { storeId: true } },
     },
   },
 };
@@ -52,7 +59,7 @@ export class StockCountService {
     const batches = await this.batchesByProduct(this.prisma.client, organizationId, permission.warehouseId, items.map((item) => item.productId));
     return {
       task: this.taskView(task, items),
-      items: items.map((item) => this.itemView(item, batches.get(item.productId.toString()) ?? [])),
+      items: items.map((item) => this.itemView(item, batches.get(item.productId.toString()) ?? [], task.storeId)),
     };
   }
 
@@ -84,8 +91,8 @@ export class StockCountService {
       if (input.alsoHidePurchasing) {
         await tx.purchaseSuggestionIgnore.upsert({
           where: { organizationId_storeId_productId: { organizationId, storeId: item.task.storeId, productId: item.productId } },
-          create: { organizationId, storeId: item.task.storeId, productId: item.productId, reason: '盘点时标记不再销售', ignoredById: userId, ignoredAt },
-          update: { reason: '盘点时标记不再销售', ignoredById: userId, ignoredAt, restoredById: null, restoredAt: null },
+          create: { organizationId, storeId: item.task.storeId, productId: item.productId, reason: DISCONTINUED_IGNORE_REASON, ignoredById: userId, ignoredAt },
+          update: { reason: DISCONTINUED_IGNORE_REASON, ignoredById: userId, ignoredAt, restoredById: null, restoredAt: null },
         });
       }
       await tx.auditLog.create({
@@ -101,7 +108,150 @@ export class StockCountService {
     });
   }
 
-  // Puts an ignored product back on the list. A purchase-suggestion ignore stays until restored in the management center.
+  // POS products are the records carrying a POS mapping in the task's store; found by name or barcode so a counted
+  // product whose POS listing uses another barcode can be linked to it (REQ-013).
+  async searchPosProducts(organizationId: bigint, userId: bigint, taskIdValue: string, query: string) {
+    const permission = await this.adminPermission(organizationId, userId);
+    const taskId = this.id(taskIdValue, '盘点任务');
+    const task = await this.prisma.client.stockCountTask.findFirst({ where: { id: taskId, organizationId, warehouseId: permission.warehouseId } });
+    if (!task) throw new NotFoundException('盘点任务不存在');
+    const keyword = query.trim();
+    if (keyword.length < 2) return [];
+    const mapped = { storeId: task.storeId, status: 'ACTIVE' as const };
+    const products = await this.prisma.client.product.findMany({
+      where: {
+        organizationId, status: 'ACTIVE', posProductMappings: { some: mapped },
+        OR: [
+          { name: { contains: keyword } }, { chineseName: { contains: keyword } }, { englishName: { contains: keyword } },
+          { barcodes: { some: { barcode: { contains: keyword } } } },
+          { posProductMappings: { some: { ...mapped, sourceName: { contains: keyword } } } },
+        ],
+      },
+      select: { id: true, name: true, posProductMappings: { where: mapped, select: { sourceName: true, barcode: true }, take: 1 } },
+      orderBy: { id: 'asc' },
+      take: 20,
+    });
+    const stock = await this.stockTotals(this.prisma.client, organizationId, permission.warehouseId, products.map((product) => product.id));
+    return products.map((product) => ({
+      productId: product.id.toString(), name: product.name,
+      posName: product.posProductMappings[0]?.sourceName ?? product.name, barcode: product.posProductMappings[0]?.barcode ?? null,
+      stock: stock.get(product.id.toString()) ?? 0,
+    }));
+  }
+
+  // Links a POS-unmapped product while counting it (REQ-013). A new barcode is saved on the product. A barcode (or a
+  // picked POS product) belonging to another record merges that record into the counted one after confirmation: its
+  // barcodes, POS mappings and sales lines move over, its stock is zeroed (the physical count is the truth) and it is
+  // deactivated. POS mappings follow barcode ownership, so the hourly mapping refresh keeps the link.
+  async linkPos(organizationId: bigint, userId: bigint, taskIdValue: string, itemIdValue: string, input: LinkPosStockCountItemDto) {
+    if (!input.barcode === !input.fromProductId) throw new BadRequestException('请扫描条码或选择一个 POS 商品');
+    const permission = await this.adminPermission(organizationId, userId);
+    const taskId = this.id(taskIdValue, '盘点任务');
+    const itemId = this.id(itemIdValue, '盘点商品');
+    const warehouseId = permission.warehouseId;
+    return this.prisma.client.$transaction(async (tx) => {
+      const item = await tx.stockCountTaskItem.findFirst({
+        where: { id: itemId, taskId, task: { organizationId, warehouseId } },
+        include: { task: true, product: { select: { name: true } } },
+      });
+      if (!item) throw new NotFoundException('盘点商品不存在');
+      if (item.task.status !== 'OPEN') throw new ConflictException('该盘点任务已结束');
+      const { productId } = item;
+      const storeId = item.task.storeId;
+      const now = new Date();
+
+      let otherId: bigint;
+      if (input.barcode) {
+        const barcode = input.barcode.trim();
+        const match = pickBarcodeMatch(barcode, await tx.productBarcode.findMany({
+          where: { organizationId, barcode: { in: barcodeSpellings(barcode) } }, select: { barcode: true, productId: true },
+        }));
+        if (match.kind === 'ambiguous') throw new ConflictException('该条码对应多个商品，请在电脑上核对');
+        if (match.kind === 'none' || match.row.productId === productId) {
+          if (match.kind === 'none') {
+            await tx.productBarcode.create({ data: { organizationId, productId, barcode, isPrimary: false } });
+            await tx.auditLog.create({
+              data: {
+                organizationId, userId, storeId, warehouseId, action: 'product.barcode_add', entityType: 'Product', entityId: productId.toString(),
+                requestId: `count-barcode:${item.id}:${now.getTime()}`, afterSummary: { barcode, source: `stock_count:${item.task.code}` },
+              },
+            });
+          }
+          return { result: 'NOT_IN_POS' as const, barcodeSaved: match.kind === 'none', ...(await this.confirmResult(tx, item.task, item.id, organizationId, warehouseId)) };
+        }
+        otherId = match.row.productId;
+      } else {
+        otherId = BigInt(input.fromProductId!);
+        if (otherId === productId) throw new BadRequestException('不能选择当前商品本身');
+      }
+
+      const other = await tx.product.findFirst({
+        where: { id: otherId, organizationId, status: 'ACTIVE' },
+        select: { id: true, name: true, posProductMappings: { where: { storeId, status: 'ACTIVE' }, select: { sourceName: true }, take: 1 } },
+      });
+      if (!other) throw new NotFoundException('该条码所属的商品已停用，请在电脑上核对');
+      const otherBalances = await tx.inventoryBalance.findMany({ where: { organizationId, warehouseId, productId: otherId, quantity: { not: 0 } } });
+      const otherStock = otherBalances.reduce((sum, balance) => sum + balance.quantity, 0);
+      const otherItem = await tx.stockCountTaskItem.findUnique({ where: { taskId_productId: { taskId, productId: otherId } } });
+      const preview = {
+        productId: otherId.toString(), name: other.name, posName: other.posProductMappings[0]?.sourceName ?? null,
+        posMapped: other.posProductMappings.length > 0, stock: otherStock,
+      };
+      if (otherItem?.status === 'CONFIRMED' && otherStock !== 0) {
+        throw new ConflictException(`「${other.name}」本次已盘点且有库存 ${otherStock} 件，不能在手机上合并，请在电脑上核对`);
+      }
+      if (!input.confirm) return { result: 'CONFIRM_MERGE' as const, other: preview };
+
+      for (const balance of otherBalances) {
+        const updated = await tx.inventoryBalance.updateMany({
+          where: { organizationId, warehouseId, productId: otherId, batchId: balance.batchId, quantity: balance.quantity, version: balance.version },
+          data: { quantity: 0, version: { increment: 1 } },
+        });
+        if (updated.count !== 1) throw new ConflictException('该商品库存刚刚发生变化，请重试');
+        await tx.stockMovement.create({
+          data: {
+            movementNo: `MRG-${item.id}-${otherId}-${balance.batchId}`.slice(0, 40),
+            organizationId, storeId, warehouseId, productId: otherId, batchId: balance.batchId,
+            movementType: balance.quantity > 0 ? 'STOCKTAKE_LOSS' : 'STOCKTAKE_GAIN',
+            quantityDelta: -balance.quantity, referenceType: 'PRODUCT_MERGE', referenceId: item.id,
+            reason: `重复档案并入盘点商品「${item.product.name}」，以盘点数为准`.slice(0, 255), performedById: userId,
+            idempotencyKey: `count-merge:${item.id}:${otherId}:${balance.batchId}`,
+          },
+        });
+      }
+      const barcodes = await tx.productBarcode.updateMany({ where: { organizationId, productId: otherId }, data: { productId, isPrimary: false } });
+      const mappings = await tx.posProductMapping.updateMany({ where: { organizationId, productId: otherId }, data: { productId } });
+      const salesLines = await tx.posOrderItem.updateMany({ where: { productId: otherId }, data: { productId } });
+      const otherStore = await tx.storeProduct.findUnique({ where: { storeId_productId: { storeId, productId: otherId } }, select: { sellingPriceCents: true } });
+      if (otherStore?.sellingPriceCents != null) {
+        const mine = await tx.storeProduct.findUnique({ where: { storeId_productId: { storeId, productId } }, select: { sellingPriceCents: true } });
+        if (mine?.sellingPriceCents == null) {
+          await tx.storeProduct.upsert({
+            where: { storeId_productId: { storeId, productId } },
+            create: { storeId, productId, sellingPriceCents: otherStore.sellingPriceCents },
+            update: { sellingPriceCents: otherStore.sellingPriceCents },
+          });
+        }
+      }
+      if (otherItem?.status === 'PENDING') await tx.stockCountTaskItem.update({ where: { id: otherItem.id }, data: { status: 'IGNORED' } });
+      await tx.product.update({ where: { id: otherId }, data: { status: 'INACTIVE' } });
+      await tx.auditLog.create({
+        data: {
+          organizationId, userId, storeId, warehouseId, action: 'product.merge_from_stock_count', entityType: 'Product', entityId: otherId.toString(),
+          requestId: `count-merge:${item.id}:${otherId}`,
+          beforeSummary: { name: other.name, stock: otherStock, countItem: otherItem?.status ?? null },
+          afterSummary: {
+            mergedInto: productId.toString(), taskCode: item.task.code, barcodesMoved: barcodes.count, mappingsMoved: mappings.count,
+            salesLinesMoved: salesLines.count, stockZeroed: otherStock,
+          },
+        },
+      });
+      const pending = await tx.stockCountTaskItem.count({ where: { taskId, status: 'PENDING' } });
+      if (pending === 0) await tx.stockCountTask.update({ where: { id: taskId }, data: { status: 'COMPLETED', completedAt: now } });
+      return { result: 'LINKED' as const, merged: preview, ...(await this.confirmResult(tx, item.task, item.id, organizationId, warehouseId)) };
+    });
+  }
+
   async restore(organizationId: bigint, userId: bigint, taskIdValue: string, itemIdValue: string) {
     const permission = await this.adminPermission(organizationId, userId);
     const taskId = this.id(taskIdValue, '盘点任务');
@@ -147,7 +297,7 @@ export class StockCountService {
         });
       }
       const batches = await this.batchesByProduct(tx, organizationId, permission.warehouseId, [productId]);
-      return this.itemView(item, batches.get(productId.toString()) ?? []);
+      return this.itemView(item, batches.get(productId.toString()) ?? [], task.storeId);
     });
   }
 
@@ -256,14 +406,14 @@ export class StockCountService {
   }
 
   // The confirmed item with its batches as they are now (so the phone can recount it) and the task progress.
-  private async confirmResult(tx: Pick<PrismaClient, 'stockCountTaskItem' | 'inventoryBalance'>, task: { id: bigint; code: string }, itemId: bigint, organizationId: bigint, warehouseId: bigint) {
+  private async confirmResult(tx: Pick<PrismaClient, 'stockCountTaskItem' | 'inventoryBalance'>, task: { id: bigint; code: string; storeId: bigint }, itemId: bigint, organizationId: bigint, warehouseId: bigint) {
     const [item, groups] = await Promise.all([
       tx.stockCountTaskItem.findUniqueOrThrow({ where: { id: itemId }, include: itemInclude }),
       tx.stockCountTaskItem.groupBy({ by: ['status'], where: { taskId: task.id }, _count: { _all: true } }),
     ]);
     const batches = await this.batchesByProduct(tx, organizationId, warehouseId, [item.productId]);
     return {
-      item: this.itemView(item, batches.get(item.productId.toString()) ?? []),
+      item: this.itemView(item, batches.get(item.productId.toString()) ?? [], task.storeId),
       task: { id: task.id.toString(), code: task.code, ...progress(groups) },
     };
   }
@@ -277,6 +427,13 @@ export class StockCountService {
   private id(value: string, label: string) {
     if (!/^\d+$/.test(value)) throw new BadRequestException(`${label}编号无效`);
     return BigInt(value);
+  }
+
+  private async stockTotals(client: Pick<PrismaClient, 'inventoryBalance'>, organizationId: bigint, warehouseId: bigint, productIds: bigint[]) {
+    const rows = productIds.length ? await client.inventoryBalance.groupBy({
+      by: ['productId'], where: { organizationId, warehouseId, productId: { in: productIds } }, _sum: { quantity: true },
+    }) : [];
+    return new Map(rows.map((row) => [row.productId.toString(), row._sum.quantity ?? 0]));
   }
 
   private async batchesByProduct(client: Pick<PrismaClient, 'inventoryBalance'>, organizationId: bigint, warehouseId: bigint, productIds: bigint[]) {
@@ -301,12 +458,15 @@ export class StockCountService {
   private itemView(
     item: CountItemRecord,
     batches: { batchId: string; expiry: string; quantity: number }[],
+    storeId: bigint,
   ) {
     return {
       id: item.id.toString(), productId: item.productId.toString(), productName: item.product.name, brandName: item.product.brandName,
       barcode: item.product.barcodes[0]?.barcode ?? null, priority: item.priority, reasons: item.reasons, source: item.source, status: item.status,
       systemQuantity: batches.reduce((sum, batch) => sum + batch.quantity, 0), batches,
       countedQuantity: item.countedQuantity, confirmCount: item.confirmCount, confirmedAt: item.confirmedAt?.toISOString() ?? null,
+      posMapped: item.product.posProductMappings.some((mapping) => mapping.storeId === storeId),
+      directShip: isDirectShip(item.product.storeProducts.some((storeProduct) => storeProduct.storeId === storeId && storeProduct.directShip), productNames(item.product)),
     };
   }
 

@@ -7,6 +7,7 @@ import { PosInventoryApplicationService } from '../pos/application/pos-inventory
 import { PosRealtimeSyncService } from '../pos/application/pos-realtime-sync.service.js';
 import { isCoreReplenishmentProduct } from './core-replenishment.js';
 import { purchaseCoverage } from './purchase-coverage.js';
+import { ignoreIsActive, isDirectShip, productNames, setDirectShip } from '../shared/replenishment-rules.js';
 
 type SalesLine = { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number };
 type SalesAnalysisInput = { from: string; to: string; dimension: 'DAY' | 'WEEK' | 'MONTH'; brand?: string; category?: string };
@@ -16,6 +17,7 @@ const DEFAULT_MINIMUM_STOCK = 20;
 const SHORTAGE_SALES_WINDOW_DAYS = 180;
 // Products received within this many days are listed as arrived instead of being suggested again.
 const ARRIVED_WINDOW_DAYS = 7;
+const LONG_SALES_WINDOW_DAYS = 90;
 const MANAGEMENT_PERMISSIONS = {
   overview: 'management.overview.view', sales: 'management.sales.view', inventory: 'management.inventory.view',
   posSync: 'management.pos.sync', posIssues: 'management.pos.issues', permissions: 'management.permissions.manage',
@@ -594,7 +596,7 @@ export class ManagementService {
         where: productWhere, orderBy: { name: 'asc' },
         select: {
           id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
-          storeProducts: { where: { storeId, enabled: true }, select: { minimumStock: true }, take: 1 },
+          storeProducts: { where: { storeId, enabled: true }, select: { minimumStock: true, directShip: true }, take: 1 },
           posProductMappings: { where: { storeId, status: 'ACTIVE' }, select: { id: true }, take: 1 },
         },
       }),
@@ -664,9 +666,10 @@ export class ManagementService {
     const rows = products.map((product) => {
       const key = product.id.toString();
       const productName = product.chineseName || product.name || product.englishName || '未命名商品';
-      const directShipExcluded = /\bstag(?:e)?\s*\d*\b/i.test(productName) || /\b\d+\s*(?:tins?|bags?)\b/i.test(productName);
-      const hiddenRow = hidden.get(key);
+      const directShipExcluded = isDirectShip(product.storeProducts[0]?.directShip, productNames(product));
       const currentInventory = inventory.get(key)?.quantity ?? 0;
+      const ignoreRow = hidden.get(key);
+      const hiddenRow = ignoreRow && ignoreIsActive(ignoreRow, currentInventory, now) ? ignoreRow : undefined;
       const configuredMinimumStock = product.storeProducts[0]?.minimumStock ?? null;
       // Low-stock alerts only for steadily selling core brands and lanolin unless a minimum is set by hand.
       const coreProduct = isCoreReplenishmentProduct(product.brandName, product.chineseName, product.name, product.englishName, product.categoryName);
@@ -692,7 +695,7 @@ export class ManagementService {
         inventoryUpdatedAt: inventory.get(key)?.updatedAt?.toISOString() ?? null, stockStatus, slowMoving,
         replenishmentHidden: Boolean(hiddenRow),
         replenishmentHiddenUntil: hiddenRow?.restoredAt?.toISOString() ?? null,
-        directShipExcluded,
+        directShipExcluded, directShip: Boolean(product.storeProducts[0]?.directShip),
       };
     });
     const stocked = rows.filter((row) => row.currentInventory > 0);
@@ -751,7 +754,7 @@ export class ManagementService {
         select: {
           id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
           barcodes: { where: { status: 'ACTIVE' }, orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }], select: { barcode: true }, take: 1 },
-          storeProducts: { where: { storeId, enabled: true }, select: { minimumStock: true }, take: 1 },
+          storeProducts: { where: { storeId, enabled: true }, select: { minimumStock: true, directShip: true }, take: 1 },
         },
       }),
       this.prisma.client.inventoryBalance.findMany({ where: { organizationId, warehouse: { storeId, status: 'ACTIVE' }, product: productWhere }, select: { productId: true, quantity: true, updatedAt: true } }),
@@ -766,7 +769,7 @@ export class ManagementService {
       this.findCurrentPurchaseOrder(organizationId, storeId, organization.timezone),
       this.prisma.client.purchaseSuggestionIgnore.findMany({
         where: { organizationId, storeId, OR: [{ restoredAt: null }, { restoredAt: { gt: new Date() } }] },
-        select: { productId: true, reason: true, ignoredAt: true },
+        select: { productId: true, reason: true, ignoredAt: true, restoredAt: true },
       }),
       this.prisma.client.stockMovement.groupBy({
         by: ['productId'],
@@ -774,6 +777,17 @@ export class ManagementService {
         _sum: { quantityDelta: true }, _max: { createdAt: true },
       }),
     ]);
+    // Out-of-stock products sold nothing lately because there was nothing to sell; look back 90 days for them (CR-005 C2).
+    const longStart = new Date(calendarDateStart(today, organization.timezone).getTime() - (LONG_SALES_WINDOW_DAYS - 1) * 86_400_000);
+    const longSalesItems = await this.prisma.client.posOrderItem.groupBy({
+      by: ['productId'],
+      where: {
+        status: 'ACTIVE', disposition: 'INVENTORY', isMinus: false, productId: { not: null }, product: productWhere,
+        order: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, orderedAt: { gte: longStart, lt: end } },
+      },
+      _sum: { quantity: true },
+    });
+    const longSales = new Map(longSalesItems.map((row) => [row.productId!.toString(), Number(row._sum.quantity ?? 0)]));
     const received = new Map(recentReceipts.map((row) => [row.productId.toString(), row]));
     const inventory = new Map<string, number>();
     for (const row of balances) inventory.set(row.productId.toString(), (inventory.get(row.productId.toString()) ?? 0) + row.quantity);
@@ -787,10 +801,13 @@ export class ManagementService {
     }
     const included = new Set(currentOrder?.items.map((item) => item.productId.toString()) ?? []);
     const ignored = new Map(ignoredRows.map((row) => [row.productId.toString(), row]));
-    const rows = products.map((product) => {
+    const rows = products.filter((product) => !isDirectShip(product.storeProducts[0]?.directShip, productNames(product))).map((product) => {
       const productId = product.id.toString();
       const currentInventory = inventory.get(productId) ?? 0;
-      const recent28DayQty = Math.max(0, Math.round(sales.get(productId) ?? 0));
+      const actual28DayQty = Math.max(0, Math.round(sales.get(productId) ?? 0));
+      const longTerm28DayQty = currentInventory <= 0 ? Math.round(((longSales.get(productId) ?? 0) * 28) / LONG_SALES_WINDOW_DAYS) : 0;
+      const recent28DayQty = Math.max(actual28DayQty, longTerm28DayQty);
+      const salesBasis = longTerm28DayQty > actual28DayQty ? '90_DAYS' as const : '28_DAYS' as const;
       const { weeklyVelocity, targetWeeks, targetInventory, gap: suggestedQuantity } = purchaseCoverage(recent28DayQty, currentInventory);
       const minimumStock = product.storeProducts[0]?.minimumStock ?? null;
       const coverageWeeks = weeklyVelocity > 0 ? Math.round((currentInventory / weeklyVelocity) * 10) / 10 : null;
@@ -798,13 +815,14 @@ export class ManagementService {
       const priority = currentInventory <= 0 || (coverageWeeks !== null && coverageWeeks <= 1) || (minimumStock !== null && currentInventory <= minimumStock)
         ? 'THIS_WEEK' as const
         : 'FOLLOW_UP' as const;
-      const ignoredRow = ignored.get(productId);
+      const ignoreRow = ignored.get(productId);
+      const ignoredRow = ignoreRow && ignoreIsActive(ignoreRow, currentInventory) ? ignoreRow : undefined;
       return {
         productId, sku: product.sku, barcode: product.barcodes[0]?.barcode ?? null,
         productName: product.chineseName || product.name || product.englishName || '未命名商品',
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
         categoryName: product.categoryName || '未标注品类', currentInventory, minimumStock,
-        recent28DayQty, weeklyVelocity, coverageWeeks, targetWeeks, targetInventory,
+        recent28DayQty, salesBasis, weeklyVelocity, coverageWeeks, targetWeeks, targetInventory,
         suggestedQuantity, source, priority, alreadyIncluded: included.has(productId),
         ignored: Boolean(ignoredRow), ignoredReason: ignoredRow?.reason ?? null,
         ignoredAt: ignoredRow?.ignoredAt.toISOString() ?? null,
@@ -812,10 +830,9 @@ export class ManagementService {
         lastReceivedAt: received.get(productId)?._max.createdAt?.toISOString() ?? null,
       };
     }).filter((row) => row.suggestedQuantity > 0);
-    // Goods just received are not suggested again; they are listed as arrived for reference.
-    const arrivedSuggestions = rows.filter((row) => !row.ignored && row.recentReceivedQty > 0)
-      .sort((a, b) => (b.lastReceivedAt ?? '').localeCompare(a.lastReceivedAt ?? ''));
-    const suggestions = rows.filter((row) => !row.ignored && row.recentReceivedQty <= 0)
+    // Goods received in the last 7 days that are still short stay suggested, flagged with what arrived (CR-005 C4).
+    const arrivedSuggestions: typeof rows = [];
+    const suggestions = rows.filter((row) => !row.ignored)
       .sort((a, b) => Number(b.priority === 'THIS_WEEK') - Number(a.priority === 'THIS_WEEK') || b.suggestedQuantity - a.suggestedQuantity || a.currentInventory - b.currentInventory);
     const ignoredSuggestions = rows.filter((row) => row.ignored)
       .sort((a, b) => (b.ignoredAt ?? '').localeCompare(a.ignoredAt ?? ''));
@@ -823,7 +840,7 @@ export class ManagementService {
       generatedAt: new Date().toISOString(),
       inventoryLatestUpdatedAt: latestInventoryUpdatedAt?.toISOString() ?? null,
       store: { id: store.id.toString(), name: store.name }, period: { from: calendarDateInZone(start, organization.timezone), to: today },
-      calculation: '这是备货4–6周的候选清单，不是一周必须买完。按最近28天销量折算周均：低于1件/周不建议；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。近7天已入库的商品列入“已到货”，不再建议进货。',
+      calculation: '这是备货4–6周的候选清单，不是一周必须买完。按最近28天销量折算周均（断货商品取近90天折算值与近28天的较大者）：低于1件/周不建议；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。近7天已入库但仍不足的商品照常建议并标注；直邮商品不建议。',
       summary: {
         products: suggestions.length,
         suggestedUnits: suggestions.reduce((sum, row) => sum + row.suggestedQuantity, 0),
@@ -874,6 +891,13 @@ export class ManagementService {
       return updated;
     });
     return { productId: productId.toString(), ignored, reason: record.reason, ignoredAt: record.ignoredAt.toISOString(), hiddenUntil: hiddenUntil?.toISOString() ?? null, restoredAt: ignored ? null : record.restoredAt?.toISOString() ?? null };
+  }
+
+  async setProductDirectShip(organizationId: bigint, userId: bigint, storeId: bigint, productId: bigint, directShip: boolean) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
+    const product = await this.prisma.client.product.findFirst({ where: { id: productId, organizationId, status: 'ACTIVE' }, select: { id: true } });
+    if (!product) throw new NotFoundException('商品不存在或已停用');
+    return this.prisma.client.$transaction((tx) => setDirectShip(tx, { organizationId, userId, storeId, productId, directShip, source: 'management' }));
   }
 
   async currentPurchaseOrder(organizationId: bigint, userId: bigint, storeId: bigint) {
