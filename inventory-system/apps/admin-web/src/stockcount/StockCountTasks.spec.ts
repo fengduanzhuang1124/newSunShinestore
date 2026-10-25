@@ -217,6 +217,24 @@ describe('StockCountTasks', () => {
     expect(wrapper.get('.count-error').text()).toContain('不到系统 63 件的一半');
   });
 
+  it('asks before closing a product with unconfirmed changes', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    await wrapper.findAll('.count-list button')[0].trigger('click');
+
+    await wrapper.get('.count-sheet header button').trigger('click');
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(wrapper.find('.count-sheet').exists()).toBe(false);
+
+    await wrapper.findAll('.count-list button')[0].trigger('click');
+    await wrapper.findAll('.count-stepper input')[0].setValue(190);
+    await wrapper.get('.count-sheet header button').trigger('click');
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('.count-sheet').exists()).toBe(true);
+    await wrapper.get('.count-sheet header button').trigger('click');
+    expect(wrapper.find('.count-sheet').exists()).toBe(false);
+  });
+
   it('opens a scanned product from the list or offers to add an unlisted one', async () => {
     const { wrapper } = setup((path, init) => {
       if (path === '/inventory/barcode/9400000000001') return json(200, { data: { productId: 'p99', productName: '康维他蜂胶喷雾' } });

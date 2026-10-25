@@ -2,7 +2,7 @@
 // Stock count task (REQ-012): work through the recount list product by product. Each product opens with its
 // system batches; the admin corrects quantities and expiry dates (or adds/removes batches) and confirms, which
 // writes the stocktake movements immediately and takes the product off the list.
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 type Batch = { batchId: string; expiry: string; quantity: number };
 type CountItem = {
@@ -110,14 +110,31 @@ function openItem(item: CountItem) {
   linkPanel.value = null;
   manualBarcode.value = '';
   requestId = crypto.randomUUID();
+  baseline.value = snapshot();
 }
-function closeSheet() { open.value = null; }
+
+// Unsaved edits (REQ-013): closing the sheet or switching product after changing a quantity or date asks first,
+// because nothing reaches the system until the confirm button is tapped.
+const baseline = ref('');
+const snapshot = () => JSON.stringify(rows.value.map((row) => [row.month, row.day, row.quantity]));
+const dirty = computed(() => Boolean(open.value) && open.value?.status !== 'IGNORED' && snapshot() !== baseline.value);
+function leaveAllowed() {
+  return !dirty.value || window.confirm('这个商品有修改还没有确认，关闭后不会保存。\n要保存请点“取消”，再点底部的确认按钮。');
+}
+function closeSheet() { if (leaveAllowed()) open.value = null; }
+function pickItem(item: CountItem) {
+  if (open.value && open.value.id !== item.id && !leaveAllowed()) return;
+  openItem(item);
+}
+function warnBeforeUnload(event: BeforeUnloadEvent) { if (dirty.value) event.preventDefault(); }
+onMounted(() => window.addEventListener('beforeunload', warnBeforeUnload));
+onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnload));
 
 // After an item is done, keep going with the next pending product of the same group.
 function advance(item: CountItem) {
   const next = visible.value.find((candidate) => candidate.status === 'PENDING' && candidate.id !== item.id);
   if ((typeof view.value === 'number' || view.value === 'unmapped') && next) openItem(next);
-  else closeSheet();
+  else open.value = null;
 }
 
 // Discontinued products (CR-004): off the list without a count; stock is left unchanged.
@@ -289,11 +306,11 @@ async function lookup(code: string) {
   if (!value) return;
   notListed.value = null;
   const listed = items.value.find((item) => item.barcode === value);
-  if (listed) { openItem(listed); return; }
+  if (listed) { pickItem(listed); return; }
   try {
     const product = await request<{ productId: string; productName: string }>(`/inventory/barcode/${encodeURIComponent(value)}`);
     const match = items.value.find((item) => item.productId === product.productId);
-    if (match) openItem(match);
+    if (match) pickItem(match);
     else notListed.value = { productId: product.productId, productName: product.productName };
   } catch (reason) {
     showToast(reason instanceof Error ? reason.message : '未找到该条码');
@@ -364,7 +381,7 @@ function timeText(value: string | null) {
       <p v-if="!visible.length" class="count-state">{{ view === 'done' ? '还没有已完成的商品' : search ? '没有匹配的商品' : '这一组已全部完成' }}</p>
       <ul v-else class="count-list">
         <li v-for="item in visible.slice(0, shown)" :key="item.id">
-          <button type="button" @click="openItem(item)">
+          <button type="button" @click="pickItem(item)">
             <span class="count-name">{{ item.productName }}</span>
             <span class="count-meta">{{ item.barcode || '无条码' }}<template v-if="item.brandName"> · {{ item.brandName }}</template></span>
             <span v-if="item.status === 'CONFIRMED'" class="count-result">实点 {{ item.countedQuantity }} 件 · {{ timeText(item.confirmedAt) }}</span>
