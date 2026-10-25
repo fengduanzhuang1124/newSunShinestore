@@ -1,13 +1,23 @@
 import type { PrismaClient } from '@sunshine/database';
+import { classifyMilkProduct } from '../pos/application/milk-product-classifier.js';
 
 // Reason written when a product is marked "不再销售" during a stock count; that ignore never expires on its own.
 export const DISCONTINUED_IGNORE_REASON = '盘点时标记不再销售';
 const MANUAL_IGNORE_DAYS = 30;
 
-// Direct-ship products are sold through the POS but shipped from elsewhere (CR-005). Besides the store flag, formula
-// tins and bags named by stage were already treated as direct-ship.
+// Direct-ship products are sold through the POS but shipped from elsewhere (CR-005): milk powder whose name carries
+// a pack or warehouse marker (*6, *3, SF, tin(s), bag(s), stage), plus anything flagged on the store product.
+const DIRECT_SHIP_MARKER = /\*\s*\d+|\bsf\b|\btins?\b|\d\s*tins?\b|\bbags?\b|\d\s*bags?\b|\bstag(?:e)?\b/i;
+const MILK_NAME = /奶粉|milk\s*pow(?:der|er)|\bformula\b/i;
 export function isDirectShip(flag: boolean | undefined, productName: string) {
-  return Boolean(flag) || /\bstag(?:e)?\s*\d*\b/i.test(productName) || /\b\d+\s*(?:tins?|bags?)\b/i.test(productName);
+  if (flag) return true;
+  if (!DIRECT_SHIP_MARKER.test(productName)) return false;
+  return MILK_NAME.test(productName) || classifyMilkProduct(productName, null) !== null;
+}
+
+// All names of a product joined, so the name rule sees Chinese, POS and English names alike.
+export function productNames(product: { name: string; chineseName?: string | null; englishName?: string | null }) {
+  return [product.chineseName, product.name, product.englishName].filter(Boolean).join(' ');
 }
 
 // Whether a purchase-suggestion ignore still applies (CR-005 C3): "下周显示" until its date; "不再销售" from a stock

@@ -180,23 +180,67 @@ describe('StockCountService ignore and restore (CR-004)', () => {
   });
 });
 
-describe('StockCountService.setDirectShip (CR-005)', () => {
-  it('marks the product direct-ship and takes a pending product off the list', async () => {
+describe('StockCountService.linkPos (REQ-013)', () => {
+  function linkSetup(options: { barcodeOwner?: bigint | null; otherStock?: number; otherItemStatus?: string } = {}) {
     const { tx, service } = setup();
+    tx.stockCountTaskItem.findFirst.mockResolvedValue({ id: 40n, taskId: 3n, productId: 1994n, status: 'PENDING', task, product: { name: '纽乐辅酶300mg 60粒' } } as never);
+    Object.assign(tx.stockCountTaskItem, {
+      findUnique: jest.fn().mockResolvedValue((options.otherItemStatus ? { id: 41n, status: options.otherItemStatus } : null) as never),
+    });
+    Object.assign(tx, {
+      productBarcode: {
+        findMany: jest.fn().mockResolvedValue((options.barcodeOwner ? [{ barcode: '9415', productId: options.barcodeOwner }] : []) as never),
+        create: jest.fn().mockResolvedValue({} as never),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 } as never),
+      },
+      product: {
+        findFirst: jest.fn().mockResolvedValue({ id: 1250n, name: 'nutralife q10 300mg 60cap', posProductMappings: [{ sourceName: 'nutralife q10 300mg 60cap' }] } as never),
+        update: jest.fn().mockResolvedValue({} as never),
+      },
+      posProductMapping: { updateMany: jest.fn().mockResolvedValue({ count: 1 } as never) },
+    });
+    Object.assign(tx.storeProduct, { findUnique: jest.fn().mockResolvedValue(null as never) });
+    tx.inventoryBalance.findMany.mockImplementation((async (args: { where: { productId: bigint } }) => args.where.productId === 1250n
+      ? (options.otherStock ? [{ productId: 1250n, batchId: 70n, quantity: options.otherStock, version: 3 }] : [])
+      : []) as never);
+    return { tx, service };
+  }
 
-    await service.setDirectShip(1n, 2n, '3', '40', { directShip: true });
+  it('saves an unknown barcode on the counted product', async () => {
+    const { tx, service } = linkSetup();
 
-    expect(tx.storeProduct.upsert).toHaveBeenCalledWith(expect.objectContaining({ update: { directShip: true } }));
-    expect(tx.stockCountTaskItem.update).toHaveBeenCalledWith({ where: { id: 40n }, data: { status: 'IGNORED' } });
-    expect(tx.stockMovement.create).not.toHaveBeenCalled();
+    const result = await service.linkPos(1n, 2n, '3', '40', { barcode: '9415' });
+
+    expect(result.result).toBe('NOT_IN_POS');
+    expect((tx as unknown as { productBarcode: { create: jest.Mock } }).productBarcode.create).toHaveBeenCalledWith({ data: { organizationId: 1n, productId: 1994n, barcode: '9415', isPrimary: false } });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'product.barcode_add' }) });
   });
 
-  it('leaves a confirmed product confirmed', async () => {
-    const { tx, service } = setup({ status: 'CONFIRMED' });
+  it('previews a merge first, then moves barcodes, mappings and sales and zeroes the duplicate stock', async () => {
+    const { tx, service } = linkSetup({ barcodeOwner: 1250n, otherStock: 270 });
+    const extra = tx as unknown as { productBarcode: { updateMany: jest.Mock }; posProductMapping: { updateMany: jest.Mock }; product: { update: jest.Mock } };
 
-    await service.setDirectShip(1n, 2n, '3', '40', { directShip: true });
+    const preview = await service.linkPos(1n, 2n, '3', '40', { barcode: '9415' });
+    expect(preview).toEqual({ result: 'CONFIRM_MERGE', other: { productId: '1250', name: 'nutralife q10 300mg 60cap', posName: 'nutralife q10 300mg 60cap', posMapped: true, stock: 270 } });
+    expect(extra.product.update).not.toHaveBeenCalled();
 
-    expect(tx.storeProduct.upsert).toHaveBeenCalled();
-    expect(tx.stockCountTaskItem.update).not.toHaveBeenCalled();
+    const result = await service.linkPos(1n, 2n, '3', '40', { barcode: '9415', confirm: true });
+
+    expect(result.result).toBe('LINKED');
+    expect(tx.inventoryBalance.updateMany).toHaveBeenCalledWith({
+      where: { organizationId: 1n, warehouseId: 2n, productId: 1250n, batchId: 70n, quantity: 270, version: 3 }, data: { quantity: 0, version: { increment: 1 } },
+    });
+    expect(tx.stockMovement.create).toHaveBeenCalledWith({ data: expect.objectContaining({ productId: 1250n, quantityDelta: -270, movementType: 'STOCKTAKE_LOSS', referenceType: 'PRODUCT_MERGE' }) });
+    expect(extra.productBarcode.updateMany).toHaveBeenCalledWith({ where: { organizationId: 1n, productId: 1250n }, data: { productId: 1994n, isPrimary: false } });
+    expect(extra.posProductMapping.updateMany).toHaveBeenCalledWith({ where: { organizationId: 1n, productId: 1250n }, data: { productId: 1994n } });
+    expect(tx.posOrderItem.updateMany).toHaveBeenCalledWith({ where: { productId: 1250n }, data: { productId: 1994n } });
+    expect(extra.product.update).toHaveBeenCalledWith({ where: { id: 1250n }, data: { status: 'INACTIVE' } });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'product.merge_from_stock_count', entityId: '1250' }) });
+  });
+
+  it('refuses to merge a duplicate that was already counted with stock', async () => {
+    const { service } = linkSetup({ barcodeOwner: 1250n, otherStock: 12, otherItemStatus: 'CONFIRMED' });
+
+    await expect(service.linkPos(1n, 2n, '3', '40', { barcode: '9415', confirm: true })).rejects.toBeInstanceOf(ConflictException);
   });
 });

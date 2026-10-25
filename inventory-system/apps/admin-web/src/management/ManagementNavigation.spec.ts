@@ -68,18 +68,19 @@ async function click(wrapper: VueWrapper, label: string) {
 afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ''; });
 
 describe('经营管理页面组织', () => {
-  it('shows compact purchase suggestion cards with CR-005 notes', async () => {
+  it('lists purchase suggestions as a table with priority labels and CR-005 notes', async () => {
     const { wrapper } = setup(); await flushPromises();
     await go(wrapper, '本周进货');
 
-    const cards = wrapper.findAll('.buy-card');
-    expect(cards).toHaveLength(2);
-    expect(cards[0].get('.buy-card-main p').text()).toBe('库存 0 · 周销 2 · 已断货');
-    expect(cards[0].get('.buy-card-note').text()).toBe('断货中，按近 90 天销量估算');
-    expect(cards[0].get('.buy-card-side strong').text()).toBe('12');
-    expect(cards[1].get('.buy-card-main p').text()).toBe('库存 4 · 周销 2 · 可卖 2 周');
-    expect(cards[1].get('.buy-card-note').text()).toBe('近 7 天已入库 4 件，仍不足');
-    expect(cards[1].get('.buy-card-add').text()).toBe('加入');
+    expect(wrapper.findAll('.buy-tabs button').map((tab) => tab.text())).toEqual(['全部（2）', '本周优先（2）', '后续跟进（0）', '已忽略（0）']);
+    const rows = wrapper.findAll('.buy-table tbody tr');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].findAll('td').map((cell) => cell.text()).slice(1, 6)).toEqual(['0', '2', '已断货', '12', '高']);
+    expect(rows[0].get('.buy-product em').text()).toBe('断货中，按近 90 天销量估算');
+    expect(rows[1].findAll('td').map((cell) => cell.text()).slice(1, 6)).toEqual(['4', '2', '2 周', '8', '中']);
+    expect(rows[1].get('.buy-product em').text()).toBe('近 7 天已入库 4 件，仍不足');
+    expect(rows[1].get('.buy-btn').text()).toBe('加入进货单');
+    expect(wrapper.find('.buy-rules').exists()).toBe(false);
   });
 
   it('moves the built-in current-page marker with the selected module', async () => {

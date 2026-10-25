@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import type { PrismaClient } from '@sunshine/database';
 import { PrismaService } from '../../database/prisma.service.js';
+import { isDirectShip, productNames } from '../../shared/replenishment-rules.js';
 
 // Why a sale line was not (fully) deducted. The rest of the order is still applied; these lines wait for review,
 // except COVERED_BY_STOCKTAKE (the product was counted after the order, so the count already reflects the sale) and
@@ -397,12 +398,12 @@ export class PosInventoryApplicationService {
   }
 
   // Products marked direct-ship for this store: their sales never come out of store stock (CR-005).
-  private async directShipProducts(client: Pick<PrismaClient, 'storeProduct'>, storeId: bigint, productIds?: bigint[]) {
-    const rows = await client.storeProduct.findMany({
-      where: { storeId, directShip: true, ...(productIds ? { productId: { in: productIds } } : {}) },
-      select: { productId: true },
+  private async directShipProducts(client: Pick<PrismaClient, 'product'>, storeId: bigint, productIds?: bigint[]) {
+    const rows = await client.product.findMany({
+      where: productIds ? { id: { in: productIds } } : {},
+      select: { id: true, name: true, chineseName: true, englishName: true, storeProducts: { where: { storeId }, select: { directShip: true } } },
     });
-    return new Set(rows.map((row) => row.productId.toString()));
+    return new Set(rows.filter((row) => isDirectShip(row.storeProducts.some((storeProduct) => storeProduct.directShip), productNames(row))).map((row) => row.id.toString()));
   }
 
   // The stock a sale may be deducted from: positive balances in active warehouses and batches, first-expiry-first.

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsInt, IsString, IsUUID, Matches, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsInt, IsOptional, IsString, IsUUID, Matches, Max, Min, ValidateNested } from 'class-validator';
 
 export class CountedBatchDto {
   // YYYY-MM (month precision) or YYYY-MM-DD.
@@ -54,7 +54,20 @@ export class IgnoreStockCountItemDto {
   alsoHidePurchasing!: boolean;
 }
 
-export class DirectShipStockCountItemDto {
+// Links a POS-unmapped product from the count sheet (REQ-013): a scanned barcode, or a POS product picked by name.
+export class LinkPosStockCountItemDto {
+  @IsOptional()
+  @IsString()
+  @Matches(/^[0-9A-Za-z-]{4,64}$/, { message: '条码格式无效' })
+  barcode?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d+$/, { message: '商品编号无效' })
+  fromProductId?: string;
+
+  // Merging another product record needs an explicit second request after the admin has seen what will move.
+  @IsOptional()
   @IsBoolean()
-  directShip!: boolean;
+  confirm?: boolean;
 }

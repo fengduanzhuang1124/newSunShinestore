@@ -43,7 +43,7 @@ describe('PosInventoryApplicationService', () => {
         count: jest.fn().mockResolvedValue(2 as never),
       },
       inventoryBalance: { findMany: jest.fn().mockResolvedValue([balance()] as never) },
-      storeProduct: { findMany: jest.fn().mockResolvedValue([] as never) },
+      product: { findMany: jest.fn().mockResolvedValue([] as never) },
       stockCountTaskItem: { findMany: jest.fn().mockResolvedValue([] as never) },
     };
     const service = new PosInventoryApplicationService({ client } as never);
@@ -70,7 +70,7 @@ describe('PosInventoryApplicationService', () => {
 
   function applySetup(order: ReturnType<typeof paidOrder>, balances: ReturnType<typeof balance>[], counted: { productId: bigint; confirmedAt: Date }[] = []) {
     const transaction = {
-      storeProduct: { findMany: jest.fn().mockResolvedValue([] as never) },
+      product: { findMany: jest.fn().mockResolvedValue([] as never) },
       stockCountTaskItem: { findMany: jest.fn().mockResolvedValue(counted as never) },
       posOrder: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 } as never),
@@ -214,7 +214,7 @@ describe('PosInventoryApplicationService', () => {
       const client = {
         posOrder: { findMany: jest.fn().mockResolvedValue([paidOrder()] as never), count: jest.fn().mockResolvedValue(0 as never) },
         inventoryBalance: { findMany: jest.fn().mockResolvedValue([balance(1)] as never) },
-        storeProduct: { findMany: jest.fn().mockResolvedValue([] as never) },
+        product: { findMany: jest.fn().mockResolvedValue([] as never) },
       stockCountTaskItem: { findMany: jest.fn().mockResolvedValue([{ productId: 5n, confirmedAt: new Date('2026-10-13T00:00:00.000Z') }] as never) },
       };
       const result = await new PosInventoryApplicationService({ client } as never).previewRange(1n, 3n, from, to);
@@ -240,16 +240,26 @@ describe('PosInventoryApplicationService', () => {
   });
 
   describe('direct-ship products (CR-005)', () => {
+    it('treats milk powder named with a pack marker as direct-ship without a flag', async () => {
+      const { transaction, service } = applySetup(paidOrder(), [balance()]);
+      transaction.product.findMany.mockResolvedValue([{ id: 5n, name: 'Anchor Full cream 1kg SF *6', chineseName: null, englishName: null, storeProducts: [] }] as never);
+
+      const result = await service.applyRange(1n, 7n, 3n, from, to);
+
+      expect(result.summary).toMatchObject({ unitsApplied: 0, reviewLines: 0 });
+      expect(transaction.stockMovement.create).not.toHaveBeenCalled();
+    });
+
     it('settles direct-ship lines without deducting or asking for review', async () => {
       const { transaction, service } = applySetup(paidOrder(), [balance()]);
-      transaction.storeProduct.findMany.mockResolvedValue([{ productId: 5n }] as never);
+      transaction.product.findMany.mockResolvedValue([{ id: 5n, name: 'Local direct-ship product', chineseName: null, englishName: null, storeProducts: [{ directShip: true }] }] as never);
 
       const result = await service.applyRange(1n, 7n, 3n, from, to);
 
       expect(result.summary).toMatchObject({ unitsApplied: 0, reviewLines: 0, shortfallUnits: 0 });
       expect(transaction.stockMovement.create).not.toHaveBeenCalled();
       expect(transaction.posOrderItem.update).toHaveBeenCalledWith({ where: { id: 100n }, data: { inventoryAppliedQuantity: 0, inventoryReviewReason: 'DIRECT_SHIP' } });
-      expect(transaction.storeProduct.findMany).toHaveBeenCalledWith({ where: { storeId: 3n, directShip: true, productId: { in: [5n] } }, select: { productId: true } });
+      expect(transaction.product.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [5n] } } }));
     });
   });
 
@@ -280,7 +290,7 @@ describe('PosInventoryApplicationService', () => {
 
     function reapplySetup(item: ReturnType<typeof reviewItem> | null, balances: ReturnType<typeof balance>[], mapping: unknown = { id: 9n, productId: 5n }, counted: { productId: bigint; confirmedAt: Date }[] = []) {
       const transaction = {
-        storeProduct: { findMany: jest.fn().mockResolvedValue([] as never) },
+        product: { findMany: jest.fn().mockResolvedValue([] as never) },
       stockCountTaskItem: { findMany: jest.fn().mockResolvedValue(counted as never) },
         posOrderItem: { findFirst: jest.fn().mockResolvedValue(item as never), update: jest.fn().mockResolvedValue({} as never) },
         posProductMapping: { findFirst: jest.fn().mockResolvedValue(mapping as never) },
@@ -337,7 +347,7 @@ describe('PosInventoryApplicationService', () => {
 
     it('skips direct-ship products when re-applying', async () => {
       const { transaction, service } = reapplySetup(reviewItem({ productId: 5n, disposition: 'INVENTORY', inventoryReviewReason: 'INSUFFICIENT_INVENTORY' }), [balance(5)]);
-      transaction.storeProduct.findMany.mockResolvedValue([{ productId: 5n }] as never);
+      transaction.product.findMany.mockResolvedValue([{ id: 5n, name: 'Local direct-ship product', chineseName: null, englishName: null, storeProducts: [{ directShip: true }] }] as never);
 
       const result = await service.reapplyLines(1n, 7n, 3n, [200n]);
 

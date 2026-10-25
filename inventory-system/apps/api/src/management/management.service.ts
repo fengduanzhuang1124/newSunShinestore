@@ -7,7 +7,7 @@ import { PosInventoryApplicationService } from '../pos/application/pos-inventory
 import { PosRealtimeSyncService } from '../pos/application/pos-realtime-sync.service.js';
 import { isCoreReplenishmentProduct } from './core-replenishment.js';
 import { purchaseCoverage } from './purchase-coverage.js';
-import { ignoreIsActive, isDirectShip, setDirectShip } from '../shared/replenishment-rules.js';
+import { ignoreIsActive, isDirectShip, productNames, setDirectShip } from '../shared/replenishment-rules.js';
 
 type SalesLine = { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number };
 type SalesAnalysisInput = { from: string; to: string; dimension: 'DAY' | 'WEEK' | 'MONTH'; brand?: string; category?: string };
@@ -666,7 +666,7 @@ export class ManagementService {
     const rows = products.map((product) => {
       const key = product.id.toString();
       const productName = product.chineseName || product.name || product.englishName || '未命名商品';
-      const directShipExcluded = isDirectShip(product.storeProducts[0]?.directShip, productName);
+      const directShipExcluded = isDirectShip(product.storeProducts[0]?.directShip, productNames(product));
       const currentInventory = inventory.get(key)?.quantity ?? 0;
       const ignoreRow = hidden.get(key);
       const hiddenRow = ignoreRow && ignoreIsActive(ignoreRow, currentInventory, now) ? ignoreRow : undefined;
@@ -801,7 +801,7 @@ export class ManagementService {
     }
     const included = new Set(currentOrder?.items.map((item) => item.productId.toString()) ?? []);
     const ignored = new Map(ignoredRows.map((row) => [row.productId.toString(), row]));
-    const rows = products.filter((product) => !isDirectShip(product.storeProducts[0]?.directShip, product.chineseName || product.name || product.englishName || '')).map((product) => {
+    const rows = products.filter((product) => !isDirectShip(product.storeProducts[0]?.directShip, productNames(product))).map((product) => {
       const productId = product.id.toString();
       const currentInventory = inventory.get(productId) ?? 0;
       const actual28DayQty = Math.max(0, Math.round(sales.get(productId) ?? 0));

@@ -315,7 +315,6 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
   const STOCK_STATUS_LABEL: Record<'OUT_OF_STOCK' | 'LOW' | 'IN_STOCK', string> = { IN_STOCK: '正常', LOW: '低库存', OUT_OF_STOCK: '缺货' };
 
   function inventoryStatusLabel(item: InventoryOperationRow) {
-    if (item.directShip) return '直邮';
     if (item.stockStatus === 'IN_STOCK') return item.slowMoving ? '滞销关注' : '正常';
     if (item.stockStatus === 'LOW') return '低库存';
     return item.shortageVisible ? '缺货' : '长期停卖';
@@ -815,19 +814,6 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     finally { inventoryActionProductId.value = ''; }
   }
 
-  // CR-005: direct-ship products are not deducted by the POS and leave shortage and purchase suggestions.
-  async function setProductDirectShip(item: InventoryOperationRow) {
-    if (!props.storeId) return;
-    const directShip = !item.directShip;
-    if (directShip && !window.confirm(`将「${item.productName}」设为直邮？\n直邮商品 POS 卖出不扣库存，不再出现在缺货和进货建议中。`)) return;
-    inventoryActionProductId.value = item.productId; error.value = '';
-    try {
-      await managementRequest(`/management/products/direct-ship?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ productId: item.productId, directShip }) });
-      await loadInventoryOperations();
-    } catch (reason) { error.value = reason instanceof Error ? reason.message : '直邮设置失败'; }
-    finally { inventoryActionProductId.value = ''; }
-  }
-
   async function loadProcurement() {
     if (!props.storeId) return;
     purchaseLoading.value = true; error.value = '';
@@ -1138,7 +1124,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     previewPosInventory, openPosInventoryConfirmation, reapplyReviewLines, applyPosInventory, loadSalesAnalysis,
     loadProductsBrands, loadInventoryOperations, configureMinimumStock, saveMinimumStock, setInventoryVisibility,
     loadProcurement, addToPurchaseOrder, performAddToPurchaseOrder, showPurchaseMessage, isProductInCurrentOrder,
-    ignorePurchaseSuggestion, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem, setProductDirectShip,
+    ignorePurchaseSuggestion, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem,
     performRemovePurchaseItem, PURCHASE_STATUS_CONSEQUENCE, changePurchaseStatus, performPurchaseStatusChange,
     confirmPurchaseAction, escapeXml, downloadSpreadsheet, exportPurchaseOrderExcel, exportUnlistedStockExcel,
     openProcurement, purchaseSourceLabel, purchaseStatusLabel, loadStoreComparison, loadProductInsights,

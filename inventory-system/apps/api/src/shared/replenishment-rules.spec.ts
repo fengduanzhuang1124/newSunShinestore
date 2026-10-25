@@ -10,6 +10,13 @@ describe('replenishment rules (CR-005)', () => {
     expect(isDirectShip(false, 'a2 Platinum Stage 3 900g')).toBe(true);
     expect(isDirectShip(false, 'Karicare 6 tins')).toBe(true);
     expect(isDirectShip(false, 'GoodHealth 液体钙')).toBe(false);
+    expect(isDirectShip(false, 'Anchor Full cream 1kg SF *6')).toBe(true);
+    expect(isDirectShip(false, 'taupo pure 1kg*6s full')).toBe(true);
+    expect(isDirectShip(false, 'A2 Milk Powder Adult 6bags')).toBe(true);
+    // Pack markers on anything other than milk powder are ordinary store stock.
+    expect(isDirectShip(false, 'Bionique 麦卢卡蜂蜜喉糖 *35')).toBe(false);
+    expect(isDirectShip(false, 'LACUES 亮白紧致面膜*5')).toBe(false);
+    expect(isDirectShip(false, 'Anchor Blue Milk Powder 1kg')).toBe(false);
   });
 
   it('expires manual ignores after 30 days or once out of stock, but keeps snoozes and discontinued marks', () => {

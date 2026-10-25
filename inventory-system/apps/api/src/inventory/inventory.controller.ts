@@ -27,7 +27,7 @@ import { CorrectBatchExpiryDto, DeleteExpiryAlertDto, ExpiryAlertActionDto, Expi
 import { WarehouseLocationService } from './warehouse-location.service.js';
 import { AssignWarehouseLocationDto, SaveWarehouseLocationDto } from './warehouse-location.dto.js';
 import { StockCountService } from './stock-count.service.js';
-import { AddStockCountItemDto, ConfirmStockCountDto, DirectShipStockCountItemDto, IgnoreStockCountItemDto } from './stock-count.dto.js';
+import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto, LinkPosStockCountItemDto } from './stock-count.dto.js';
 
 @Controller('inventory')
 @UseGuards(JwtAuthGuard)
@@ -73,10 +73,18 @@ export class InventoryController {
     return { code: 200, message: '已忽略该商品', data: await this.stockCounts.ignore(user.organizationId, user.id, taskId, itemId, input) };
   }
 
-  @Post('count-tasks/:taskId/items/:itemId/direct-ship')
-  async setStockCountDirectShip(@Req() request: AuthenticatedRequest, @Param('taskId') taskId: string, @Param('itemId') itemId: string, @Body() input: DirectShipStockCountItemDto) {
+  @Get('count-tasks/:taskId/pos-products')
+  async searchStockCountPosProducts(@Req() request: AuthenticatedRequest, @Param('taskId') taskId: string, @Query('q') query = '') {
     const user = request.inventoryUser!;
-    return { code: 200, message: input.directShip ? '已设为直邮商品' : '已取消直邮', data: await this.stockCounts.setDirectShip(user.organizationId, user.id, taskId, itemId, input) };
+    return { code: 200, message: '查询成功', data: await this.stockCounts.searchPosProducts(user.organizationId, user.id, taskId, query) };
+  }
+
+  @Post('count-tasks/:taskId/items/:itemId/pos-link')
+  async linkStockCountPos(@Req() request: AuthenticatedRequest, @Param('taskId') taskId: string, @Param('itemId') itemId: string, @Body() input: LinkPosStockCountItemDto) {
+    const user = request.inventoryUser!;
+    const data = await this.stockCounts.linkPos(user.organizationId, user.id, taskId, itemId, input);
+    const message = data.result === 'LINKED' ? '已对应 POS' : data.result === 'CONFIRM_MERGE' ? '请确认合并' : 'POS 中没有此条码';
+    return { code: 200, message, data };
   }
 
   @Post('count-tasks/:taskId/items/:itemId/restore')
