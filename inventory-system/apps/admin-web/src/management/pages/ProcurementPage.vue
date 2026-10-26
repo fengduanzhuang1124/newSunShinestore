@@ -29,19 +29,31 @@ async function afterMerge() {
 type SuggestionFilter = 'ALL' | 'THIS_WEEK' | 'FOLLOW_UP' | 'IGNORED';
 const suggestionFilter = ref<SuggestionFilter>('ALL');
 const showRules = ref(false);
+// Brands bought straight from the brand owner have their own list and stay out of the general one (CR-007 E1).
+type BrandList = 'GENERAL' | 'PARRS' | 'COCO_BROWNIE' | 'METODAY' | 'HAAB';
+const BRAND_LISTS: { key: BrandList; label: string }[] = [
+  { key: 'GENERAL', label: '总进货单' }, { key: 'PARRS', label: '帕氏' }, { key: 'COCO_BROWNIE', label: 'coco brownie' },
+  { key: 'METODAY', label: 'Metoday' }, { key: 'HAAB', label: 'Haab' },
+];
+const brandList = ref<BrandList>('GENERAL');
+const inList = (item: PurchaseSuggestion, list: BrandList) => (item.brandGroup ?? 'GENERAL') === list;
+const brandTabs = computed(() => BRAND_LISTS.map((list) => ({ ...list, count: (purchaseSuggestions.value?.suggestions ?? []).filter((item) => inList(item, list.key)).length })));
+const listTitle = computed(() => (brandList.value === 'GENERAL' ? '总进货单' : `${BRAND_LISTS.find((list) => list.key === brandList.value)!.label}进货单`));
+const thisWeek = computed(() => thisWeekPurchaseSuggestions.value.filter((item) => inList(item, brandList.value)));
+const followUp = computed(() => followUpPurchaseSuggestions.value.filter((item) => inList(item, brandList.value)));
+const ignoredRows = computed(() => (purchaseSuggestions.value?.ignoredSuggestions ?? []).filter((item) => inList(item, brandList.value)));
 const suggestionTabs = computed(() => [
-  { key: 'ALL' as const, label: '全部', count: purchaseSuggestions.value?.suggestions.length ?? 0 },
-  { key: 'THIS_WEEK' as const, label: '本周优先', count: thisWeekPurchaseSuggestions.value.length },
-  { key: 'FOLLOW_UP' as const, label: '后续跟进', count: followUpPurchaseSuggestions.value.length },
-  { key: 'IGNORED' as const, label: '已忽略', count: purchaseSuggestions.value?.ignoredSuggestions.length ?? 0 },
+  { key: 'ALL' as const, label: '全部', count: thisWeek.value.length + followUp.value.length },
+  { key: 'THIS_WEEK' as const, label: '本周优先', count: thisWeek.value.length },
+  { key: 'FOLLOW_UP' as const, label: '后续跟进', count: followUp.value.length },
+  { key: 'IGNORED' as const, label: '已忽略', count: ignoredRows.value.length },
 ]);
 const suggestionRows = computed(() => {
-  const data = purchaseSuggestions.value;
-  if (!data) return [];
-  if (suggestionFilter.value === 'IGNORED') return data.ignoredSuggestions;
-  if (suggestionFilter.value === 'THIS_WEEK') return thisWeekPurchaseSuggestions.value;
-  if (suggestionFilter.value === 'FOLLOW_UP') return followUpPurchaseSuggestions.value;
-  return [...thisWeekPurchaseSuggestions.value, ...followUpPurchaseSuggestions.value];
+  if (!purchaseSuggestions.value) return [];
+  if (suggestionFilter.value === 'IGNORED') return ignoredRows.value;
+  if (suggestionFilter.value === 'THIS_WEEK') return thisWeek.value;
+  if (suggestionFilter.value === 'FOLLOW_UP') return followUp.value;
+  return [...thisWeek.value, ...followUp.value];
 });
 
 // 高: out of stock or under a week left; 中: other this-week items; 低: follow-up.
@@ -76,10 +88,13 @@ function suggestionNote(item: PurchaseSuggestion) {
     <template v-if="purchaseView === 'suggestions'">
       <section class="system-card buy-panel" v-if="purchaseSuggestions">
         <header class="buy-panel-head">
-          <div><h3>进货建议</h3><p>按近 28 天销量备 4–6 周货 · 库存读取 {{ dateTime(purchaseSuggestions.generatedAt) }}</p></div>
+          <div><h3>{{ listTitle }}</h3><p>按近 28 天销量备 4–6 周货 · 库存读取 {{ dateTime(purchaseSuggestions.generatedAt) }}</p></div>
           <div class="buy-panel-links"><button class="buy-link" type="button" @click="showRules = !showRules">{{ showRules ? '收起规则' : '规则说明' }}</button><button class="buy-link" type="button" @click="purchaseView = 'order'">本周进货单 →</button></div>
         </header>
         <div v-if="showRules" class="buy-rules"><p>{{ purchaseSuggestions.calculation }}</p><p>加入进货单不会改变库存；到货后在扫码入库中填写批次和到期日期，库存才会增加。</p></div>
+        <nav class="buy-brands" aria-label="品牌进货单">
+          <button v-for="list in brandTabs" :key="list.key" type="button" :class="{ active: brandList === list.key }" @click="brandList = list.key; suggestionFilter = 'ALL'">{{ list.label }}<b>{{ list.count }}</b></button>
+        </nav>
         <nav class="buy-tabs" aria-label="进货建议筛选">
           <button v-for="tab in suggestionTabs" :key="tab.key" type="button" :class="{ active: suggestionFilter === tab.key }" @click="suggestionFilter = tab.key">{{ tab.label }}（{{ tab.count }}）</button>
         </nav>
@@ -95,9 +110,12 @@ function suggestionNote(item: PurchaseSuggestion) {
                 <td class="buy-num buy-qty" data-k="建议">{{ number(item.suggestedQuantity) }}</td>
                 <td class="buy-level"><span :class="['buy-pill', priorityOf(item).tone]">{{ priorityOf(item).label }}</span></td>
                 <td class="buy-actions">
-                  <template v-if="suggestionFilter === 'IGNORED'"><button class="buy-btn" type="button" :disabled="purchaseLoading" @click="restorePurchaseSuggestion(item)">恢复</button></template>
-                  <template v-else><button class="buy-btn" type="button" :disabled="purchaseLoading || item.alreadyIncluded" @click="addToPurchaseOrder(item.productId, item.source, item.suggestedQuantity)">{{ item.alreadyIncluded ? '已加入' : '加入进货单' }}</button><button class="buy-link" type="button" :disabled="purchaseLoading" @click="ignorePurchaseSuggestion(item)">忽略</button></template>
-                  <span class="buy-more"><button class="buy-link" type="button" @click="recountItem = item">调库存</button><button class="buy-link" type="button" @click="mergeItem = item">合并同款</button></span>
+                  <div class="buy-action-grid">
+                    <button v-if="suggestionFilter === 'IGNORED'" class="buy-btn primary" type="button" :disabled="purchaseLoading" @click="restorePurchaseSuggestion(item)">恢复</button>
+                    <template v-else><button class="buy-btn primary" type="button" :disabled="purchaseLoading || item.alreadyIncluded" @click="addToPurchaseOrder(item.productId, item.source, item.suggestedQuantity)">{{ item.alreadyIncluded ? '已加入' : '加入进货单' }}</button><button class="buy-btn" type="button" :disabled="purchaseLoading" @click="ignorePurchaseSuggestion(item)">忽略</button></template>
+                    <button class="buy-btn" type="button" @click="recountItem = item">调库存</button>
+                    <button class="buy-btn" type="button" @click="mergeItem = item">合并同款</button>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -154,11 +172,17 @@ function suggestionNote(item: PurchaseSuggestion) {
 :root .management-workspace .buy-pill.high{background:var(--buy-high-bg);color:var(--buy-high)}
 :root .management-workspace .buy-pill.mid{background:var(--buy-mid-bg);color:var(--buy-mid)}
 :root .management-workspace .buy-pill.low{background:var(--buy-low-bg);color:var(--buy-low)}
-:root .management-workspace .buy-actions{white-space:nowrap}
-:root .management-workspace .buy-more{display:flex;gap:10px;margin-top:4px}
-:root .management-workspace .buy-more .buy-link{font-size:12px}
-:root .management-workspace .buy-btn{min-height:30px;margin-right:6px;padding:0 12px;border:1px solid var(--buy-accent);border-radius:7px;background:transparent;box-shadow:none;color:var(--buy-accent);font-size:12.5px;font-weight:600;cursor:pointer}
-:root .management-workspace .buy-btn:hover:not(:disabled){background:var(--buy-accent);color:var(--buy-accent-ink)}
+:root .management-workspace .buy-actions{width:244px;min-width:244px}
+:root .management-workspace .buy-action-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+:root .management-workspace .buy-brands{display:flex;flex-wrap:wrap;gap:6px;padding-bottom:10px;border-bottom:1px solid var(--buy-line)}
+:root .management-workspace .buy-brands button{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 14px;border:1px solid var(--buy-line);border-radius:999px;background:transparent;box-shadow:none;color:var(--buy-ink);font-size:13.5px;font-weight:600;cursor:pointer}
+:root .management-workspace .buy-brands button b{min-width:22px;padding:1px 7px;border-radius:999px;background:var(--buy-head);color:var(--buy-muted);font-size:12px}
+:root .management-workspace .buy-brands button.active{border-color:var(--buy-accent);color:var(--buy-accent)}
+:root .management-workspace .buy-brands button.active b{background:var(--buy-accent);color:var(--buy-accent-ink)}
+:root .management-workspace .buy-btn{width:100%;min-height:30px;margin:0;padding:0 6px;white-space:nowrap;border:1px solid var(--buy-line);border-radius:7px;background:transparent;box-shadow:none;color:var(--buy-ink);font-size:12.5px;font-weight:600;cursor:pointer}
+:root .management-workspace .buy-btn:hover:not(:disabled){border-color:var(--buy-accent);color:var(--buy-accent)}
+:root .management-workspace .buy-btn.primary{border-color:var(--buy-accent);color:var(--buy-accent)}
+:root .management-workspace .buy-btn.primary:hover:not(:disabled){background:var(--buy-accent);color:var(--buy-accent-ink)}
 :root .management-workspace .buy-btn:disabled{border-color:var(--buy-line);color:var(--buy-muted);cursor:default}
 @media(max-width:720px){
   :root .management-workspace .buy-panel{padding:14px}
@@ -176,9 +200,7 @@ function suggestionNote(item: PurchaseSuggestion) {
   :root .management-workspace .buy-num{font-size:12.5px;color:var(--buy-muted)}
   :root .management-workspace .buy-table td.buy-num::before{display:inline;margin:0;content:attr(data-k) ' ';color:var(--buy-muted);font-size:12.5px}
   :root .management-workspace .buy-qty{color:var(--buy-accent);font-size:13px}
-  :root .management-workspace .buy-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px}
-  :root .management-workspace .buy-more{margin-top:0}
-  :root .management-workspace .buy-btn{min-height:40px;flex:1;margin:0}
-  :root .management-workspace .buy-link{min-height:40px;padding:0 12px}
+  :root .management-workspace .buy-actions{grid-column:1/-1;width:auto;margin-top:4px}
+  :root .management-workspace .buy-btn{min-height:40px}
 }
 </style>

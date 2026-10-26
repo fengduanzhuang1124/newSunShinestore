@@ -54,7 +54,7 @@ describe('ManagementDashboard', () => {
     expect(wrapper.find('.data-freshness').text()).toContain('库存更新');
     expect(wrapper.text()).toContain('今日净销售额');
     expect(wrapper.text()).toContain('今日订单');
-    expect(wrapper.text()).toContain('较昨日');
+    expect(wrapper.text()).toContain('较前一日');
     expect(wrapper.text()).toContain('今日库存作业');
     expect(wrapper.text()).not.toContain('本月净销售额');
   });

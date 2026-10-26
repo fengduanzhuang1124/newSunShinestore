@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { DISCONTINUED_IGNORE_REASON, ignoreIsActive, isDirectShip, productGroupKey, setDirectShip } from './replenishment-rules.js';
+import { DISCONTINUED_IGNORE_REASON, ignoreIsActive, isDirectShip, productGroupKey, purchaseBrandGroup, setDirectShip } from './replenishment-rules.js';
 
 const now = new Date('2026-10-25T00:00:00.000Z');
 const daysAgo = (days: number) => new Date(now.getTime() - days * 86_400_000);
@@ -32,6 +32,16 @@ describe('replenishment rules (CR-005)', () => {
     expect(productGroupKey('swiss120粒护肝')).toBe(productGroupKey('Swisse 120粒护肝'));
     expect(productGroupKey('EAORON Hyaluronic 爽肤水 120ml')).toBe(productGroupKey('eaoron hyaluronic 爽肤水120ml'));
     expect(productGroupKey('swisse 120粒护肝')).not.toBe(productGroupKey('swisse200粒护肝'));
+  });
+
+  it('puts brand-owner brands on their own purchase lists', () => {
+    expect(purchaseBrandGroup('parrsmanukahoney handcreme30ml')).toBe('PARRS');
+    expect(purchaseBrandGroup('帕式 绵羊油 lip balm')).toBe('PARRS');
+    expect(purchaseBrandGroup('coco browine 眼膜')).toBe('COCO_BROWNIE');
+    expect(purchaseBrandGroup('MeToday虾青素30粒')).toBe('METODAY');
+    expect(purchaseBrandGroup('Haab anti-dandruff 洗发水 460ml')).toBe('HAAB');
+    expect(purchaseBrandGroup('帕玛氏250ml身体乳')).toBeNull();
+    expect(purchaseBrandGroup('Lucas 木瓜膏25g')).toBeNull();
   });
 
   it('records the direct-ship flag with an audit row', async () => {

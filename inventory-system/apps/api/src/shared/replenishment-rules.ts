@@ -20,6 +20,19 @@ export function productNames(product: { name: string; chineseName?: string | nul
   return [product.chineseName, product.name, product.englishName].filter(Boolean).join(' ');
 }
 
+// Brands ordered straight from the brand owner get their own purchase list instead of the general one (CR-007 E1).
+// Spellings seen in the catalogue: parrs/parra/prres and 帕氏/帕式; coco brownie/browinie/browine.
+export const PURCHASE_BRAND_GROUPS = [
+  { key: 'PARRS', label: '帕氏', pattern: /parrs|\bparr?a\b|\bprres\b|帕氏|帕式/i },
+  { key: 'COCO_BROWNIE', label: 'coco brownie', pattern: /coco\s*brow/i },
+  { key: 'METODAY', label: 'Metoday', pattern: /metoday/i },
+  { key: 'HAAB', label: 'Haab', pattern: /\bhaab\b/i },
+] as const;
+export type PurchaseBrandGroup = (typeof PURCHASE_BRAND_GROUPS)[number]['key'];
+export function purchaseBrandGroup(text: string): PurchaseBrandGroup | null {
+  return PURCHASE_BRAND_GROUPS.find((group) => group.pattern.test(text))?.key ?? null;
+}
+
 // Records whose display names match once case, spaces and punctuation are ignored are one product for purchasing:
 // the same goods under several barcodes or packagings (REQ-013 follow-up). "swiss" is the common misspelling of Swisse.
 export function productGroupKey(name: string) {

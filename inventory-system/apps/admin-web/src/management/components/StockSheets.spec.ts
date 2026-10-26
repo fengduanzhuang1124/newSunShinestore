@@ -50,16 +50,18 @@ describe('ProductMergeSheet (CR-006 D2)', () => {
   });
 });
 
-describe('SoldItemsSheet', () => {
-  it('lists what was sold with totals and filters by name', async () => {
-    const items = [
-      { productId: '1', productName: 'TheraLady24k大金瓶精华液', brandName: 'TheraLady', quantity: 58, revenue: 2262 },
-      { productId: null, productName: 'MISC_', brandName: '', quantity: 35, revenue: 206.15 },
-    ];
-    const wrapper = mount(SoldItemsSheet, { props: { title: '今日卖出的商品', items, formatNumber: String }, ...stubs });
+describe('SoldItemsSheet (CR-007 E4)', () => {
+  it('ranks what was sold, pages by 50 and filters by name', async () => {
+    const items = Array.from({ length: 120 }, (_, index) => ({ productId: String(index + 1), productName: index === 0 ? 'TheraLady24k大金瓶精华液' : `商品${index + 1}`, brandName: 'B', quantity: 120 - index, revenue: 0 }));
+    const wrapper = mount(SoldItemsSheet, { props: { title: '今日卖出的商品', items, formatNumber: String }, attachTo: document.body, ...stubs });
+    await flushPromises();
 
-    expect(wrapper.get('header p').text()).toContain('2 种商品 · 93 件');
-    expect(wrapper.findAll('.sold-list li')[0].text()).toContain('58 件');
+    expect(wrapper.findAll('.sold-stats strong').map((cell) => cell.text())).toEqual(['120种', '7260件', 'TheraLady24k大金瓶精华液']);
+    expect(wrapper.findAll('.sold-list li')).toHaveLength(50);
+    expect(wrapper.get('.sold-list li em').text()).toBe('1');
+    await wrapper.findAll('.sold-pages button')[1].trigger('click');
+    expect(wrapper.get('.sold-list li em').text()).toBe('51');
+    expect(wrapper.get('.sold-pages span').text()).toContain('第 2 / 3 页');
     await wrapper.get('.sold-search').setValue('thera');
     expect(wrapper.findAll('.sold-list li')).toHaveLength(1);
   });
