@@ -3,12 +3,14 @@ import type { PrismaClient } from '@sunshine/database';
 import { PrismaService } from '../database/prisma.service.js';
 import { InventoryPermissionService } from './inventory-permission.service.js';
 import { parseExpiryInput } from './expiry-date.js';
-import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto, LinkPosStockCountItemDto } from './stock-count.dto.js';
+import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto, LinkPosStockCountItemDto, MergeProductsDto } from './stock-count.dto.js';
+import { mergeProductInto } from './product-merge.js';
 import { barcodeSpellings, pickBarcodeMatch } from './barcode-lookup.js';
 import { DISCONTINUED_IGNORE_REASON, isDirectShip, productNames } from '../shared/replenishment-rules.js';
 import { planStockCount, type CurrentBatch, type ExpiryPrecision } from './stock-count-plan.js';
 
 const CONFIRM_ACTION = 'inventory.stock_count.confirm';
+const RECOUNT_ACTION = 'inventory.manual_recount';
 // POS lines still waiting for stock when the product is counted; the count already reflects those sales.
 const COVERABLE_REVIEW_REASONS = ['INSUFFICIENT_INVENTORY'];
 
@@ -252,6 +254,131 @@ export class StockCountService {
     });
   }
 
+  // One product's batches as they are now, for the purchase-page recount (CR-006 D1).
+  async productStock(organizationId: bigint, userId: bigint, productIdValue: string) {
+    const permission = await this.adminPermission(organizationId, userId);
+    const productId = this.id(productIdValue, '商品');
+    const product = await this.prisma.client.product.findFirst({
+      where: { id: productId, organizationId, status: 'ACTIVE' },
+      select: { id: true, name: true, barcodes: { where: { status: 'ACTIVE' }, orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }], select: { barcode: true }, take: 1 } },
+    });
+    if (!product) throw new NotFoundException('商品不存在或已停用');
+    const batches = (await this.batchesByProduct(this.prisma.client, organizationId, permission.warehouseId, [productId])).get(productId.toString()) ?? [];
+    return {
+      productId: productId.toString(), productName: product.name, barcode: product.barcodes[0]?.barcode ?? null,
+      systemQuantity: batches.reduce((sum, batch) => sum + batch.quantity, 0), batches,
+    };
+  }
+
+  // Sets one product's batches to what was found on the shelf, outside a count task (CR-006 D1). Same alignment,
+  // version check and idempotency as confirming a count; earlier POS shortfalls of the product count as covered.
+  async recountProduct(organizationId: bigint, userId: bigint, productIdValue: string, input: ConfirmStockCountDto) {
+    const permission = await this.adminPermission(organizationId, userId);
+    const productId = this.id(productIdValue, '商品');
+    const storeId = permission.warehouse.storeId;
+    const counted = input.lines.map((line) => {
+      const expiry = parseExpiryInput(line.expiry.slice(0, 7), line.expiry.length === 10 ? Number(line.expiry.slice(8)) : undefined);
+      return { expiryDate: expiry.expiryDate, expiryPrecision: expiry.expiryPrecision as ExpiryPrecision, quantity: line.quantity };
+    });
+    await this.prisma.client.$transaction(async (tx) => {
+      const replay = await tx.auditLog.findFirst({ where: { organizationId, action: RECOUNT_ACTION, requestId: input.requestId }, select: { id: true } });
+      if (replay) return;
+      const product = await tx.product.findFirst({ where: { id: productId, organizationId, status: 'ACTIVE' }, select: { name: true } });
+      if (!product) throw new NotFoundException('商品不存在或已停用');
+      const balances = await tx.inventoryBalance.findMany({
+        where: { organizationId, warehouseId: permission.warehouseId, productId },
+        include: { batch: true },
+      });
+      const expected = new Map(input.expected.map((row) => [row.batchId, row.quantity]));
+      const moved = balances.some((row) => row.quantity !== (expected.get(row.batchId.toString()) ?? 0))
+        || [...expected.keys()].some((batchId) => !balances.some((row) => row.batchId.toString() === batchId));
+      if (moved) throw new ConflictException('该商品库存刚刚发生变化（可能是 POS 刚扣减），请刷新后重新确认');
+      const current: CurrentBatch[] = balances.map((row) => ({
+        batchId: row.batchId, expiryDate: row.batch.expiryDate, expiryPrecision: row.batch.expiryPrecision, quantity: row.quantity,
+      }));
+      const plan = planStockCount(current, counted);
+      const key = input.requestId.slice(0, 8);
+      await this.applyAdjustments(tx, { organizationId, warehouseId: permission.warehouseId, storeId, productId, userId }, balances, plan.adjustments, (batchId) => ({
+        movementNo: `RCT-${key}-${batchId}`, referenceType: 'MANUAL_RECOUNT', referenceId: null,
+        reason: '进货页调库存', idempotencyKey: `recount:${input.requestId}:${batchId}`,
+      }));
+      const covered = await tx.posOrderItem.updateMany({
+        where: {
+          productId, status: 'ACTIVE', inventoryReviewReason: { in: COVERABLE_REVIEW_REASONS },
+          order: { organizationId, storeId, orderedAt: { lt: new Date() } },
+        },
+        data: { inventoryReviewReason: 'COVERED_BY_STOCKTAKE' },
+      });
+      const batchSummary = (rows: { expiryDate: Date; expiryPrecision: ExpiryPrecision; quantity: number }[]) =>
+        rows.map((row) => ({ expiry: this.expiryText(row.expiryDate, row.expiryPrecision), quantity: row.quantity }));
+      await tx.auditLog.create({
+        data: {
+          organizationId, userId, storeId, warehouseId: permission.warehouseId, action: RECOUNT_ACTION, entityType: 'Product',
+          entityId: productId.toString(), requestId: input.requestId,
+          beforeSummary: { productName: product.name, quantity: plan.before, batches: batchSummary(current) },
+          afterSummary: { quantity: plan.after, batches: batchSummary(counted), source: 'purchase_suggestions', coveredSaleLines: covered.count },
+        },
+      });
+    });
+    return this.productStock(organizationId, userId, productIdValue);
+  }
+
+  // Active products by name, barcode or POS name, to pick duplicates for a merge (CR-006 D2).
+  async searchProducts(organizationId: bigint, userId: bigint, query: string) {
+    const permission = await this.adminPermission(organizationId, userId);
+    const keyword = query.trim();
+    if (keyword.length < 2) return [];
+    const storeId = permission.warehouse.storeId;
+    // Every word must appear somewhere (name, barcode or POS name), so "swisse 200" also finds "swisse200粒护肝".
+    const words = keyword.split(/\s+/).filter(Boolean).slice(0, 5);
+    const products = await this.prisma.client.product.findMany({
+      where: {
+        organizationId, status: 'ACTIVE',
+        AND: words.map((word) => ({ OR: [
+          { name: { contains: word } }, { chineseName: { contains: word } }, { englishName: { contains: word } },
+          { barcodes: { some: { barcode: { contains: word } } } },
+          { posProductMappings: { some: { storeId, status: 'ACTIVE', sourceName: { contains: word } } } },
+        ] })),
+      },
+      select: {
+        id: true, name: true,
+        barcodes: { where: { status: 'ACTIVE' }, select: { barcode: true } },
+        posProductMappings: { where: { storeId, status: 'ACTIVE' }, select: { sourceName: true }, take: 1 },
+      },
+      orderBy: { id: 'asc' },
+      take: 30,
+    });
+    const stock = await this.stockTotals(this.prisma.client, organizationId, permission.warehouseId, products.map((product) => product.id));
+    return products.map((product) => ({
+      productId: product.id.toString(), name: product.name, barcodes: product.barcodes.map((row) => row.barcode),
+      posName: product.posProductMappings[0]?.sourceName ?? null, stock: stock.get(product.id.toString()) ?? 0,
+    }));
+  }
+
+  // Merges duplicate records into the kept one (CR-006 D2), all or nothing.
+  async mergeProducts(organizationId: bigint, userId: bigint, input: MergeProductsDto) {
+    const permission = await this.adminPermission(organizationId, userId);
+    const into = BigInt(input.intoProductId);
+    const fromIds = [...new Set(input.fromProductIds)].map(BigInt);
+    if (fromIds.includes(into)) throw new BadRequestException('不能把商品合并到自己');
+    const replay = await this.prisma.client.auditLog.findFirst({ where: { organizationId, action: 'product.merge_same', requestId: input.requestId }, select: { id: true } });
+    if (!replay) {
+      await this.prisma.client.$transaction(async (tx) => {
+        const products = await tx.product.findMany({ where: { id: { in: [into, ...fromIds] }, organizationId, status: 'ACTIVE' }, select: { id: true, name: true } });
+        if (products.length !== fromIds.length + 1) throw new NotFoundException('有商品不存在或已停用，请刷新后重试');
+        const intoName = products.find((product) => product.id === into)!.name;
+        for (const fromProductId of fromIds) {
+          await mergeProductInto(tx, {
+            organizationId, storeId: permission.warehouse.storeId, warehouseId: permission.warehouseId, userId, intoProductId: into, fromProductId,
+            stockMode: input.stockMode, requestId: input.requestId, action: 'product.merge_same',
+            reason: input.stockMode === 'SUM' ? `同款合并到「${intoName}」，库存相加` : `同款合并到「${intoName}」，以其库存为准`,
+          });
+        }
+      });
+    }
+    return this.productStock(organizationId, userId, input.intoProductId);
+  }
+
   async restore(organizationId: bigint, userId: bigint, taskIdValue: string, itemIdValue: string) {
     const permission = await this.adminPermission(organizationId, userId);
     const taskId = this.id(taskIdValue, '盘点任务');
@@ -337,38 +464,10 @@ export class StockCountService {
       const confirmation = item.confirmCount + 1;
       const confirmedAt = new Date();
 
-      for (const adjustment of plan.adjustments) {
-        const batchId = adjustment.batchId ?? (await tx.productBatch.upsert({
-          where: { organizationId_productId_expiryDate_expiryPrecision: {
-            organizationId, productId: item.productId, expiryDate: adjustment.expiryDate, expiryPrecision: adjustment.expiryPrecision,
-          } },
-          update: { status: 'ACTIVE' },
-          create: { organizationId, productId: item.productId, expiryDate: adjustment.expiryDate, expiryPrecision: adjustment.expiryPrecision, createdById: userId },
-          select: { id: true },
-        })).id;
-        const balance = balances.find((row) => row.batchId === batchId);
-        if (balance) {
-          const updated = await tx.inventoryBalance.updateMany({
-            where: { organizationId, warehouseId: permission.warehouseId, productId: item.productId, batchId, quantity: balance.quantity, version: balance.version },
-            data: { quantity: adjustment.after, version: { increment: 1 } },
-          });
-          if (updated.count !== 1) throw new ConflictException('该商品库存刚刚发生变化，请刷新后重新确认');
-        } else {
-          await tx.inventoryBalance.create({
-            data: { organizationId, warehouseId: permission.warehouseId, productId: item.productId, batchId, quantity: adjustment.after },
-          });
-        }
-        await tx.stockMovement.create({
-          data: {
-            movementNo: `CNT-${item.id}-${confirmation}-${batchId}`,
-            organizationId, storeId: item.task.storeId, warehouseId: permission.warehouseId, productId: item.productId, batchId,
-            movementType: adjustment.delta > 0 ? 'STOCKTAKE_GAIN' : 'STOCKTAKE_LOSS',
-            quantityDelta: adjustment.delta, referenceType: 'STOCK_COUNT', referenceId: item.id,
-            reason: `盘点任务 ${item.task.code}`, performedById: userId,
-            idempotencyKey: `count:${item.id}:${confirmation}:${batchId}`,
-          },
-        });
-      }
+      await this.applyAdjustments(tx, { organizationId, warehouseId: permission.warehouseId, storeId: item.task.storeId, productId: item.productId, userId }, balances, plan.adjustments, (batchId) => ({
+        movementNo: `CNT-${item.id}-${confirmation}-${batchId}`, referenceType: 'STOCK_COUNT', referenceId: item.id,
+        reason: `盘点任务 ${item.task.code}`, idempotencyKey: `count:${item.id}:${confirmation}:${batchId}`,
+      }));
 
       const covered = await tx.posOrderItem.updateMany({
         where: {
@@ -403,6 +502,45 @@ export class StockCountService {
       if (pending === 0) await tx.stockCountTask.update({ where: { id: item.taskId }, data: { status: 'COMPLETED', completedAt: confirmedAt } });
       return this.confirmResult(tx, item.task, item.id, organizationId, permission.warehouseId);
     });
+  }
+
+  // Writes a count plan: creates batches for new expiry dates, sets each balance (version-checked) and records one
+  // stocktake movement per changed batch. Shared by the count task and the purchase-page recount (CR-006 D1).
+  private async applyAdjustments(
+    tx: Pick<PrismaClient, 'productBatch' | 'inventoryBalance' | 'stockMovement'>,
+    context: { organizationId: bigint; warehouseId: bigint; storeId: bigint; productId: bigint; userId: bigint },
+    balances: { batchId: bigint; quantity: number; version: number }[],
+    adjustments: ReturnType<typeof planStockCount>['adjustments'],
+    movement: (batchId: bigint) => { movementNo: string; referenceType: string; referenceId: bigint | null; reason: string; idempotencyKey: string },
+  ) {
+    const { organizationId, warehouseId, storeId, productId, userId } = context;
+    for (const adjustment of adjustments) {
+      const batchId = adjustment.batchId ?? (await tx.productBatch.upsert({
+        where: { organizationId_productId_expiryDate_expiryPrecision: {
+          organizationId, productId, expiryDate: adjustment.expiryDate, expiryPrecision: adjustment.expiryPrecision,
+        } },
+        update: { status: 'ACTIVE' },
+        create: { organizationId, productId, expiryDate: adjustment.expiryDate, expiryPrecision: adjustment.expiryPrecision, createdById: userId },
+        select: { id: true },
+      })).id;
+      const balance = balances.find((row) => row.batchId === batchId);
+      if (balance) {
+        const updated = await tx.inventoryBalance.updateMany({
+          where: { organizationId, warehouseId, productId, batchId, quantity: balance.quantity, version: balance.version },
+          data: { quantity: adjustment.after, version: { increment: 1 } },
+        });
+        if (updated.count !== 1) throw new ConflictException('该商品库存刚刚发生变化，请刷新后重新确认');
+      } else {
+        await tx.inventoryBalance.create({ data: { organizationId, warehouseId, productId, batchId, quantity: adjustment.after } });
+      }
+      await tx.stockMovement.create({
+        data: {
+          organizationId, storeId, warehouseId, productId, batchId,
+          movementType: adjustment.delta > 0 ? 'STOCKTAKE_GAIN' : 'STOCKTAKE_LOSS', quantityDelta: adjustment.delta,
+          performedById: userId, ...movement(batchId),
+        },
+      });
+    }
   }
 
   // The confirmed item with its batches as they are now (so the phone can recount it) and the task progress.

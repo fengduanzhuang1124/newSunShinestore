@@ -27,7 +27,7 @@ import { CorrectBatchExpiryDto, DeleteExpiryAlertDto, ExpiryAlertActionDto, Expi
 import { WarehouseLocationService } from './warehouse-location.service.js';
 import { AssignWarehouseLocationDto, SaveWarehouseLocationDto } from './warehouse-location.dto.js';
 import { StockCountService } from './stock-count.service.js';
-import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto, LinkPosStockCountItemDto } from './stock-count.dto.js';
+import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto, LinkPosStockCountItemDto, MergeProductsDto } from './stock-count.dto.js';
 
 @Controller('inventory')
 @UseGuards(JwtAuthGuard)
@@ -71,6 +71,30 @@ export class InventoryController {
   async ignoreStockCountItem(@Req() request: AuthenticatedRequest, @Param('taskId') taskId: string, @Param('itemId') itemId: string, @Body() input: IgnoreStockCountItemDto) {
     const user = request.inventoryUser!;
     return { code: 200, message: '已忽略该商品', data: await this.stockCounts.ignore(user.organizationId, user.id, taskId, itemId, input) };
+  }
+
+  @Get('products/search')
+  async searchProductsForMerge(@Req() request: AuthenticatedRequest, @Query('q') query = '') {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '查询成功', data: await this.stockCounts.searchProducts(user.organizationId, user.id, query) };
+  }
+
+  @Post('products/merge')
+  async mergeProducts(@Req() request: AuthenticatedRequest, @Body() input: MergeProductsDto) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '已合并', data: await this.stockCounts.mergeProducts(user.organizationId, user.id, input) };
+  }
+
+  @Get('products/:productId/stock')
+  async productStock(@Req() request: AuthenticatedRequest, @Param('productId') productId: string) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '查询成功', data: await this.stockCounts.productStock(user.organizationId, user.id, productId) };
+  }
+
+  @Post('products/:productId/recount')
+  async recountProduct(@Req() request: AuthenticatedRequest, @Param('productId') productId: string, @Body() input: ConfirmStockCountDto) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '库存已更新', data: await this.stockCounts.recountProduct(user.organizationId, user.id, productId, input) };
   }
 
   @Get('count-tasks/:taskId/pos-products')
