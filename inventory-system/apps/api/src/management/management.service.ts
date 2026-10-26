@@ -9,6 +9,12 @@ import { isCoreReplenishmentProduct } from './core-replenishment.js';
 import { purchaseCoverage } from './purchase-coverage.js';
 import { ignoreIsActive, isDirectShip, productGroupKey, productNames, setDirectShip } from '../shared/replenishment-rules.js';
 
+// Shipping and international fee lines are charged per kilogram: money received, but not goods sold, so they never
+// count as units or appear among products (same names the POS sync treats as non-inventory).
+export function isShippingFeeLine(name: string | null | undefined) {
+  return /shipping fee|international fee|运费/i.test(name ?? '');
+}
+
 type SalesLine = { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number };
 type SalesAnalysisInput = { from: string; to: string; dimension: 'DAY' | 'WEEK' | 'MONTH'; brand?: string; category?: string };
 type ProductsBrandsInput = { from: string; to: string; query?: string; brand?: string; category?: string };
@@ -1048,7 +1054,7 @@ export class ManagementService {
         where: { organizationId, storeId: { in: storeIds }, orderedAt: { gte: start, lt: end } },
         select: {
           id: true, storeId: true, orderAmount: true, refundAmount: true,
-          items: { where: { status: 'ACTIVE' }, select: { quantity: true, isMinus: true } },
+          items: { where: { status: 'ACTIVE' }, select: { quantity: true, isMinus: true, sourceName: true } },
         },
       }),
       this.prisma.client.inventoryBalance.findMany({
@@ -1066,6 +1072,7 @@ export class ManagementService {
       const refunds = storeOrders.reduce((sum, order) => sum + Number(order.refundAmount ?? 0), 0);
       const netRevenue = grossRevenue - refunds;
       const unitsSold = storeOrders.reduce((sum, order) => sum + order.items.reduce((itemSum, item) => {
+        if (isShippingFeeLine(item.sourceName)) return itemSum;
         const quantity = Math.abs(Number(item.quantity));
         return itemSum + (item.isMinus ? -quantity : quantity);
       }, 0), 0);
@@ -1499,6 +1506,7 @@ export class ManagementService {
       day.orders += 1;
       daily.set(date, day);
       for (const item of order.items) {
+        if (isShippingFeeLine(item.sourceName)) continue;
         const rawQuantity = Math.abs(Number(item.quantity));
         const quantity = item.isMinus ? -rawQuantity : rawQuantity;
         const itemRevenue = quantity * Number(item.unitPrice ?? 0);
@@ -1589,6 +1597,7 @@ export class ManagementService {
         const quantity = (item.isMinus ? -1 : 1) * Math.abs(Number(item.quantity));
         const revenue = quantity * Number(item.unitPrice ?? 0);
         lineRevenue += revenue;
+        if (isShippingFeeLine(item.sourceName)) continue;
         orderUnits += quantity;
         const productName = item.product?.chineseName || item.product?.name || item.sourceName || '未命名商品';
         const brandName = this.displayBrand(item.product?.brandName, item.sourceName, item.product?.chineseName, item.product?.name);

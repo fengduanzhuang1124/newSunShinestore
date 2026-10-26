@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { ManagementService } from './management.service.js';
+import { isShippingFeeLine, ManagementService } from './management.service.js';
 
 const DAY = 86_400_000;
 
@@ -283,5 +283,15 @@ describe('ManagementService.posUnlistedStock', () => {
     expect(product.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ posProductMappings: { none: { storeId: 1n, status: 'ACTIVE' } } }),
     }));
+  });
+});
+
+describe('isShippingFeeLine', () => {
+  it('treats per-kilogram shipping and international fees as non-goods, but not products like coffee', () => {
+    expect(isShippingFeeLine('international fee 8.5')).toBe(true);
+    expect(isShippingFeeLine('International Shipping Fee $10')).toBe(true);
+    expect(isShippingFeeLine('out international shipping fee')).toBe(true);
+    expect(isShippingFeeLine('BioE coffee bites56g')).toBe(false);
+    expect(isShippingFeeLine(null)).toBe(false);
   });
 });
