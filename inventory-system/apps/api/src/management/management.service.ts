@@ -7,7 +7,7 @@ import { PosInventoryApplicationService } from '../pos/application/pos-inventory
 import { PosRealtimeSyncService } from '../pos/application/pos-realtime-sync.service.js';
 import { isCoreReplenishmentProduct } from './core-replenishment.js';
 import { purchaseCoverage } from './purchase-coverage.js';
-import { ignoreIsActive, isDirectShip, productGroupKey, productNames, setDirectShip } from '../shared/replenishment-rules.js';
+import { ignoreIsActive, isDirectShip, productGroupKey, productNames, purchaseBrandGroup, setDirectShip } from '../shared/replenishment-rules.js';
 
 // Shipping and international fee lines are charged per kilogram: money received, but not goods sold, so they never
 // count as units or appear among products (same names the POS sync treats as non-inventory).
@@ -856,6 +856,7 @@ export class ManagementService {
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
         categoryName: product.categoryName || '未标注品类', currentInventory, minimumStock,
         recent28DayQty, salesBasis, weeklyVelocity, coverageWeeks, targetWeeks, targetInventory,
+        brandGroup: purchaseBrandGroup(`${productNames(product)} ${product.brandName ?? ''}`),
         suggestedQuantity, displayStock, source, priority, alreadyIncluded: members.some((member) => included.has(member.id.toString())),
         ignored: Boolean(ignoredRow), ignoredReason: ignoredRow?.reason ?? null,
         ignoredAt: ignoredRow?.ignoredAt.toISOString() ?? null,

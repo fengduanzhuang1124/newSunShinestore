@@ -127,7 +127,7 @@ type InventoryOperationRow = {
   replenishmentHidden: boolean; replenishmentHiddenUntil: string | null; directShipExcluded: boolean; directShip?: boolean;
 };
 type PurchaseSource = 'MANUAL' | 'OUT_OF_STOCK' | 'LOW_STOCK' | 'HOT_SALES' | 'WEEKLY_FORECAST';
-export type PurchaseSuggestion = { productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; currentInventory: number; minimumStock: number | null; recent28DayQty: number; weeklyVelocity: number; coverageWeeks: number | null; targetWeeks: number | null; targetInventory: number; suggestedQuantity: number; source: PurchaseSource; priority: 'THIS_WEEK' | 'FOLLOW_UP'; alreadyIncluded: boolean; ignored: boolean; ignoredReason: string | null; ignoredAt: string | null; recentReceivedQty?: number; lastReceivedAt?: string | null; salesBasis?: '28_DAYS' | '90_DAYS'; displayStock?: boolean; mergedProducts?: { productId: string; productName: string; barcode: string | null; currentInventory: number; recent28DayQty: number }[] };
+export type PurchaseSuggestion = { productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; currentInventory: number; minimumStock: number | null; recent28DayQty: number; weeklyVelocity: number; coverageWeeks: number | null; targetWeeks: number | null; targetInventory: number; suggestedQuantity: number; source: PurchaseSource; priority: 'THIS_WEEK' | 'FOLLOW_UP'; alreadyIncluded: boolean; ignored: boolean; ignoredReason: string | null; ignoredAt: string | null; recentReceivedQty?: number; lastReceivedAt?: string | null; salesBasis?: '28_DAYS' | '90_DAYS'; displayStock?: boolean; brandGroup?: 'PARRS' | 'COCO_BROWNIE' | 'METODAY' | 'HAAB' | null; mergedProducts?: { productId: string; productName: string; barcode: string | null; currentInventory: number; recent28DayQty: number }[] };
 type PurchaseSuggestions = { generatedAt: string; inventoryLatestUpdatedAt: string | null; period: { from: string; to: string }; calculation: string; summary: { products: number; suggestedUnits: number; thisWeekProducts: number; followUpProducts: number; alreadyIncluded: number; ignored: number; arrived?: number }; suggestions: PurchaseSuggestion[]; ignoredSuggestions: PurchaseSuggestion[]; arrivedSuggestions?: PurchaseSuggestion[] };
 type PurchaseOrderItem = { id: string; productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; source: PurchaseSource; currentInventory: number; recentSevenDayQty: number; suggestedQuantity: number; orderedQuantity: number; receivedQuantity: number; supplierName: string | null; unitCostCents: number | null; caseSize: number | null; notes: string | null };
 type PurchaseOrder = { id: string; orderNo: string; weekStart: string; status: 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'; createdAt: string; updatedAt: string; confirmedAt: string | null; orderedAt: string | null; summary: { productCount: number; suggestedUnits: number; orderedUnits: number; receivedUnits: number; totalCostCents: number }; items: PurchaseOrderItem[] };
@@ -178,6 +178,8 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
   const syncDate = ref(storeToday());
   const reconcile = ref(false);
   const today = storeToday();
+  // The day the overview shows (CR-007 E3); sales figures follow it, stock and expiry stay current.
+  const overviewDate = ref(today);
   const posInventoryFrom = ref(`${today.slice(0, 7)}-01`);
   const posInventoryTo = ref(today);
   const posInventoryPreview = ref<PosInventoryPreview | null>(null);
@@ -499,7 +501,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     error.value = '';
     try {
       const [overviewData, foundationData, purchaseOrderData] = await Promise.all([
-        managementRequest<Overview>(`/management/overview?storeId=${encodeURIComponent(props.storeId)}&date=${today}`),
+        managementRequest<Overview>(`/management/overview?storeId=${encodeURIComponent(props.storeId)}&date=${overviewDate.value}`),
         managementRequest<DataFoundation>(`/management/data-foundation?storeId=${encodeURIComponent(props.storeId)}`),
         canSection('inventory') ? managementRequest<CurrentPurchaseOrder>(`/management/purchase-orders/current?storeId=${encodeURIComponent(props.storeId)}`).catch(() => null) : Promise.resolve(null),
       ]);
@@ -512,6 +514,12 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     } finally {
       loading.value = false;
     }
+  }
+
+  function selectOverviewDate(value: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value > today) return;
+    overviewDate.value = value;
+    void loadOverview();
   }
 
   async function refreshOverviewRealtime() {
@@ -1120,7 +1128,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     inventoryStatusCounts, filteredInventoryProducts, inventoryPageCount, pagedInventoryProducts,
     thisWeekPurchaseSuggestions, followUpPurchaseSuggestions, money, number, percent, comparisonClass, dateTime,
     readinessLabel, domainLabel, openNativePicker, loadOverview, refreshOverviewRealtime, isoDate, overviewRange,
-    loadOverviewTrend, loadOverviewHotProducts, selectOverviewTrend, selectOverviewHot, managementRequest,
+    loadOverviewTrend, loadOverviewHotProducts, selectOverviewTrend, selectOverviewHot, managementRequest, overviewDate, selectOverviewDate,
     loadManagementAccess, loadPosManagement, loadSystemManagement, runManualSync, posInventoryIssueLabel,
     previewPosInventory, openPosInventoryConfirmation, reapplyReviewLines, applyPosInventory, loadSalesAnalysis,
     loadProductsBrands, loadInventoryOperations, configureMinimumStock, saveMinimumStock, setInventoryVisibility,

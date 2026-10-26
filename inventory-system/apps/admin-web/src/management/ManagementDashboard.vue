@@ -15,7 +15,7 @@ const emit = defineEmits<{ 'open-report': [view: 'receipts' | 'expiry' | 'moveme
 const management = useManagementDashboard(props, emit);
 provideManagementDashboard(management);
 const {
-  overview, loading, error, posLoading, posRunning, today, posInventoryFrom, posInventoryTo, posInventoryPreview,
+  overview, loading, error, posLoading, posRunning, today, overviewDate, selectOverviewDate, posInventoryFrom, posInventoryTo, posInventoryPreview,
   posInventoryConfirmOpen, posInventoryApplyState, pageGuideOpen, minimumStockDialog, minimumStockSaving,
   purchaseMessage, purchaseMessageTone, purchaseConfirm, purchaseConfirmBusy, activeSection, showMobileMore,
   navigationGroups, canSection, sections, currentSection, currentGuide, selectSection, pageBusy,
@@ -86,7 +86,7 @@ function openFromMore(action: 'open-account' | 'exit') {
     <main class="management-content" :class="{ 'overview-content': activeSection === 'overview' }">
     <header class="management-heading" :class="{ 'has-filters': activeSection === 'overview' || activeSection === 'system' }">
       <div><p>MANAGEMENT / {{ activeSection.toUpperCase() }}</p><h2>{{ currentSection.label }}</h2><span>{{ overview?.store.name || storeName }} · {{ currentSection.description }}</span></div>
-      <div v-if="activeSection === 'overview'" class="management-filters"><label>经营日期<strong>{{ today }}</strong></label><button type="button" :disabled="loading" @click="refreshOverviewRealtime">{{ loading ? '同步中…' : '刷新今日数据' }}</button></div>
+      <div v-if="activeSection === 'overview'" class="management-filters"><label class="overview-date">经营日期<input type="date" :value="overviewDate" :max="today" aria-label="选择经营日期" @change="selectOverviewDate(($event.target as HTMLInputElement).value)" /></label><button v-if="overviewDate !== today" class="secondary" type="button" :disabled="loading" @click="selectOverviewDate(today)">回到今天</button><button type="button" :disabled="loading" @click="refreshOverviewRealtime">{{ loading ? '同步中…' : overviewDate === today ? '刷新今日数据' : '刷新数据' }}</button></div>
       <div v-else-if="activeSection === 'system'" class="management-filters"><button type="button" :disabled="posLoading || posRunning" @click="loadSystemManagement">{{ posLoading ? '加载中…' : '刷新状态' }}</button></div>
     </header>
 
