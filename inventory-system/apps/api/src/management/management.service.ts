@@ -1535,6 +1535,8 @@ export class ManagementService {
       averageOrderValue: orders.length ? this.money(netRevenue / orders.length) : 0,
       dailySales: [...daily.entries()].map(([date, value]) => ({ date, revenue: this.money(value.revenue), orders: value.orders })),
       topProducts: [...products.values()].sort((a, b) => b.revenue - a.revenue || b.quantity - a.quantity).slice(0, 8).map((item) => ({ ...item, quantity: this.money(item.quantity), revenue: this.money(item.revenue) })),
+      // Every product behind the units figure, most sold first, so the overview can show what the units were.
+      soldProducts: [...products.values()].filter((item) => item.quantity !== 0).sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue).map((item) => ({ ...item, quantity: this.money(item.quantity), revenue: this.money(item.revenue) })),
       topBrands: [...brands.values()].sort((a, b) => b.revenue - a.revenue || b.quantity - a.quantity).slice(0, 8).map((item) => ({ ...item, quantity: this.money(item.quantity), revenue: this.money(item.revenue) })),
     };
   }

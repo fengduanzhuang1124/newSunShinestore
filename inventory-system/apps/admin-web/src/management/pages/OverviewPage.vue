@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ref } from 'vue';
+import SoldItemsSheet from '../components/SoldItemsSheet.vue';
 import { useManagementContext } from '../useManagementDashboard';
 
 const {
@@ -8,6 +10,9 @@ const {
   overviewTrendPoints, linePath, areaPath, money, number, percent, comparisonClass, dateTime, selectOverviewTrend,
   selectOverviewHot, addToPurchaseOrder, isProductInCurrentOrder, openProcurement, emit
 } = useManagementContext();
+
+// Tapping today's units shows the products behind the figure.
+const showSoldItems = ref(false);
 </script>
 
 <template>
@@ -15,10 +20,11 @@ const {
   <div class="data-freshness" aria-label="数据更新时间"><span>库存更新：{{ dateTime(foundation?.quality.inventory.latestUpdatedAt ?? null) }}</span><span>POS 最近成功同步：{{ dateTime(overview?.lastPosSyncAt ?? null) }}</span><button v-if="canSection('system')" class="text-action" type="button" @click="openDataCenter()">查看数据检查</button></div>
 
   <template v-if="overview">
+    <SoldItemsSheet v-if="showSoldItems" :title="`今日卖出的商品（${overview.period.date}）`" :items="overview.sales.current.soldProducts ?? []" :format-number="number" @close="showSoldItems = false" />
     <div class="overview-metric-strip" aria-label="经营核心指标">
       <article><i class="metric-symbol sales">$</i><span>今日净销售额<strong :class="{ 'metric-long': money(overview.sales.current.netRevenue).length > 11 }">{{ money(overview.sales.current.netRevenue) }}</strong><small :class="comparisonClass(overview.sales.comparison.netRevenuePercent)">较昨日 {{ percent(overview.sales.comparison.netRevenuePercent) }}</small></span></article>
       <article><i class="metric-symbol orders">#</i><span>今日订单<strong>{{ overview.sales.current.orderCount }} 单</strong><small :class="comparisonClass(overview.sales.comparison.orderCountPercent)">较昨日 {{ percent(overview.sales.comparison.orderCountPercent) }}</small></span></article>
-      <article><i class="metric-symbol units">∑</i><span>今日销售件数<strong>{{ number(overview.sales.current.unitsSold) }} 件</strong><small :class="comparisonClass(overview.sales.comparison.unitsSoldPercent)">较昨日 {{ percent(overview.sales.comparison.unitsSoldPercent) }}</small></span></article>
+      <article class="metric-clickable" role="button" tabindex="0" aria-label="查看今日卖了哪些商品" @click="showSoldItems = true" @keydown.enter="showSoldItems = true"><i class="metric-symbol units">∑</i><span>今日销售件数<strong>{{ number(overview.sales.current.unitsSold) }} 件</strong><small :class="comparisonClass(overview.sales.comparison.unitsSoldPercent)">较昨日 {{ percent(overview.sales.comparison.unitsSoldPercent) }}</small><small class="metric-link">查看明细 ›</small></span></article>
       <article><i class="metric-symbol average">Ø</i><span>今日平均客单价<strong :class="{ 'metric-long': money(overview.sales.current.averageOrderValue).length > 11 }">{{ money(overview.sales.current.averageOrderValue) }}</strong><small :class="comparisonClass(overview.sales.comparison.averageOrderValuePercent)">较昨日 {{ percent(overview.sales.comparison.averageOrderValuePercent) }}</small></span></article>
       <article><i class="metric-symbol stock">▦</i><span>当前库存<strong>{{ number(overview.inventory.totalQuantity) }} 件</strong><small>{{ overview.inventory.productCount }} 种商品</small></span></article>
       <article><i class="metric-symbol expiry">!</i><span>到期关注<strong>{{ number(overview.inventory.expiryAttentionQuantity) }} 件</strong><small>{{ overview.inventory.batchCount }} 个库存批次</small></span></article>
@@ -60,4 +66,7 @@ const {
 
 <style scoped>
 /* Shares the ManagementDashboard style scope (see vite.config.ts); page-specific styles go here. */
+.metric-clickable { cursor: pointer; }
+.metric-clickable:hover, .metric-clickable:focus-visible { outline: 1px solid currentColor; outline-offset: -1px; }
+.metric-link { opacity: 0.75; }
 </style>

@@ -8,6 +8,7 @@ type SalesSummary = {
   unitsSold: number; averageOrderValue: number;
   dailySales: { date: string; revenue: number; orders: number }[];
   topProducts: { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number }[];
+  soldProducts?: { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number }[];
   topBrands: { brandName: string; quantity: number; revenue: number }[];
 };
 type Overview = {

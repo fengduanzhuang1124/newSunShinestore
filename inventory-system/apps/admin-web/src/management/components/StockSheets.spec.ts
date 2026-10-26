@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ProductMergeSheet from './ProductMergeSheet.vue';
+import SoldItemsSheet from './SoldItemsSheet.vue';
 import StockRecountSheet from './StockRecountSheet.vue';
 
 afterEach(() => { document.body.innerHTML = ''; });
@@ -46,5 +47,20 @@ describe('ProductMergeSheet (CR-006 D2)', () => {
     expect(path).toBe('/inventory/products/merge');
     expect(JSON.parse(String(init?.body))).toMatchObject({ intoProductId: '1609', fromProductIds: ['1607'], stockMode: 'KEEP_TARGET' });
     expect(wrapper.emitted('merged')).toHaveLength(1);
+  });
+});
+
+describe('SoldItemsSheet', () => {
+  it('lists what was sold with totals and filters by name', async () => {
+    const items = [
+      { productId: '1', productName: 'TheraLady24k大金瓶精华液', brandName: 'TheraLady', quantity: 58, revenue: 2262 },
+      { productId: null, productName: 'MISC_', brandName: '', quantity: 35, revenue: 206.15 },
+    ];
+    const wrapper = mount(SoldItemsSheet, { props: { title: '今日卖出的商品', items, formatNumber: String }, ...stubs });
+
+    expect(wrapper.get('header p').text()).toContain('2 种商品 · 93 件');
+    expect(wrapper.findAll('.sold-list li')[0].text()).toContain('58 件');
+    await wrapper.get('.sold-search').setValue('thera');
+    expect(wrapper.findAll('.sold-list li')).toHaveLength(1);
   });
 });
