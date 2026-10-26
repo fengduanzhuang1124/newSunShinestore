@@ -30,7 +30,7 @@ const share = (quantity: number) => `${Math.max(2, Math.round((quantity / maxUni
 const listEl = ref<HTMLElement | null>(null);
 function goTo(target: number) {
   page.value = Math.min(pageCount.value, Math.max(1, target));
-  listEl.value?.scrollTo({ top: 0 });
+  if (listEl.value) listEl.value.scrollTop = 0;
 }
 </script>
 
