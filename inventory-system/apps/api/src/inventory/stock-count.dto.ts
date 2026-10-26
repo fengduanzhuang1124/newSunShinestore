@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 
 export class CountedBatchDto {
   // YYYY-MM (month precision) or YYYY-MM-DD.
@@ -76,4 +76,23 @@ export class LinkPosStockCountItemDto {
   @IsOptional()
   @IsBoolean()
   confirm?: boolean;
+}
+
+// Merges duplicate records of one product into the kept record (CR-006 D2).
+export class MergeProductsDto {
+  @IsString()
+  @Matches(/^\d+$/)
+  intoProductId!: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(10)
+  @Matches(/^\d+$/, { each: true })
+  fromProductIds!: string[];
+
+  @IsIn(['KEEP_TARGET', 'SUM'])
+  stockMode!: 'KEEP_TARGET' | 'SUM';
+
+  @IsUUID()
+  requestId!: string;
 }

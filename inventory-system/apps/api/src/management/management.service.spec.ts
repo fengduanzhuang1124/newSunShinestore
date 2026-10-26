@@ -199,6 +199,46 @@ describe('ManagementService.purchaseSuggestions same-name records', () => {
   });
 });
 
+describe('ManagementService.purchaseSuggestions CR-006 rules', () => {
+  it('keeps a display quantity for slow sellers and treats under two weeks of stock as this week', async () => {
+    const client = {
+      userStoreRole: { findMany: jest.fn().mockResolvedValue([{ store: { id: 1n, name: 'City' }, role: { code: 'ADMIN', permissions: [] } }] as never) },
+      organization: { findUniqueOrThrow: jest.fn().mockResolvedValue({ timezone: 'Pacific/Auckland' } as never) },
+      product: {
+        findMany: jest.fn().mockResolvedValue([
+          { ...product(30n, 'Trilogy保湿晚霜'), barcodes: [] },
+          { ...product(31n, 'Cath Kidston Mint'), barcodes: [] },
+          { ...product(32n, '纽乐超级钙'), barcodes: [] },
+        ] as never),
+      },
+      inventoryBalance: {
+        findMany: jest.fn().mockResolvedValue([
+          { productId: 30n, quantity: 0, updatedAt: new Date() },
+          { productId: 31n, quantity: 5, updatedAt: new Date() },
+          { productId: 32n, quantity: 9, updatedAt: new Date() },
+        ] as never),
+      },
+      posOrderItem: {
+        findMany: jest.fn().mockResolvedValue([{ productId: 30n, quantity: '1', isMinus: false }, { productId: 32n, quantity: '24', isMinus: false }] as never),
+        groupBy: jest.fn().mockResolvedValue([{ productId: 30n, _sum: { quantity: '3' } }, { productId: 31n, _sum: { quantity: '2' } }, { productId: 32n, _sum: { quantity: '70' } }] as never),
+      },
+      purchaseOrder: { findUnique: jest.fn().mockResolvedValue(null as never) },
+      purchaseSuggestionIgnore: { findMany: jest.fn().mockResolvedValue([] as never) },
+      stockMovement: { groupBy: jest.fn().mockResolvedValue([] as never) },
+    };
+    const service = new ManagementService({ client } as never, {} as never, {} as never, {} as never);
+
+    const result = await service.purchaseSuggestions(1n, 2n, 1n);
+    const byId = new Map(result.suggestions.map((row) => [row.productId, row]));
+
+    // Sold 3 in 90 days and out of stock: buy 2 for the shelf. Five on the shelf already covers the display.
+    expect(byId.get('30')).toMatchObject({ displayStock: true, targetInventory: 2, suggestedQuantity: 2, priority: 'FOLLOW_UP' });
+    expect(byId.has('31')).toBe(false);
+    // Six a week with nine on hand is 1.5 weeks: this week (was follow-up under the one-week rule).
+    expect(byId.get('32')).toMatchObject({ weeklyVelocity: 6, coverageWeeks: 1.5, priority: 'THIS_WEEK', suggestedQuantity: 27 });
+  });
+});
+
 describe('ManagementService.posDataCheck', () => {
   it('flags recent MISC sales because they cannot be deducted from a product', async () => {
     const aggregate = jest.fn()

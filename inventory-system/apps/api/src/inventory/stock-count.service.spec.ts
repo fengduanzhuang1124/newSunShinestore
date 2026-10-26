@@ -244,3 +244,43 @@ describe('StockCountService.linkPos (REQ-013)', () => {
     await expect(service.linkPos(1n, 2n, '3', '40', { barcode: '9415', confirm: true })).rejects.toBeInstanceOf(ConflictException);
   });
 });
+
+describe('StockCountService product recount and merge (CR-006)', () => {
+  it('sets a product to the counted batches outside a task and audits it', async () => {
+    const { tx, service } = setup();
+    Object.assign(tx, { product: { findFirst: jest.fn().mockResolvedValue({ id: 1994n, name: 'GoodHealth 好健康鹿茸50caps', barcodes: [] } as never) } });
+    (service as unknown as { prisma: { client: Record<string, unknown> } }).prisma.client.product = (tx as unknown as { product: unknown }).product;
+    (service as unknown as { prisma: { client: Record<string, unknown> } }).prisma.client.inventoryBalance = tx.inventoryBalance;
+
+    await service.recountProduct(1n, 2n, '1994', { lines: [{ expiry: '2028-03-11', quantity: 42 }], expected, requestId });
+
+    expect(tx.stockMovement.create).toHaveBeenCalledWith({ data: expect.objectContaining({ referenceType: 'MANUAL_RECOUNT', reason: '进货页调库存', quantityDelta: -159, idempotencyKey: `recount:${requestId}:7` }) });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'inventory.manual_recount', entityId: '1994', requestId }) });
+  });
+
+  it('merges a duplicate adding its stock batch by batch when asked to sum', async () => {
+    const { tx, service } = setup();
+    Object.assign(tx, {
+      product: { findMany: jest.fn().mockResolvedValue([{ id: 1609n, name: 'swisse 200粒护肝1' }, { id: 1607n, name: 'swisse200粒护肝' }] as never), update: jest.fn().mockResolvedValue({} as never) },
+      productBarcode: { updateMany: jest.fn().mockResolvedValue({ count: 1 } as never) },
+      posProductMapping: { updateMany: jest.fn().mockResolvedValue({ count: 1 } as never) },
+    });
+    Object.assign(tx.stockCountTaskItem, { updateMany: jest.fn().mockResolvedValue({ count: 0 } as never) });
+    Object.assign(tx.storeProduct, { findUnique: jest.fn().mockResolvedValue(null as never) });
+    Object.assign(tx.inventoryBalance, { findUnique: jest.fn().mockResolvedValue(null as never) });
+    tx.inventoryBalance.findMany.mockResolvedValue([{ productId: 1607n, batchId: 70n, quantity: 5, version: 1, batch: { expiryDate: new Date('2028-07-31T00:00:00.000Z'), expiryPrecision: 'MONTH' } }] as never);
+    const client = (service as unknown as { prisma: { client: Record<string, unknown> } }).prisma.client;
+    client.auditLog = { findFirst: jest.fn().mockResolvedValue(null as never) };
+    client.product = { findFirst: jest.fn().mockResolvedValue({ id: 1609n, name: 'swisse 200粒护肝1', barcodes: [] } as never) };
+    client.inventoryBalance = { findMany: jest.fn().mockResolvedValue([] as never) };
+
+    await service.mergeProducts(1n, 2n, { intoProductId: '1609', fromProductIds: ['1607'], stockMode: 'SUM', requestId });
+
+    expect(tx.inventoryBalance.create).toHaveBeenCalledWith({ data: { organizationId: 1n, warehouseId: 2n, productId: 1609n, batchId: 9n, quantity: 5 } });
+    expect(tx.stockMovement.create).toHaveBeenCalledWith({ data: expect.objectContaining({ productId: 1607n, quantityDelta: -5, referenceType: 'PRODUCT_MERGE' }) });
+    expect(tx.stockMovement.create).toHaveBeenCalledWith({ data: expect.objectContaining({ productId: 1609n, quantityDelta: 5, referenceType: 'PRODUCT_MERGE' }) });
+    expect(tx.posOrderItem.updateMany).toHaveBeenCalledWith({ where: { productId: 1607n }, data: { productId: 1609n } });
+    expect((tx as unknown as { product: { update: jest.Mock } }).product.update).toHaveBeenCalledWith({ where: { id: 1607n }, data: { status: 'INACTIVE' } });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'product.merge_same', entityId: '1607' }) });
+  });
+});

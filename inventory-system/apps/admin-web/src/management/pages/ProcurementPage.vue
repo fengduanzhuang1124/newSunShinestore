@@ -1,13 +1,30 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import ProductMergeSheet from '../components/ProductMergeSheet.vue';
+import StockRecountSheet from '../components/StockRecountSheet.vue';
 import { useManagementContext, type PurchaseSuggestion } from '../useManagementDashboard';
 
 const {
   purchaseSuggestions, currentPurchaseOrder, purchaseLoading, purchaseView,
   thisWeekPurchaseSuggestions, followUpPurchaseSuggestions, money, number, dateTime, addToPurchaseOrder,
   ignorePurchaseSuggestion, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem, changePurchaseStatus,
-  exportPurchaseOrderExcel, purchaseSourceLabel, purchaseStatusLabel
+  exportPurchaseOrderExcel, purchaseSourceLabel, purchaseStatusLabel, managementRequest, loadProcurement, showPurchaseMessage
 } = useManagementContext();
+
+// CR-006: fix stock or merge duplicate records right from a suggestion row, then refresh the suggestions.
+const recountItem = ref<PurchaseSuggestion | null>(null);
+const mergeItem = ref<PurchaseSuggestion | null>(null);
+async function afterRecount(stock: { productName: string; systemQuantity: number }) {
+  recountItem.value = null;
+  showPurchaseMessage(`已更新库存：${stock.productName} 现有 ${stock.systemQuantity} 件`);
+  await loadProcurement();
+}
+async function afterMerge() {
+  const name = mergeItem.value?.productName ?? '';
+  mergeItem.value = null;
+  showPurchaseMessage(`已合并同款：${name}`);
+  await loadProcurement();
+}
 
 type SuggestionFilter = 'ALL' | 'THIS_WEEK' | 'FOLLOW_UP' | 'IGNORED';
 const suggestionFilter = ref<SuggestionFilter>('ALL');
@@ -45,6 +62,7 @@ function mergedTitle(item: PurchaseSuggestion) {
 
 // CR-005: explain suggestions that would otherwise look surprising.
 function suggestionNote(item: PurchaseSuggestion) {
+  if (item.displayStock) return `慢销，保持陈列 ${number(item.targetInventory)} 件`;
   if (item.salesBasis === '90_DAYS') return '断货中，按近 90 天销量估算';
   if (item.recentReceivedQty) return `近 7 天已入库 ${number(item.recentReceivedQty)} 件，仍不足`;
   return '';
@@ -79,6 +97,7 @@ function suggestionNote(item: PurchaseSuggestion) {
                 <td class="buy-actions">
                   <template v-if="suggestionFilter === 'IGNORED'"><button class="buy-btn" type="button" :disabled="purchaseLoading" @click="restorePurchaseSuggestion(item)">恢复</button></template>
                   <template v-else><button class="buy-btn" type="button" :disabled="purchaseLoading || item.alreadyIncluded" @click="addToPurchaseOrder(item.productId, item.source, item.suggestedQuantity)">{{ item.alreadyIncluded ? '已加入' : '加入进货单' }}</button><button class="buy-link" type="button" :disabled="purchaseLoading" @click="ignorePurchaseSuggestion(item)">忽略</button></template>
+                  <span class="buy-more"><button class="buy-link" type="button" @click="recountItem = item">调库存</button><button class="buy-link" type="button" @click="mergeItem = item">合并同款</button></span>
                 </td>
               </tr>
             </tbody>
@@ -86,6 +105,8 @@ function suggestionNote(item: PurchaseSuggestion) {
           <p v-if="!suggestionRows.length" class="system-empty">{{ suggestionFilter === 'IGNORED' ? '当前没有已忽略的建议。' : '当前没有需要补货的商品。' }}</p>
         </div>
       </section>
+      <StockRecountSheet v-if="recountItem" :product-id="recountItem.productId" :request="managementRequest" @close="recountItem = null" @saved="afterRecount" />
+      <ProductMergeSheet v-if="mergeItem" :product-id="mergeItem.productId" :product-name="mergeItem.productName" :current-inventory="mergeItem.currentInventory" :request="managementRequest" @close="mergeItem = null" @merged="afterMerge" />
     </template>
 
     <template v-else>
@@ -134,6 +155,8 @@ function suggestionNote(item: PurchaseSuggestion) {
 :root .management-workspace .buy-pill.mid{background:var(--buy-mid-bg);color:var(--buy-mid)}
 :root .management-workspace .buy-pill.low{background:var(--buy-low-bg);color:var(--buy-low)}
 :root .management-workspace .buy-actions{white-space:nowrap}
+:root .management-workspace .buy-more{display:flex;gap:10px;margin-top:4px}
+:root .management-workspace .buy-more .buy-link{font-size:12px}
 :root .management-workspace .buy-btn{min-height:30px;margin-right:6px;padding:0 12px;border:1px solid var(--buy-accent);border-radius:7px;background:transparent;box-shadow:none;color:var(--buy-accent);font-size:12.5px;font-weight:600;cursor:pointer}
 :root .management-workspace .buy-btn:hover:not(:disabled){background:var(--buy-accent);color:var(--buy-accent-ink)}
 :root .management-workspace .buy-btn:disabled{border-color:var(--buy-line);color:var(--buy-muted);cursor:default}
@@ -153,7 +176,8 @@ function suggestionNote(item: PurchaseSuggestion) {
   :root .management-workspace .buy-num{font-size:12.5px;color:var(--buy-muted)}
   :root .management-workspace .buy-table td.buy-num::before{display:inline;margin:0;content:attr(data-k) ' ';color:var(--buy-muted);font-size:12.5px}
   :root .management-workspace .buy-qty{color:var(--buy-accent);font-size:13px}
-  :root .management-workspace .buy-actions{grid-column:1/-1;display:flex;align-items:center;gap:6px;margin-top:4px}
+  :root .management-workspace .buy-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px}
+  :root .management-workspace .buy-more{margin-top:0}
   :root .management-workspace .buy-btn{min-height:40px;flex:1;margin:0}
   :root .management-workspace .buy-link{min-height:40px;padding:0 12px}
 }

@@ -18,6 +18,10 @@ const SHORTAGE_SALES_WINDOW_DAYS = 180;
 // Products received within this many days are listed as arrived instead of being suggested again.
 const ARRIVED_WINDOW_DAYS = 7;
 const LONG_SALES_WINDOW_DAYS = 90;
+// Shelf quantity kept for slow sellers without a configured minimum stock (CR-006 D3).
+const DEFAULT_DISPLAY_STOCK = 2;
+// Products that will sell out within this many weeks are bought this week (CR-006 D4).
+const THIS_WEEK_COVERAGE_WEEKS = 2;
 const MANAGEMENT_PERMISSIONS = {
   overview: 'management.overview.view', sales: 'management.sales.view', inventory: 'management.inventory.view',
   posSync: 'management.pos.sync', posIssues: 'management.pos.issues', permissions: 'management.permissions.manage',
@@ -821,11 +825,20 @@ export class ManagementService {
       const longTerm28DayQty = currentInventory <= 0 ? Math.round((sum(members, longSales) * 28) / LONG_SALES_WINDOW_DAYS) : 0;
       const recent28DayQty = Math.max(actual28DayQty, longTerm28DayQty);
       const salesBasis = longTerm28DayQty > actual28DayQty ? '90_DAYS' as const : '28_DAYS' as const;
-      const { weeklyVelocity, targetWeeks, targetInventory, gap: suggestedQuantity } = purchaseCoverage(recent28DayQty, currentInventory);
+      const coverage = purchaseCoverage(recent28DayQty, currentInventory);
+      const { weeklyVelocity, targetWeeks } = coverage;
+      let { targetInventory, gap: suggestedQuantity } = coverage;
       const minimumStock = product.storeProducts[0]?.minimumStock ?? null;
+      // Slow sellers (under one a week) that sold in the last 90 days keep a shelf display quantity (CR-006 D3).
+      const displayStock = targetWeeks === null && sum(members, longSales) > 0;
+      if (displayStock) {
+        targetInventory = minimumStock ?? DEFAULT_DISPLAY_STOCK;
+        suggestedQuantity = Math.max(0, targetInventory - currentInventory);
+      }
       const coverageWeeks = weeklyVelocity > 0 ? Math.round((currentInventory / weeklyVelocity) * 10) / 10 : null;
       const source = currentInventory <= 0 ? 'OUT_OF_STOCK' : 'WEEKLY_FORECAST';
-      const priority = currentInventory <= 0 || (coverageWeeks !== null && coverageWeeks <= 1) || (minimumStock !== null && currentInventory <= minimumStock)
+      // Display top-ups of slow sellers are follow-up work, so they do not crowd out this week's buying.
+      const priority = !displayStock && (currentInventory <= 0 || (coverageWeeks !== null && coverageWeeks < THIS_WEEK_COVERAGE_WEEKS) || (minimumStock !== null && currentInventory <= minimumStock))
         ? 'THIS_WEEK' as const
         : 'FOLLOW_UP' as const;
       const ignoredRow = members.map((member) => ignored.get(member.id.toString())).filter((row) => row && ignoreIsActive(row))
@@ -837,7 +850,7 @@ export class ManagementService {
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
         categoryName: product.categoryName || '未标注品类', currentInventory, minimumStock,
         recent28DayQty, salesBasis, weeklyVelocity, coverageWeeks, targetWeeks, targetInventory,
-        suggestedQuantity, source, priority, alreadyIncluded: members.some((member) => included.has(member.id.toString())),
+        suggestedQuantity, displayStock, source, priority, alreadyIncluded: members.some((member) => included.has(member.id.toString())),
         ignored: Boolean(ignoredRow), ignoredReason: ignoredRow?.reason ?? null,
         ignoredAt: ignoredRow?.ignoredAt.toISOString() ?? null,
         recentReceivedQty: receivedRows.reduce((total, row) => total + (row!._sum.quantityDelta ?? 0), 0),
@@ -858,7 +871,7 @@ export class ManagementService {
       generatedAt: new Date().toISOString(),
       inventoryLatestUpdatedAt: latestInventoryUpdatedAt?.toISOString() ?? null,
       store: { id: store.id.toString(), name: store.name }, period: { from: calendarDateInZone(start, organization.timezone), to: today },
-      calculation: '这是备货4–6周的候选清单，不是一周必须买完。按最近28天销量折算周均（断货商品取近90天折算值与近28天的较大者）：低于1件/周不建议；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。近7天已入库但仍不足的商品照常建议并标注；直邮商品不建议；名称相同的多个档案（不同条码或包装）合并计算库存与销量。',
+      calculation: '这是备货4–6周的候选清单，不是一周必须买完。按最近28天销量折算周均（断货商品取近90天折算值与近28天的较大者）：低于1件/周但近90天有销售的保持陈列量（最低库存，未设置为2件，列入后续跟进）；1–9件/周覆盖6周，10–29件/周覆盖5周，30件及以上/周覆盖4周。可卖不足2周、缺货或低于最低库存的列为本周优先；近7天已入库但仍不足的商品照常建议并标注；直邮商品不建议；名称相同的多个档案（不同条码或包装）合并计算库存与销量。',
       summary: {
         products: suggestions.length,
         suggestedUnits: suggestions.reduce((sum, row) => sum + row.suggestedQuantity, 0),
