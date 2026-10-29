@@ -24,15 +24,17 @@ export function configureHttpApp(app: INestApplication): void {
   );
 }
 
-function isLocalInventoryOrigin(origin: string): boolean {
+export function isLocalInventoryOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);
     const isLocalHost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
     const isPrivateIpv4 = /^10\./.test(url.hostname)
       || /^192\.168\./.test(url.hostname)
       || /^172\.(1[6-9]|2\d|3[01])\./.test(url.hostname);
+    // The public Funnel address of whichever store machine runs the system (node on Windows since 2026-10-27);
+    // only devices in this tailnet get *.tail10ff0a.ts.net names.
     const isInventoryTailscaleHost = url.protocol === 'https:'
-      && url.hostname === 'macmacbook-pro.tail10ff0a.ts.net'
+      && url.hostname.endsWith('.tail10ff0a.ts.net')
       && (url.port === '' || url.port === '443');
     const isSupportedProtocol = url.protocol === 'http:' || url.protocol === 'https:';
     return isInventoryTailscaleHost
