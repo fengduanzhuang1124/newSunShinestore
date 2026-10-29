@@ -38,9 +38,9 @@ describe('InventoryQueryService', () => {
     const client = {
       organization: { findUniqueOrThrow: jest.fn().mockResolvedValue({ timezone: 'Pacific/Auckland', expiryAlertSettings: null } as never) },
       inventoryBalance: { findMany: jest.fn().mockResolvedValue([
-        { productId: 1n, batchId: 11n, quantity: 2, product: { name: '已过期商品', barcodes: [] }, batch: { expiryDate: new Date('2026-09-30T00:00:00.000Z'), expiryPrecision: 'DATE' } },
-        { productId: 2n, batchId: 12n, quantity: 3, product: { name: '两个月商品', barcodes: [] }, batch: { expiryDate: new Date('2026-12-31T00:00:00.000Z'), expiryPrecision: 'DATE' } },
-        { productId: 3n, batchId: 13n, quantity: 4, product: { name: '第六个月月底商品', barcodes: [] }, batch: { expiryDate: new Date('2027-04-30T00:00:00.000Z'), expiryPrecision: 'DATE' } },
+        { productId: 1n, batchId: 11n, quantity: 2, product: { name: '已过期商品', barcodes: [], productLocations: [] }, batch: { expiryDate: new Date('2026-09-30T00:00:00.000Z'), expiryPrecision: 'DATE' } },
+        { productId: 2n, batchId: 12n, quantity: 3, product: { name: '两个月商品', barcodes: [], productLocations: [] }, batch: { expiryDate: new Date('2026-12-31T00:00:00.000Z'), expiryPrecision: 'DATE' } },
+        { productId: 3n, batchId: 13n, quantity: 4, product: { name: '第六个月月底商品', barcodes: [], productLocations: [] }, batch: { expiryDate: new Date('2027-04-30T00:00:00.000Z'), expiryPrecision: 'DATE' } },
       ] as never) },
       expiryAlertAction: { findMany: jest.fn().mockResolvedValue([] as never) },
     };

@@ -264,6 +264,13 @@ describe('StockCountService product recount and merge (CR-006)', () => {
       product: { findMany: jest.fn().mockResolvedValue([{ id: 1609n, name: 'swisse 200粒护肝1' }, { id: 1607n, name: 'swisse200粒护肝' }] as never), update: jest.fn().mockResolvedValue({} as never) },
       productBarcode: { updateMany: jest.fn().mockResolvedValue({ count: 1 } as never) },
       posProductMapping: { updateMany: jest.fn().mockResolvedValue({ count: 1 } as never) },
+      // The duplicate sits on shelf 5, the kept record has no location yet (CR-008).
+      productLocation: {
+        findUnique: jest.fn().mockImplementation((async (args: { where: { organizationId_warehouseId_productId: { productId: bigint } } }) =>
+          args.where.organizationId_warehouseId_productId.productId === 1607n ? { productId: 1607n, locationId: 5n } : null) as never),
+        create: jest.fn().mockResolvedValue({} as never),
+        delete: jest.fn().mockResolvedValue({} as never),
+      },
     });
     Object.assign(tx.stockCountTaskItem, { updateMany: jest.fn().mockResolvedValue({ count: 0 } as never) });
     Object.assign(tx.storeProduct, { findUnique: jest.fn().mockResolvedValue(null as never) });
@@ -282,5 +289,8 @@ describe('StockCountService product recount and merge (CR-006)', () => {
     expect(tx.posOrderItem.updateMany).toHaveBeenCalledWith({ where: { productId: 1607n }, data: { productId: 1609n } });
     expect((tx as unknown as { product: { update: jest.Mock } }).product.update).toHaveBeenCalledWith({ where: { id: 1607n }, data: { status: 'INACTIVE' } });
     expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'product.merge_same', entityId: '1607' }) });
+    const locations = (tx as unknown as { productLocation: { create: jest.Mock; delete: jest.Mock } }).productLocation;
+    expect(locations.create).toHaveBeenCalledWith({ data: { organizationId: 1n, warehouseId: 2n, productId: 1609n, locationId: 5n, updatedById: 2n } });
+    expect(locations.delete).toHaveBeenCalledWith({ where: { organizationId_warehouseId_productId: { organizationId: 1n, warehouseId: 2n, productId: 1607n } } });
   });
 });

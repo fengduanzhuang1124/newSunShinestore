@@ -114,8 +114,10 @@ export class InventoryQueryService {
         expiryPrecision: 'MONTH' | 'DATE';
         inventoryBalances: Array<{ quantity: number }>;
       }>;
+      productLocations?: Array<{ location: { id: bigint; code: string; name: string } }>;
     },
   ) {
+    const home = product.productLocations?.[0]?.location;
     const batches = product.batches.map((batch) => ({
       batchId: batch.id.toString(),
       expiryDate: batch.expiryPrecision === 'MONTH'
@@ -133,6 +135,7 @@ export class InventoryQueryService {
       barcodes: product.barcodes.map(({ barcode }) => barcode),
       batches,
       totalQuantity: batches.reduce((sum, batch) => sum + batch.quantity, 0),
+      location: home ? { locationId: home.id.toString(), code: home.code, name: home.name } : null,
     };
   }
 
@@ -171,6 +174,7 @@ export class InventoryQueryService {
             inventoryBalances: { where: { warehouseId: permission.warehouseId } },
           },
         },
+        productLocations: { where: { warehouseId: permission.warehouseId }, select: { location: { select: { id: true, code: true, name: true } } } },
       },
     });
     return {
@@ -267,6 +271,7 @@ export class InventoryQueryService {
                 },
               },
             },
+            productLocations: { where: { warehouseId: permission.warehouseId }, select: { location: { select: { id: true, code: true, name: true } } } },
           },
         },
       },
@@ -305,6 +310,7 @@ export class InventoryQueryService {
           orderBy: { expiryDate: 'asc' },
           include: { inventoryBalances: { where: { warehouseId: permission.warehouseId, quantity: { not: 0 } } } },
         },
+        productLocations: { where: { warehouseId: permission.warehouseId }, select: { location: { select: { id: true, code: true, name: true } } } },
       },
     });
     const serialized = products.map((product) => this.serializeProduct(product));
@@ -369,6 +375,7 @@ export class InventoryQueryService {
           select: {
             name: true,
             barcodes: { where: { status: 'ACTIVE' }, orderBy: { isPrimary: 'desc' } },
+            productLocations: { where: { warehouseId: permission.warehouseId }, select: { location: { select: { id: true, code: true, name: true } } } },
           },
         },
         batch: { select: { expiryDate: true, expiryPrecision: true } },
@@ -399,6 +406,10 @@ export class InventoryQueryService {
         productId: balance.productId.toString(),
         productName: balance.product.name,
         barcodes: balance.product.barcodes.map(({ barcode }) => barcode),
+        location: (() => {
+          const home = balance.product.productLocations[0]?.location;
+          return home ? { locationId: home.id.toString(), code: home.code, name: home.name } : null;
+        })(),
         batchId: balance.batchId.toString(),
         expiryDate: balance.batch.expiryPrecision === 'MONTH'
           ? expiryDate.toISOString().slice(0, 7)

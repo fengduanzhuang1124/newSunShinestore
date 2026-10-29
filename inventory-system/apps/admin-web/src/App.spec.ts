@@ -587,6 +587,40 @@ describe('App', () => {
     expect(wrapper.text()).toContain('没有找到匹配的盘点商品');
   });
 
+  it('lets an admin merge another record of the same product from the stocktake list (CR-008 F2)', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const report = (products: unknown[]) => ({ warehouseName: '主仓库', productCount: products.length, totalQuantity: 36, products });
+    const kept = { productId: '1', productName: 'RedSeal 红印柠檬牙膏100g', barcodes: ['9400000000001'], batches: [{ batchId: '1', expiryDate: '2028-08-20', expiryPrecision: 'DAY', quantity: 35 }, { batchId: '2', expiryDate: '2029-01', expiryPrecision: 'MONTH', quantity: 1 }], totalQuantity: 36 };
+    let merged = false;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      if (url.includes('/inventory/products/search')) return json([{ productId: '5', name: '红印柠檬牙膏', barcodes: ['9400000000005'], posName: null, stock: 1 }]);
+      if (url.includes('/inventory/products/merge')) { merged = true; return json({ productId: '1', systemQuantity: 36 }); }
+      if (url.includes('/inventory/inventory-report')) return json(report(merged ? [kept] : [kept, { productId: '5', productName: '红印柠檬牙膏', barcodes: ['9400000000005'], batches: [{ batchId: '9', expiryDate: '2028-08', expiryPrecision: 'MONTH', quantity: 1 }], totalQuantity: 1 }]));
+      return json({});
+    });
+
+    const wrapper = mount(App, { global: { stubs: { teleport: true } } });
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.inventory-section-tabs button')[1].trigger('click');
+
+    // One merge action per product, not per expiry batch.
+    expect(wrapper.findAll('.stocktake-desktop-table .stocktake-merge')).toHaveLength(2);
+    await wrapper.get('.stocktake-desktop-table .stocktake-merge').trigger('click');
+    await flushPromises();
+    await wrapper.get('.merge-list input[type="checkbox"]').setValue(true);
+    await wrapper.findAll('button').find((button) => button.text() === '合并')!.trigger('click');
+    await wrapper.findAll('button').find((button) => button.text() === '确认合并')!.trigger('click');
+    await flushPromises();
+
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes('/inventory/products/merge'));
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ intoProductId: '1', fromProductIds: ['5'], stockMode: 'KEEP_TARGET' });
+    expect(wrapper.text()).toContain('已合并同款：RedSeal 红印柠檬牙膏100g');
+    expect(wrapper.findAll('.stocktake-desktop-table .stocktake-merge')).toHaveLength(1);
+  });
+
   it('clamps an invalid expiry day when the corrected month has fewer days', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({

@@ -264,6 +264,7 @@ model Warehouse {
   auditLogs            AuditLog[]
   warehouseLocations   WarehouseLocation[]
   inventoryPlacements  InventoryPlacement[]
+  productLocations     ProductLocation[]
   stockCountTasks      StockCountTask[]
 
   @@unique([storeId, code])
@@ -301,6 +302,7 @@ model Product {
   insightAssignments  ProductInsightTagAssignment[]
   purchaseOrderItems  PurchaseOrderItem[]
   inventoryPlacements InventoryPlacement[]
+  productLocations    ProductLocation[]
   stockCountItems     StockCountTaskItem[]
 
   @@unique([organizationId, sku])
@@ -775,6 +777,7 @@ model WarehouseLocation {
   createdBy   User                 @relation("WarehouseLocationCreatedBy", fields: [createdById], references: [id])
   updatedBy   User                 @relation("WarehouseLocationUpdatedBy", fields: [updatedById], references: [id])
   placements  InventoryPlacement[]
+  products    ProductLocation[]
 
   @@unique([warehouseId, code])
   @@index([warehouseId, status, name])
@@ -798,6 +801,27 @@ model InventoryPlacement {
   @@index([warehouseId, productId, batchId])
   @@index([locationId, productId])
   @@map("inventory_placements")
+}
+
+// Where a product is kept (CR-008 F4): one home location per product and warehouse, set one at a time or in bulk by
+// brand. Unlike inventory_placements it holds no quantity, so sales never leave it out of date.
+model ProductLocation {
+  organizationId BigInt            @map("organization_id") @db.UnsignedBigInt
+  warehouseId    BigInt            @map("warehouse_id") @db.UnsignedBigInt
+  productId      BigInt            @map("product_id") @db.UnsignedBigInt
+  locationId     BigInt            @map("location_id") @db.UnsignedBigInt
+  updatedById    BigInt            @map("updated_by") @db.UnsignedBigInt
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+  warehouse      Warehouse         @relation(fields: [warehouseId], references: [id])
+  product        Product           @relation(fields: [productId], references: [id])
+  location       WarehouseLocation @relation(fields: [locationId], references: [id])
+
+  @@id([organizationId, warehouseId, productId])
+  @@index([locationId])
+  @@index([productId])
+  @@index([warehouseId])
+  @@map("product_locations")
 }
 
 model StockTransfer {
