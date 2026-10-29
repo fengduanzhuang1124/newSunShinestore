@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import FilterSheet from '../components/FilterSheet.vue';
+import ProductMergeSheet from '../components/ProductMergeSheet.vue';
 import { useManagementContext } from '../useManagementDashboard';
 
 const {
@@ -8,8 +10,18 @@ const {
   inventoryPageSize, inventoryActionProductId, purchaseLoading, purchaseActionProductId, inventoryStatusLabel,
   clearInventoryFilters, inventoryBrands, inventoryCategories, inventoryStatusCounts, filteredInventoryProducts,
   inventoryPageCount, pagedInventoryProducts, number, loadInventoryOperations, configureMinimumStock,
-  setInventoryVisibility, addToPurchaseOrder, isProductInCurrentOrder
+  setInventoryVisibility, addToPurchaseOrder, isProductInCurrentOrder, managementRequest, showPurchaseMessage
 } = useManagementContext();
+
+// CR-008 F2: merge records of the same product (different names or barcodes) straight from the stock list.
+type MergeTarget = { productId: string; productName: string; currentInventory: number };
+const mergeItem = ref<MergeTarget | null>(null);
+async function afterMerge() {
+  const name = mergeItem.value?.productName ?? '';
+  mergeItem.value = null;
+  showPurchaseMessage(`已合并同款：${name}`);
+  await loadInventoryOperations();
+}
 </script>
 
 <template>
@@ -52,7 +64,7 @@ const {
         </div>
         <button class="text-action clear-table-filter" type="button" @click="clearInventoryFilters">清除筛选</button>
         </FilterSheet>
-        <div class="product-table-wrap inventory-scroll-table"><table><thead><tr><th>商品</th><th>库存</th><th>最低库存</th><th>观察期销量</th><th>日均销量</th><th>最后销售</th><th>状态与操作</th></tr></thead><tbody><tr v-for="item in pagedInventoryProducts" :key="item.productId"><td data-label="商品"><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }}<template v-if="item.posMapped === false"> · <b class="pos-unmapped-tag">POS未映射</b></template></small></td><td data-label="库存">{{ number(item.currentInventory) }}</td><td data-label="最低库存"><button class="minimum-stock-value" type="button" @click="configureMinimumStock(item)">{{ item.minimumStock ?? '—' }} <small>{{ item.minimumStockSource === 'MANUAL' ? '单独' : item.minimumStockSource === 'DEFAULT' ? '默认' : '不提醒' }}</small></button></td><td data-label="观察期销量">{{ number(item.soldUnits) }}</td><td data-label="日均销量">{{ number(item.dailyVelocity) }}</td><td data-label="最后销售">{{ item.daysSinceLastSale === null ? '无记录' : `${item.daysSinceLastSale} 天前` }}</td><td data-label="状态与操作"><div class="inventory-row-actions"><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ inventoryStatusLabel(item) }}</b><button type="button" :disabled="inventoryActionProductId === item.productId" @click="setInventoryVisibility(item, 'IGNORE')">忽略</button><button type="button" :disabled="inventoryActionProductId === item.productId" @click="setInventoryVisibility(item, 'NEXT_WEEK')">下周显示</button><button class="table-action muted" type="button" @click="configureMinimumStock(item)">设阈值</button><button v-if="item.stockStatus !== 'IN_STOCK' && (item.stockStatus !== 'OUT_OF_STOCK' || item.shortageVisible)" :class="['table-action', { 'is-added': isProductInCurrentOrder(item.productId) }]" type="button" :disabled="purchaseLoading || isProductInCurrentOrder(item.productId)" @click="addToPurchaseOrder(item.productId, item.stockStatus === 'OUT_OF_STOCK' ? 'OUT_OF_STOCK' : 'LOW_STOCK')">{{ purchaseActionProductId === item.productId ? '加入中…' : isProductInCurrentOrder(item.productId) ? '已在进货单' : '加入进货单' }}</button></div></td></tr></tbody></table><p v-if="!pagedInventoryProducts.length" class="system-empty">当前筛选条件没有需要处理的商品。</p></div>
+        <div class="product-table-wrap inventory-scroll-table"><table><thead><tr><th>商品</th><th>库存</th><th>最低库存</th><th>观察期销量</th><th>日均销量</th><th>最后销售</th><th>状态与操作</th></tr></thead><tbody><tr v-for="item in pagedInventoryProducts" :key="item.productId"><td data-label="商品"><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ item.categoryName }}<template v-if="item.posMapped === false"> · <b class="pos-unmapped-tag">POS未映射</b></template></small></td><td data-label="库存">{{ number(item.currentInventory) }}</td><td data-label="最低库存"><button class="minimum-stock-value" type="button" @click="configureMinimumStock(item)">{{ item.minimumStock ?? '—' }} <small>{{ item.minimumStockSource === 'MANUAL' ? '单独' : item.minimumStockSource === 'DEFAULT' ? '默认' : '不提醒' }}</small></button></td><td data-label="观察期销量">{{ number(item.soldUnits) }}</td><td data-label="日均销量">{{ number(item.dailyVelocity) }}</td><td data-label="最后销售">{{ item.daysSinceLastSale === null ? '无记录' : `${item.daysSinceLastSale} 天前` }}</td><td data-label="状态与操作"><div class="inventory-row-actions"><b :class="['stock-badge', item.stockStatus.toLowerCase()]">{{ inventoryStatusLabel(item) }}</b><button type="button" :disabled="inventoryActionProductId === item.productId" @click="setInventoryVisibility(item, 'IGNORE')">忽略</button><button type="button" :disabled="inventoryActionProductId === item.productId" @click="setInventoryVisibility(item, 'NEXT_WEEK')">下周显示</button><button class="table-action muted" type="button" @click="configureMinimumStock(item)">设阈值</button><button class="table-action muted" type="button" @click="mergeItem = item">合并同款</button><button v-if="item.stockStatus !== 'IN_STOCK' && (item.stockStatus !== 'OUT_OF_STOCK' || item.shortageVisible)" :class="['table-action', { 'is-added': isProductInCurrentOrder(item.productId) }]" type="button" :disabled="purchaseLoading || isProductInCurrentOrder(item.productId)" @click="addToPurchaseOrder(item.productId, item.stockStatus === 'OUT_OF_STOCK' ? 'OUT_OF_STOCK' : 'LOW_STOCK')">{{ purchaseActionProductId === item.productId ? '加入中…' : isProductInCurrentOrder(item.productId) ? '已在进货单' : '加入进货单' }}</button></div></td></tr></tbody></table><p v-if="!pagedInventoryProducts.length" class="system-empty">当前筛选条件没有需要处理的商品。</p></div>
         <div class="inventory-table-pagination">
           <span>显示 {{ filteredInventoryProducts.length ? (inventoryPage - 1) * inventoryPageSize + 1 : 0 }}–{{ Math.min(inventoryPage * inventoryPageSize, filteredInventoryProducts.length) }} / 共 {{ filteredInventoryProducts.length }} 种商品</span>
           <label>每页<select v-model.number="inventoryPageSize"><option :value="18">18</option><option :value="54">54</option></select></label>
@@ -61,6 +73,7 @@ const {
         </div>
       </section>
     </template>
+    <ProductMergeSheet v-if="mergeItem" :product-id="mergeItem.productId" :product-name="mergeItem.productName" :current-inventory="mergeItem.currentInventory" :request="managementRequest" @close="mergeItem = null" @merged="afterMerge" />
   </section>
 </template>
 

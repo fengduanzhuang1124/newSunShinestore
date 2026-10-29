@@ -58,6 +58,7 @@ Thumbs.db
 
 # Generated reports, business exports, and temporary render files
 inventory-system/outputs/
+inventory-system/apps/api/reports/
 output/
 outputs/
 tmp/
@@ -73,3 +74,9 @@ docs/records/**
 # Local agent state
 .agents/
 .codex/
+
+# Local editor, design-tool and working-note files
+*.code-workspace
+/Untitled
+inventory-system/.finesse/
+inventory-system/docs/records/*HANDOFF*.md

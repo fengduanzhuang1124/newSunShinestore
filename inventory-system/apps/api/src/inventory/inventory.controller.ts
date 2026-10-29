@@ -25,7 +25,7 @@ import { ReverseMovementDto } from './reverse-movement.dto.js';
 import { InventoryMaintenanceService } from './inventory-maintenance.service.js';
 import { CorrectBatchExpiryDto, DeleteExpiryAlertDto, ExpiryAlertActionDto, ExpiryAlertActionStatusDto } from './inventory-maintenance.dto.js';
 import { WarehouseLocationService } from './warehouse-location.service.js';
-import { AssignWarehouseLocationDto, SaveWarehouseLocationDto } from './warehouse-location.dto.js';
+import { AssignWarehouseLocationDto, ProductLocationQueryDto, SaveWarehouseLocationDto, SetProductLocationsDto } from './warehouse-location.dto.js';
 import { StockCountService } from './stock-count.service.js';
 import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto, LinkPosStockCountItemDto, MergeProductsDto } from './stock-count.dto.js';
 
@@ -121,6 +121,24 @@ export class InventoryController {
   async warehouseLocations(@Req() request: AuthenticatedRequest) {
     const user = request.inventoryUser!;
     return { code: 200, message: '仓位查询成功', data: await this.locations.list(user.organizationId, user.id) };
+  }
+
+  @Get('locations/brands')
+  async productLocationBrands(@Req() request: AuthenticatedRequest, @Query('inStock') inStock?: string) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '品牌查询成功', data: await this.locations.productBrands(user.organizationId, user.id, inStock !== 'false') };
+  }
+
+  @Get('locations/products')
+  async productsForPlacement(@Req() request: AuthenticatedRequest, @Query() query: ProductLocationQueryDto) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '商品查询成功', data: await this.locations.productsForPlacement(user.organizationId, user.id, query) };
+  }
+
+  @Put('locations/products')
+  async setProductLocations(@Req() request: AuthenticatedRequest, @Body() input: SetProductLocationsDto) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '商品仓位已更新', data: await this.locations.setProductLocations(user.organizationId, user.id, input) };
   }
 
   @Post('locations')

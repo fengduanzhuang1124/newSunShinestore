@@ -7,7 +7,7 @@ import type { PrismaClient } from '@sunshine/database';
 export type MergeStockMode = 'KEEP_TARGET' | 'SUM';
 
 type MergeClient = Pick<PrismaClient,
-  'inventoryBalance' | 'productBatch' | 'stockMovement' | 'productBarcode' | 'posProductMapping' | 'posOrderItem' |
+  'inventoryBalance' | 'productBatch' | 'stockMovement' | 'productBarcode' | 'posProductMapping' | 'productLocation' | 'posOrderItem' |
   'stockCountTaskItem' | 'storeProduct' | 'product' | 'auditLog'>;
 
 export interface MergeContext {
@@ -85,6 +85,13 @@ export async function mergeProductInto(tx: MergeClient, context: MergeContext) {
         update: { sellingPriceCents: fromStore.sellingPriceCents },
       });
     }
+  }
+  // The kept record takes the duplicate's home location only when it has none of its own (CR-008).
+  const fromHome = await tx.productLocation.findUnique({ where: { organizationId_warehouseId_productId: { organizationId, warehouseId, productId: from } } });
+  if (fromHome) {
+    const intoHome = await tx.productLocation.findUnique({ where: { organizationId_warehouseId_productId: { organizationId, warehouseId, productId: into } } });
+    if (!intoHome) await tx.productLocation.create({ data: { organizationId, warehouseId, productId: into, locationId: fromHome.locationId, updatedById: userId } });
+    await tx.productLocation.delete({ where: { organizationId_warehouseId_productId: { organizationId, warehouseId, productId: from } } });
   }
   await tx.product.update({ where: { id: from }, data: { status: 'INACTIVE' } });
   const summary = {

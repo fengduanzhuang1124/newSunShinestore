@@ -1773,3 +1773,9 @@ img, video { max-width: 100%; }
   .workspace.management-shell > .alert { flex: none; margin: 8px 16px 0; }
   .management-shell .mode-panel { display: grid; flex: 1 1 auto; grid-template-rows: minmax(0, 1fr); min-height: 0; overflow: hidden; }
 }
+/* CR-008: with the bulk placement panel the location page scrolls with the page; the header card stays in place. */
+.location-workspace.has-bulk { height: auto; min-height: 0; max-height: none; overflow: visible; padding-right: 0; }
+.location-workspace.has-bulk .location-overview { position: relative; top: auto; }
+.receive-product-card dl .receive-location { grid-column: 1 / -1; }
+.stocktake-merge { margin-left: 8px; white-space: nowrap; }
+.stocktake-card-heading .stocktake-merge { margin: 4px 0 0; padding: 0; }
