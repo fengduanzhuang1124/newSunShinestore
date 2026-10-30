@@ -1,0 +1,23 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: sunshine_inventory
+      MYSQL_USER: sunshine
+      MYSQL_PASSWORD: local_development_only
+      MYSQL_ROOT_PASSWORD: local_root_development_only
+      TZ: Pacific/Auckland
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - sunshine_inventory_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-plocal_root_development_only"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  sunshine_inventory_mysql:

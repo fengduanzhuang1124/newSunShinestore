@@ -1,0 +1,416 @@
+/* REQ-008 · management center on phones (≤ 720 px).
+   Loaded last by ManagementDashboard.vue and shared by the page components (same
+   style scope), so rules here replace the older mobile overrides. Selectors start
+   with .management-workspace to stay ahead of them. Design rules: REQ-008 §5. */
+
+.management-topbar { display: none; }
+
+.management-workspace {
+  --m-bar: rgb(255 255 255 / 96%);
+  --m-sheet: #ffffff;
+  --m-row: #f3f6fa;
+  --m-ink: #16243a;
+  --m-muted: #5f6e84;
+  --m-line: #e1e7ef;
+  --m-line-strong: #c5d0dd;
+  --m-accent: #0f7495;
+  --m-accent-soft: rgb(15 116 149 / 12%);
+  --m-overlay: rgb(15 23 38 / 42%);
+  --m-shadow: 0 -12px 36px rgb(23 32 51 / 14%);
+}
+:root[data-theme="dark"] .management-workspace {
+  --m-bar: #0b1422;
+  --m-sheet: #0e1828;
+  --m-row: #132033;
+  --m-ink: #eaf2ff;
+  --m-muted: #8392a8;
+  --m-line: #1f2d42;
+  --m-line-strong: #33445e;
+  --m-accent: #5fd3e6;
+  --m-accent-soft: rgb(56 196 222 / 16%);
+  --m-overlay: rgb(2 7 15 / 66%);
+  --m-shadow: 0 -16px 40px rgb(0 0 0 / 45%);
+}
+
+@media (max-width: 720px) {
+  /* Page skeleton: top bar · content (the only scroller) · bottom navigation. */
+  .management-workspace.management-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 0;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    overflow: hidden;
+  }
+  .management-workspace .management-sidebar { display: none; }
+
+  .management-workspace .management-topbar {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    min-height: calc(52px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+    border-bottom: 1px solid var(--m-line);
+    background: var(--m-bar);
+  }
+  .management-topbar > div { flex: 1; min-width: 0; }
+  .management-topbar h1,
+  .management-topbar small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .management-topbar h1 { margin: 0; color: var(--m-ink); font-size: 20px; font-weight: 600; line-height: 28px; letter-spacing: 0; }
+  .management-topbar small { color: var(--m-muted); font-size: 12px; line-height: 16px; }
+  .management-workspace .management-topbar > button {
+    display: grid;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    margin-right: -10px;
+    place-items: center;
+    padding: 0;
+    color: var(--m-muted);
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    box-shadow: none;
+  }
+  .management-topbar > button[aria-expanded="true"] { color: var(--m-accent); background: var(--m-accent-soft); }
+
+  .management-workspace .management-content {
+    display: grid;
+    grid-auto-rows: max-content;
+    align-content: start;
+    gap: 12px;
+    height: auto;
+    min-height: 0;
+    padding: 12px max(16px, env(safe-area-inset-right)) 16px max(16px, env(safe-area-inset-left));
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* The top bar carries the page title; the old heading card only keeps page actions. */
+  .management-workspace .management-heading { display: none; }
+  .management-workspace .management-heading.has-filters {
+    display: flex;
+    position: static;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+  .management-workspace .management-heading.has-filters > div:first-child { display: none; }
+  .management-workspace .management-heading .management-filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+
+  /* The floating assistant is replaced by the top bar guide button. */
+  .management-workspace .page-guide-fab { display: none; }
+  .management-workspace .page-guide-popover {
+    position: fixed;
+    z-index: 70;
+    top: auto;
+    right: 12px;
+    bottom: calc(64px + env(safe-area-inset-bottom));
+    left: 12px;
+    width: auto;
+    max-height: calc(100dvh - 140px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    overflow-y: auto;
+    transform: none;
+  }
+
+  /* Bottom navigation: 56 px + home indicator, active item on a tinted capsule. */
+  .management-workspace .management-mobile-nav {
+    position: static;
+    z-index: auto;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0;
+    min-height: calc(56px + env(safe-area-inset-bottom));
+    padding: 4px max(4px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(4px, env(safe-area-inset-left));
+    border-top: 1px solid var(--m-line);
+    background: var(--m-bar);
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .management-workspace .management-mobile-nav button,
+  .management-workspace .management-mobile-nav button.active {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 0;
+    min-height: 52px;
+    padding: 0;
+    color: var(--m-muted);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 14px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .management-workspace .management-mobile-nav button.active { color: var(--m-accent); }
+  .management-workspace .management-mobile-nav button:disabled { opacity: .4; }
+  .management-mobile-nav .nav-icon { display: grid; width: 52px; height: 28px; place-items: center; border-radius: 14px; transition: background-color .2s ease; }
+  .management-mobile-nav button.active .nav-icon { background: var(--m-accent-soft); }
+  .management-mobile-nav svg,
+  .management-topbar svg,
+  .management-more-sheet svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .management-mobile-nav button:last-child svg { stroke-width: 3; }
+
+  /* "更多" bottom sheet. */
+  .management-workspace .management-more-overlay {
+    position: fixed;
+    z-index: 60;
+    inset: 0;
+    display: flex;
+    align-items: flex-end;
+    padding: 0;
+    background: var(--m-overlay);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .management-workspace .management-more-sheet {
+    width: 100%;
+    max-height: calc(100dvh - 48px - env(safe-area-inset-top));
+    padding: 8px max(16px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    overflow-y: auto;
+    color: var(--m-ink);
+    border: 1px solid var(--m-line);
+    border-bottom: 0;
+    border-radius: 20px 20px 0 0;
+    background: var(--m-sheet);
+    box-shadow: var(--m-shadow);
+  }
+  .management-more-sheet .sheet-handle { display: block; width: 36px; height: 4px; margin: 0 auto 8px; border-radius: 2px; background: var(--m-line-strong); }
+  .management-workspace .management-more-sheet > header { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 0; text-align: left; }
+  .management-workspace .management-more-sheet h2 { margin: 0; color: var(--m-ink); font-size: 20px; font-weight: 600; line-height: 28px; }
+  .management-workspace .management-more-sheet > header > button {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    margin-right: -10px;
+    place-items: center;
+    padding: 0;
+    color: var(--m-muted);
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    box-shadow: none;
+  }
+  .management-workspace .more-modules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .management-workspace .more-modules > button {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: center;
+    gap: 2px 10px;
+    min-width: 0;
+    min-height: 72px;
+    padding: 12px;
+    color: var(--m-ink);
+    border: 1px solid var(--m-line);
+    border-radius: 14px;
+    background: var(--m-row);
+    box-shadow: none;
+    text-align: left;
+  }
+  .management-workspace .more-modules > button.active { border-color: var(--m-accent); }
+  .management-workspace .more-modules > button:disabled { opacity: .45; }
+  .more-modules > button > span { display: grid; grid-row: 1 / 3; width: 40px; height: 40px; place-items: center; color: var(--m-accent); border-radius: 12px; background: var(--m-accent-soft); }
+  .more-modules strong { align-self: end; font-size: 15px; font-weight: 600; line-height: 22px; }
+  .more-modules small { display: -webkit-box; align-self: start; overflow: hidden; white-space: normal; color: var(--m-muted); font-size: 12px; line-height: 16px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .management-workspace .more-account { display: grid; margin-top: 16px; border-top: 1px solid var(--m-line); }
+  .management-workspace .more-account > button {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) 18px;
+    align-items: center;
+    gap: 12px;
+    min-height: 56px;
+    padding: 8px 2px;
+    color: var(--m-ink);
+    border: 0;
+    border-bottom: 1px solid var(--m-line);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    font-size: 15px;
+    text-align: left;
+  }
+  .more-account > button > span { display: grid; gap: 2px; }
+  .more-account small { color: var(--m-muted); font-size: 12px; line-height: 16px; }
+  .more-account svg { color: var(--m-muted); }
+  .more-account svg.chevron { width: 18px; height: 18px; }
+
+  .sheet-rise-enter-active,
+  .sheet-rise-leave-active { transition: background-color .22s ease; }
+  .sheet-rise-enter-active .management-more-sheet,
+  .sheet-rise-leave-active .management-more-sheet { transition: transform .24s cubic-bezier(.22, 1, .36, 1); }
+  .sheet-rise-enter-from,
+  .sheet-rise-leave-to { background-color: transparent; }
+  .sheet-rise-enter-from .management-more-sheet,
+  .sheet-rise-leave-to .management-more-sheet { transform: translateY(100%); }
+}
+
+.page-skeleton,
+.load-more { display: none; }
+
+@media (max-width: 720px) {
+  /* Content never forces the page wider than the screen. */
+  .management-workspace .management-content > *,
+  .management-workspace .management-content section,
+  .management-workspace .management-content article { min-width: 0; max-width: 100%; }
+
+  /* Touch targets ≥ 44 px; 16 px inputs stop iOS from zooming the page. */
+  .management-workspace .management-content :is(button, select, input:not([type="checkbox"]):not([type="radio"])) { min-height: 44px; }
+  .management-workspace .management-content :is(select, input) { font-size: 16px; }
+  .management-workspace .period-tabs button { min-width: 44px; }
+
+  /* Key number cards (M3): two columns, label · number · note. */
+  .management-workspace :is(.management-kpis, .sales-kpis, .product-kpis, .inventory-operation-kpis, .store-kpis, .insight-kpis, .procurement-summary, .pos-inventory-preview-summary, .barcode-audit-summary) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .management-workspace :is(.management-kpis, .sales-kpis, .product-kpis, .inventory-operation-kpis, .store-kpis, .insight-kpis, .procurement-summary, .pos-inventory-preview-summary, .barcode-audit-summary) > * {
+    min-width: 0;
+    min-height: 0;
+    padding: 12px;
+    border-radius: 14px;
+  }
+  .management-workspace :is(.management-kpis, .sales-kpis, .product-kpis, .inventory-operation-kpis, .store-kpis, .insight-kpis, .procurement-summary, .pos-inventory-preview-summary, .barcode-audit-summary) strong {
+    overflow-wrap: anywhere;
+    font-size: clamp(17px, 5vw, 22px);
+    line-height: 28px;
+    font-variant-numeric: tabular-nums;
+  }
+  .management-workspace :is(.management-kpis, .sales-kpis, .product-kpis, .inventory-operation-kpis, .store-kpis, .insight-kpis, .procurement-summary, .pos-inventory-preview-summary, .barcode-audit-summary) :is(span, small) { font-size: 12px; line-height: 16px; }
+
+  /* The light theme pins product numbers to six columns at every width; phones keep two. */
+  :root:not([data-theme="dark"]) .management-workspace .product-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  /* Overview: the six daily numbers in three columns × two rows, all on the first screen. */
+  .management-workspace .overview-metric-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; overflow: visible; }
+  .management-workspace .overview-metric-strip article { grid-template-columns: minmax(0, 1fr); gap: 0; min-height: 0; padding: 10px 8px; }
+  .management-workspace .overview-metric-strip .metric-symbol { display: none; }
+  .management-workspace .overview-metric-strip article > span { gap: 2px; font-size: 11px; line-height: 14px; white-space: normal; }
+  .management-workspace .overview-metric-strip strong,
+  .management-workspace .overview-metric-strip article:first-child strong { font-size: clamp(13px, 3.7vw, 16px); line-height: 22px; letter-spacing: -.01em; white-space: nowrap; }
+  .management-workspace .overview-metric-strip small { font-size: 11px; line-height: 14px; }
+  /* Five-digit amounts (e.g. NZ$12,345.60) drop one size so they stay inside the card. */
+  .management-workspace .overview-metric-strip article strong.metric-long { font-size: clamp(11px, 3.1vw, 14px); }
+  .management-workspace .data-freshness { gap: 2px 12px; font-size: 12px; }
+
+  /* Tables become one card per row (M4); each cell shows its column name. */
+  .management-workspace :is(.product-table-wrap, .inventory-scroll-table, .management-detail-scroll, .purchase-order-table-wrap, .hot-product-table-wrap) {
+    max-height: none;
+    margin-inline: 0;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+  .management-workspace .management-content table { display: block; width: 100%; min-width: 0; border: 0; background: none; }
+  .management-workspace .management-content thead { display: none; }
+  .management-workspace .management-content tbody { display: grid; gap: 8px; }
+  .management-workspace .management-content tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px 12px;
+    padding: 12px;
+    border: 1px solid var(--m-line);
+    border-radius: 14px;
+    background: var(--m-row);
+  }
+  .management-workspace .management-content td {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    color: var(--m-ink);
+    border: 0;
+    background: none;
+    font-size: 14px;
+    line-height: 20px;
+    text-align: left;
+    white-space: normal;
+    font-variant-numeric: tabular-nums;
+  }
+  .management-workspace .management-content td[data-label]::before { display: block; margin-bottom: 2px; color: var(--m-muted); font-size: 12px; font-weight: 400; line-height: 16px; content: attr(data-label); }
+  .management-workspace .management-content td:first-child,
+  .management-workspace .management-content td:last-child { grid-column: 1 / -1; }
+  .management-workspace .management-content td:first-child::before { display: none; }
+  .management-workspace .management-content td:first-child strong { display: -webkit-box; overflow: hidden; font-size: 15px; font-weight: 600; line-height: 22px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .management-workspace .management-content td small { display: block; color: var(--m-muted); font-size: 12px; line-height: 16px; }
+  .management-workspace .management-content td:last-child:not(:first-child) { padding-top: 10px; border-top: 1px solid var(--m-line); }
+  .management-workspace .management-content td:last-child::before { display: none; }
+
+  /* Inventory list: stock · sold · daily on the first row, then minimum stock and last sale. */
+  .management-workspace .inventory-scroll-table td:nth-child(2) { order: 1; }
+  .management-workspace .inventory-scroll-table td:nth-child(4) { order: 2; }
+  .management-workspace .inventory-scroll-table td:nth-child(5) { order: 3; }
+  .management-workspace .inventory-scroll-table td:nth-child(3) { order: 4; }
+  .management-workspace .inventory-scroll-table td:nth-child(6) { order: 5; }
+  .management-workspace .inventory-scroll-table td:last-child { order: 6; }
+  .management-workspace .inventory-scroll-table td,
+  .management-workspace .inventory-scroll-table td:not(:first-child):not(:last-child) { height: auto; padding: 0; text-align: left; white-space: normal; }
+  .management-workspace .minimum-stock-tools { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+  .management-workspace .inventory-status-tabs { display: flex; flex-wrap: nowrap; gap: 4px; margin-inline: 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+  .management-workspace .inventory-status-tabs::-webkit-scrollbar { display: none; }
+  .management-workspace .inventory-status-tabs > * { flex: none; }
+  .management-workspace .inventory-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .management-workspace .inventory-row-actions .stock-badge { margin-right: auto; }
+  .management-workspace .inventory-row-actions button { min-height: 36px; padding: 0 12px; }
+  .management-workspace .minimum-stock-value { min-height: 32px; padding: 0; text-align: left; }
+
+  /* Checkbox options (e.g. data center "重新核对当天订单"): box on the left, text beside it. */
+  .management-workspace .reconcile-option { display: flex; align-items: flex-start; gap: 12px; }
+  .management-workspace .reconcile-option input { flex: none; width: 20px; height: 20px; min-height: 0; margin: 2px 0 0; }
+  .management-workspace .reconcile-option > span { display: grid; flex: 1; gap: 4px; min-width: 0; }
+
+  /* Purchase order rows hold editable fields: stack them. */
+  .management-workspace .purchase-order-table { min-width: 0; }
+  .management-workspace .purchase-order-table tr { grid-template-columns: minmax(0, 1fr); }
+  .management-workspace .purchase-order-table td label { display: grid; gap: 4px; margin-bottom: 8px; }
+
+  /* Paged lists: "加载更多" replaces page buttons. */
+  .management-workspace .inventory-table-pagination { display: block; margin-top: 8px; }
+  .management-workspace .inventory-table-pagination > :not(.load-more) { display: none; }
+  .management-workspace .load-more { display: block; width: 100%; color: var(--m-accent); border: 1px solid var(--m-line-strong); border-radius: 12px; background: var(--m-sheet); box-shadow: none; font-size: 14px; font-weight: 600; }
+
+  /* Loading, empty and failed states (M6). */
+  .management-workspace .page-load-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .management-workspace .page-skeleton { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .page-skeleton i { height: 84px; border-radius: 14px; background: linear-gradient(90deg, var(--m-row) 25%, var(--m-line) 50%, var(--m-row) 75%) 0 0 / 200% 100%; animation: skeleton-shimmer 1.4s ease-in-out infinite; }
+  .page-skeleton i.wide { grid-column: 1 / -1; height: 168px; }
+  .management-workspace :is(.system-empty, .inventory-load-status) { margin: 0; padding: 24px 16px; color: var(--m-muted); border: 1px dashed var(--m-line-strong); border-radius: 14px; background: none; font-size: 14px; line-height: 20px; text-align: center; }
+  .management-workspace .management-alert.error { display: grid; gap: 12px; padding: 16px; border-radius: 14px; font-size: 14px; line-height: 20px; }
+  .management-workspace .management-alert.error .text-action { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 44px; margin: 0; border: 1px solid currentColor; border-radius: 12px; font-size: 14px; text-decoration: none; }
+}
+
+@keyframes skeleton-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+@media (max-width: 375px) {
+  .management-workspace .management-topbar { padding-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right)); }
+  .management-workspace .management-content { padding-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right)); }
+}
+
+@media (max-width: 720px) and (prefers-reduced-motion: reduce) {
+  .sheet-rise-enter-active,
+  .sheet-rise-leave-active,
+  .sheet-rise-enter-active .management-more-sheet,
+  .sheet-rise-leave-active .management-more-sheet,
+  .page-skeleton i { transition: none; animation: none; }
+}

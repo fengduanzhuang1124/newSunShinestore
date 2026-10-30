@@ -1,0 +1,19 @@
+{
+  "name": "sunshine-inventory-system",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "corepack pnpm --parallel --filter @sunshine/inventory-api --filter @sunshine/inventory-admin-web dev",
+    "build": "corepack pnpm -r build",
+    "test": "corepack pnpm -r test",
+    "typecheck": "corepack pnpm -r typecheck",
+    "db:format": "corepack pnpm --filter @sunshine/database prisma:format",
+    "db:validate": "corepack pnpm --filter @sunshine/database prisma:validate",
+    "db:generate": "corepack pnpm --filter @sunshine/database prisma:generate",
+    "test:integration": "corepack pnpm --filter @sunshine/database test:integration"
+  }
+}
