@@ -621,6 +621,37 @@ describe('App', () => {
     expect(wrapper.findAll('.stocktake-desktop-table .stocktake-merge')).toHaveLength(1);
   });
 
+  it('groups several expiry dates of one product under a total row in the stocktake list (CR-008 F8)', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const products = [
+      { productId: '1', productName: 'RedSeal 红印烟民牙膏100g', barcodes: ['9400000000001'], batches: [{ batchId: '1', expiryDate: '2028-05', expiryPrecision: 'MONTH', quantity: 62 }, { batchId: '2', expiryDate: '2029-02', expiryPrecision: 'MONTH', quantity: 78 }], totalQuantity: 140 },
+      { productId: '2', productName: '红印herb牙膏', barcodes: ['9400000000002'], batches: [{ batchId: '3', expiryDate: '2028-09', expiryPrecision: 'MONTH', quantity: 120 }], totalQuantity: 120 },
+    ];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ data: { warehouseName: '主仓库', productCount: 2, totalQuantity: 260, products } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.inventory-section-tabs button')[1].trigger('click');
+
+    const table = wrapper.get('.stocktake-desktop-table');
+    expect(table.findAll('.stocktake-group-row')).toHaveLength(1);
+    expect(table.get('.stocktake-group-row').text()).toContain('共 2 个日期');
+    expect(table.get('.stocktake-group-row').text()).toContain('合计 140 件');
+    expect(table.findAll('.stocktake-batch-row')).toHaveLength(2);
+    // The product name appears once per product, not once per expiry date.
+    expect(table.text().split('RedSeal 红印烟民牙膏100g')).toHaveLength(2);
+
+    await table.get('input[aria-label="RedSeal 红印烟民牙膏100g 2028-05 实际数量"]').setValue(60);
+    await table.get('input[aria-label="RedSeal 红印烟民牙膏100g 2029-02 实际数量"]').setValue(80);
+    expect(table.get('.stocktake-group-row').text()).toContain('已填实际合计 140 件');
+
+    const cards = wrapper.findAll('.stocktake-mobile-card');
+    expect(cards).toHaveLength(2);
+    expect(cards[0].findAll('.stocktake-batch')).toHaveLength(2);
+    expect(cards[0].text()).toContain('系统合计 · 2 个日期');
+  });
+
   it('clamps an invalid expiry day when the corrected month has fewer days', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({

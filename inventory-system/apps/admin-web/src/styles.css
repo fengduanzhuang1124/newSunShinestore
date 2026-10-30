@@ -1779,3 +1779,15 @@ img, video { max-width: 100%; }
 .receive-product-card dl .receive-location { grid-column: 1 / -1; }
 .stocktake-merge { margin-left: 8px; white-space: nowrap; }
 .stocktake-card-heading .stocktake-merge { margin: 4px 0 0; padding: 0; }
+/* CR-008 F8: group several expiry dates of one product under a total row */
+.stocktake-group-row td { background: rgb(41 130 94 / 8%); font-weight: 600; }
+.stocktake-group-row td:nth-child(2) { color: var(--ops-muted); font-weight: 500; }
+.stocktake-group-hint { color: var(--ops-muted); font-weight: 400; font-size: 12px; }
+.stocktake-actual-total { color: #29825e; font-weight: 600; }
+.stocktake-batch-row td:first-child { border-left: 3px solid rgb(41 130 94 / 35%); }
+.stocktake-group:not(:last-child) tr:last-child td { border-bottom: 2px solid var(--ops-border); }
+.stocktake-batch + .stocktake-batch { margin-top: 12px; padding-top: 4px; border-top: 1px dashed var(--ops-border); }
+.stocktake-batch > button { width: 100%; min-height: 43px; margin-top: 10px; }
+.stocktake-batch-quantity { margin-left: auto; padding-left: 10px; }
+.stocktake-mobile-card > .stocktake-actual-total { margin: 8px 0 0; font-size: 12px; }
+.stocktake-batch .stocktake-card-meta { justify-content: flex-start; gap: 8px; }
