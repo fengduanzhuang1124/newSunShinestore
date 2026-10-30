@@ -129,8 +129,8 @@ type InventoryOperationRow = {
 type PurchaseSource = 'MANUAL' | 'OUT_OF_STOCK' | 'LOW_STOCK' | 'HOT_SALES' | 'WEEKLY_FORECAST';
 export type PurchaseSuggestion = { productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; currentInventory: number; minimumStock: number | null; recent28DayQty: number; weeklyVelocity: number; coverageWeeks: number | null; targetWeeks: number | null; targetInventory: number; suggestedQuantity: number; source: PurchaseSource; priority: 'THIS_WEEK' | 'FOLLOW_UP'; alreadyIncluded: boolean; ignored: boolean; ignoredReason: string | null; ignoredAt: string | null; recentReceivedQty?: number; lastReceivedAt?: string | null; salesBasis?: '28_DAYS' | '90_DAYS'; displayStock?: boolean; brandGroup?: 'PARRS' | 'COCO_BROWNIE' | 'METODAY' | 'HAAB' | null; mergedProducts?: { productId: string; productName: string; barcode: string | null; currentInventory: number; recent28DayQty: number }[] };
 type PurchaseSuggestions = { generatedAt: string; inventoryLatestUpdatedAt: string | null; period: { from: string; to: string }; calculation: string; summary: { products: number; suggestedUnits: number; thisWeekProducts: number; followUpProducts: number; alreadyIncluded: number; ignored: number; arrived?: number }; suggestions: PurchaseSuggestion[]; ignoredSuggestions: PurchaseSuggestion[]; arrivedSuggestions?: PurchaseSuggestion[] };
-type PurchaseOrderItem = { id: string; productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; source: PurchaseSource; currentInventory: number; recentSevenDayQty: number; suggestedQuantity: number; orderedQuantity: number; receivedQuantity: number; supplierName: string | null; unitCostCents: number | null; caseSize: number | null; notes: string | null };
-type PurchaseOrder = { id: string; orderNo: string; weekStart: string; status: 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'; createdAt: string; updatedAt: string; confirmedAt: string | null; orderedAt: string | null; summary: { productCount: number; suggestedUnits: number; orderedUnits: number; receivedUnits: number; totalCostCents: number }; items: PurchaseOrderItem[] };
+export type PurchaseOrderItem = { id: string; productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; source: PurchaseSource; currentInventory: number; recentSevenDayQty: number; suggestedQuantity: number; orderedQuantity: number; receivedQuantity: number; supplierName: string | null; unitCostCents: number | null; caseSize: number | null; notes: string | null; coverageWeeks: number; quantityEdited: boolean };
+export type PurchaseOrder = { id: string; orderNo: string; weekStart: string; weekEnd?: string; status: 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'; createdAt: string; updatedAt: string; confirmedAt: string | null; orderedAt: string | null; summary: { productCount: number; suggestedUnits: number; orderedUnits: number; receivedUnits: number; totalCostCents: number }; items: PurchaseOrderItem[] };
 type CurrentPurchaseOrder = { generatedAt?: string; inventoryLatestUpdatedAt?: string | null; currency: string; order: PurchaseOrder | null };
 type StoreComparison = {
   currency: string; period: { from: string; to: string }; storeCount: number; comparisonAvailable: boolean; comparisonNotice: string | null;
@@ -926,6 +926,30 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     finally { purchaseLoading.value = false; }
   }
 
+  // CR-009 P3: weeks of stock for one line; the server recalculates the suggestion from live stock and sales.
+  async function setPurchaseItemCoverage(item: PurchaseOrderItem, coverageWeeks: number) {
+    if (!props.storeId) return;
+    purchaseLoading.value = true; purchaseMessage.value = ''; error.value = '';
+    try {
+      const order = await managementRequest<PurchaseOrder>(`/management/purchase-orders/items/coverage?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ itemId: item.id, coverageWeeks }) });
+      currentPurchaseOrder.value = { ...currentPurchaseOrder.value, currency: currentPurchaseOrder.value?.currency ?? 'NZD', order };
+      showPurchaseMessage(`${item.productName} 备货 ${coverageWeeks} 周`);
+    } catch (reason) { error.value = reason instanceof Error ? reason.message : '备货周期保存失败'; }
+    finally { purchaseLoading.value = false; }
+  }
+
+  // CR-009 P4: refresh the draft with live stock and sales; quantities set by hand are kept.
+  async function recalculatePurchaseOrder() {
+    if (!props.storeId) return;
+    purchaseLoading.value = true; purchaseMessage.value = ''; error.value = '';
+    try {
+      const order = await managementRequest<PurchaseOrder>(`/management/purchase-orders/recalculate?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST' });
+      currentPurchaseOrder.value = { ...currentPurchaseOrder.value, currency: currentPurchaseOrder.value?.currency ?? 'NZD', order, generatedAt: new Date().toISOString() };
+      showPurchaseMessage('已按最新库存和销量重算，手动改过的数量保持不变');
+    } catch (reason) { error.value = reason instanceof Error ? reason.message : '进货单重算失败'; }
+    finally { purchaseLoading.value = false; }
+  }
+
   async function removePurchaseItem(item: PurchaseOrderItem) {
     if (!props.storeId) return;
     purchaseConfirm.value = {
@@ -1133,7 +1157,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     previewPosInventory, openPosInventoryConfirmation, reapplyReviewLines, applyPosInventory, loadSalesAnalysis,
     loadProductsBrands, loadInventoryOperations, configureMinimumStock, saveMinimumStock, setInventoryVisibility,
     loadProcurement, addToPurchaseOrder, performAddToPurchaseOrder, showPurchaseMessage, isProductInCurrentOrder,
-    ignorePurchaseSuggestion, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem,
+    ignorePurchaseSuggestion, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem, setPurchaseItemCoverage, recalculatePurchaseOrder,
     performRemovePurchaseItem, PURCHASE_STATUS_CONSEQUENCE, changePurchaseStatus, performPurchaseStatusChange,
     confirmPurchaseAction, escapeXml, downloadSpreadsheet, exportPurchaseOrderExcel, exportUnlistedStockExcel,
     openProcurement, purchaseSourceLabel, purchaseStatusLabel, loadStoreComparison, loadProductInsights,

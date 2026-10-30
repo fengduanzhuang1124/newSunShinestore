@@ -1,0 +1,58 @@
+/* CR-009 P6: oval liquid-glass buttons with a slow breathing glow (preview, back, download). */
+.glass-pill {
+  --pill-tint: 110 88 240;
+  --pill-tint-2: 32 160 196;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 8px 20px;
+  overflow: hidden;
+  color: #fff;
+  border: 1px solid rgb(255 255 255 / 38%);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 24%), rgb(255 255 255 / 0%) 50%),
+    linear-gradient(135deg, rgb(var(--pill-tint) / 94%), rgb(var(--pill-tint-2) / 90%));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 60%), inset 0 -10px 18px rgb(var(--pill-tint) / 28%), 0 0 0 1px rgb(var(--pill-tint) / 22%), 0 0 14px rgb(var(--pill-tint) / 28%);
+  backdrop-filter: blur(14px) saturate(160%);
+  font: inherit;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 28%);
+  white-space: nowrap;
+  cursor: pointer;
+  animation: glass-pill-breathe 2.6s ease-in-out infinite;
+  transition: transform .18s ease, filter .18s ease;
+}
+.glass-pill::after {
+  position: absolute;
+  inset: 0 auto 0 -60%;
+  width: 45%;
+  content: '';
+  background: linear-gradient(100deg, transparent, rgb(255 255 255 / 34%), transparent);
+  transform: skewX(-18deg);
+  animation: glass-pill-sheen 4.2s ease-in-out infinite;
+  pointer-events: none;
+}
+.glass-pill:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+.glass-pill:focus-visible { outline: 2px solid rgb(var(--pill-tint-2)); outline-offset: 3px; }
+.glass-pill:disabled { cursor: not-allowed; filter: grayscale(.85); opacity: .5; animation: none; }
+.glass-pill:disabled::after { display: none; }
+.glass-pill.small { min-height: 32px; padding: 5px 15px; font-size: 12px; }
+.glass-pill.back { --pill-tint: 46 150 214; --pill-tint-2: 72 214 230; }
+.glass-pill.download { --pill-tint: 28 168 112; --pill-tint-2: 104 220 150; }
+
+@keyframes glass-pill-breathe {
+  0%, 100% { box-shadow: inset 0 1px 0 rgb(255 255 255 / 60%), inset 0 -10px 18px rgb(var(--pill-tint) / 28%), 0 0 0 1px rgb(var(--pill-tint) / 22%), 0 0 10px rgb(var(--pill-tint) / 22%); }
+  50% { box-shadow: inset 0 1px 0 rgb(255 255 255 / 70%), inset 0 -10px 18px rgb(var(--pill-tint) / 34%), 0 0 0 1px rgb(var(--pill-tint) / 40%), 0 0 26px rgb(var(--pill-tint) / 52%); }
+}
+@keyframes glass-pill-sheen {
+  0%, 55% { left: -60%; }
+  100% { left: 130%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .glass-pill, .glass-pill::after { animation: none; }
+}

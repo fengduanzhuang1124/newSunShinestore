@@ -6,7 +6,7 @@ import { PosObservationService } from '../pos/application/pos-observation.servic
 import { PosInventoryApplicationService } from '../pos/application/pos-inventory-application.service.js';
 import { PosRealtimeSyncService } from '../pos/application/pos-realtime-sync.service.js';
 import { isCoreReplenishmentProduct } from './core-replenishment.js';
-import { purchaseCoverage } from './purchase-coverage.js';
+import { DEFAULT_COVERAGE_WEEKS, MAX_COVERAGE_WEEKS, MIN_COVERAGE_WEEKS, purchaseCoverage } from './purchase-coverage.js';
 import { ignoreIsActive, isDirectShip, productGroupKey, productNames, purchaseBrandGroup, setDirectShip } from '../shared/replenishment-rules.js';
 
 // Shipping and international fee lines are charged per kilogram: money received, but not goods sold, so they never
@@ -967,10 +967,15 @@ export class ManagementService {
     const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
     const product = await this.prisma.client.product.findFirst({ where: { id: input.productId, organizationId, status: 'ACTIVE', storeProducts: { some: { storeId, enabled: true } } }, select: { id: true } });
     if (!product) throw new NotFoundException('商品不存在或未在当前门店启用');
-    const suggestion = await this.purchaseProductSnapshot(organizationId, storeId, input.productId, organization.timezone);
+    const weekStart = this.purchaseWeekStart(organization.timezone);
+    const existingItem = await this.prisma.client.purchaseOrderItem.findFirst({
+      where: { productId: input.productId, purchaseOrder: { organizationId, storeId, weekStart } }, select: { coverageWeeks: true },
+    });
+    const coverageWeeks = existingItem?.coverageWeeks ?? DEFAULT_COVERAGE_WEEKS;
+    const suggestion = await this.purchaseProductSnapshot(organizationId, storeId, input.productId, organization.timezone, coverageWeeks);
     const orderedQuantity = input.quantity ?? suggestion.suggestedQuantity;
     if (!Number.isInteger(orderedQuantity) || orderedQuantity <= 0) throw new BadRequestException('进货数量必须是正整数');
-    const weekStart = this.purchaseWeekStart(organization.timezone);
+    const quantityEdited = orderedQuantity !== suggestion.suggestedQuantity;
     const order = await this.prisma.client.$transaction(async (tx) => {
       const purchaseOrder = await tx.purchaseOrder.upsert({
         where: { organizationId_storeId_weekStart: { organizationId, storeId, weekStart } },
@@ -980,8 +985,8 @@ export class ManagementService {
       if (purchaseOrder.status !== 'DRAFT') throw new ConflictException('本周进货单已确认，不能再添加商品');
       const item = await tx.purchaseOrderItem.upsert({
         where: { purchaseOrderId_productId: { purchaseOrderId: purchaseOrder.id, productId: input.productId } },
-        create: { purchaseOrderId: purchaseOrder.id, productId: input.productId, source: input.source, currentInventory: suggestion.currentInventory, recentSevenDayQty: suggestion.recentSevenDayQty, suggestedQuantity: suggestion.suggestedQuantity, orderedQuantity },
-        update: { source: input.source, currentInventory: suggestion.currentInventory, recentSevenDayQty: suggestion.recentSevenDayQty, suggestedQuantity: suggestion.suggestedQuantity, orderedQuantity },
+        create: { purchaseOrderId: purchaseOrder.id, productId: input.productId, source: input.source, currentInventory: suggestion.currentInventory, recentSevenDayQty: suggestion.recentSevenDayQty, suggestedQuantity: suggestion.suggestedQuantity, orderedQuantity, coverageWeeks, quantityEdited },
+        update: { source: input.source, currentInventory: suggestion.currentInventory, recentSevenDayQty: suggestion.recentSevenDayQty, suggestedQuantity: suggestion.suggestedQuantity, orderedQuantity, quantityEdited },
       });
       await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.purchase_order.item.upsert', entityType: 'PurchaseOrderItem', entityId: item.id.toString(), requestId: randomUUID(), afterSummary: { purchaseOrderId: purchaseOrder.id.toString(), productId: input.productId.toString(), source: input.source, orderedQuantity } } });
       return tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrder.id }, include: this.purchaseOrderInclude() });
@@ -998,7 +1003,7 @@ export class ManagementService {
       const existing = await tx.purchaseOrderItem.findFirst({ where: { id: itemId, purchaseOrder: { organizationId, storeId } }, include: { purchaseOrder: true } });
       if (!existing) throw new NotFoundException('进货单商品不存在');
       if (existing.purchaseOrder.status !== 'DRAFT') throw new ConflictException('只有草稿进货单可以修改');
-      const item = await tx.purchaseOrderItem.update({ where: { id: itemId }, data: { orderedQuantity: input.orderedQuantity, supplierName: input.supplierName?.trim() || null, unitCostCents: input.unitCostCents ?? null, caseSize: input.caseSize ?? null, notes: input.notes?.trim() || null } });
+      const item = await tx.purchaseOrderItem.update({ where: { id: itemId }, data: { orderedQuantity: input.orderedQuantity, quantityEdited: input.orderedQuantity !== existing.suggestedQuantity, supplierName: input.supplierName?.trim() || null, unitCostCents: input.unitCostCents ?? null, caseSize: input.caseSize ?? null, notes: input.notes?.trim() || null } });
       await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.purchase_order.item.update', entityType: 'PurchaseOrderItem', entityId: item.id.toString(), requestId: randomUUID(), beforeSummary: { orderedQuantity: existing.orderedQuantity }, afterSummary: { orderedQuantity: item.orderedQuantity, supplierName: item.supplierName, unitCostCents: item.unitCostCents, caseSize: item.caseSize } } });
       return tx.purchaseOrder.findUniqueOrThrow({ where: { id: existing.purchaseOrderId }, include: this.purchaseOrderInclude() });
     });
@@ -1014,6 +1019,47 @@ export class ManagementService {
       await tx.purchaseOrderItem.delete({ where: { id: itemId } });
       await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.purchase_order.item.remove', entityType: 'PurchaseOrderItem', entityId: itemId.toString(), requestId: randomUUID(), beforeSummary: { productId: existing.productId.toString(), orderedQuantity: existing.orderedQuantity } } });
       return tx.purchaseOrder.findUniqueOrThrow({ where: { id: existing.purchaseOrderId }, include: this.purchaseOrderInclude() });
+    });
+    return this.serializePurchaseOrder(order);
+  }
+
+  // CR-009 P3: weeks of stock for one line. The suggestion is recalculated from live stock and sales; a quantity
+  // nobody has changed by hand follows it.
+  async setPurchaseItemCoverage(organizationId: bigint, userId: bigint, storeId: bigint, itemId: bigint, coverageWeeks: number) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
+    if (!Number.isInteger(coverageWeeks) || coverageWeeks < MIN_COVERAGE_WEEKS || coverageWeeks > MAX_COVERAGE_WEEKS) {
+      throw new BadRequestException(`备货周期应为 ${MIN_COVERAGE_WEEKS}–${MAX_COVERAGE_WEEKS} 周`);
+    }
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
+    const existing = await this.prisma.client.purchaseOrderItem.findFirst({ where: { id: itemId, purchaseOrder: { organizationId, storeId } }, include: { purchaseOrder: true } });
+    if (!existing) throw new NotFoundException('进货单商品不存在');
+    if (existing.purchaseOrder.status !== 'DRAFT') throw new ConflictException('只有草稿进货单可以调整备货周期');
+    const snapshot = await this.purchaseProductSnapshot(organizationId, storeId, existing.productId, organization.timezone, coverageWeeks);
+    const order = await this.prisma.client.$transaction(async (tx) => {
+      const item = await tx.purchaseOrderItem.update({ where: { id: itemId }, data: { coverageWeeks, ...this.purchaseLineRefresh(existing, snapshot) } });
+      await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.purchase_order.item.coverage', entityType: 'PurchaseOrderItem', entityId: item.id.toString(), requestId: randomUUID(), beforeSummary: { coverageWeeks: existing.coverageWeeks, suggestedQuantity: existing.suggestedQuantity, orderedQuantity: existing.orderedQuantity }, afterSummary: { coverageWeeks, suggestedQuantity: item.suggestedQuantity, orderedQuantity: item.orderedQuantity } } });
+      return tx.purchaseOrder.findUniqueOrThrow({ where: { id: existing.purchaseOrderId }, include: this.purchaseOrderInclude() });
+    });
+    return this.serializePurchaseOrder(order);
+  }
+
+  // CR-009 P4: refresh every line of this cycle's draft with live stock and sales before the order is written up.
+  async recalculatePurchaseOrder(organizationId: bigint, userId: bigint, storeId: bigint) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.inventory);
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
+    const existing = await this.findCurrentPurchaseOrder(organizationId, storeId, organization.timezone);
+    if (!existing) throw new NotFoundException('本周还没有进货单');
+    if (existing.status !== 'DRAFT') throw new ConflictException('只有草稿进货单可以重算');
+    const snapshots = await Promise.all(existing.items.map((item) => this.purchaseProductSnapshot(organizationId, storeId, item.productId, organization.timezone, item.coverageWeeks)));
+    const order = await this.prisma.client.$transaction(async (tx) => {
+      let quantityChanged = 0;
+      for (const [index, item] of existing.items.entries()) {
+        const data = this.purchaseLineRefresh(item, snapshots[index]);
+        if (data.orderedQuantity !== item.orderedQuantity) quantityChanged += 1;
+        await tx.purchaseOrderItem.update({ where: { id: item.id }, data });
+      }
+      await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'management.purchase_order.recalculate', entityType: 'PurchaseOrder', entityId: existing.id.toString(), requestId: randomUUID(), afterSummary: { items: existing.items.length, quantityChanged, keptHandSet: existing.items.filter((item) => item.quantityEdited).length } } });
+      return tx.purchaseOrder.findUniqueOrThrow({ where: { id: existing.id }, include: this.purchaseOrderInclude() });
     });
     return this.serializePurchaseOrder(order);
   }
@@ -1660,6 +1706,7 @@ export class ManagementService {
 
   private purchaseOrderInclude() {
     return {
+      organization: { select: { timezone: true } },
       items: {
         orderBy: { createdAt: 'desc' as const },
         include: {
@@ -1681,15 +1728,21 @@ export class ManagementService {
     });
   }
 
-  private purchaseWeekStart(timezone: string) {
-    const today = calendarDateInZone(new Date(), timezone);
+  // Purchase cycles run Wednesday to Tuesday (CR-009 P1): orders are written at the weekend and the goods arrive on
+  // Tuesday, so writing, ordering and receiving all fall in one cycle.
+  private purchaseWeekStart(timezone: string, now = new Date()) {
+    const today = calendarDateInZone(now, timezone);
     const noon = new Date(`${today}T12:00:00Z`);
-    const weekday = noon.getUTCDay();
-    noon.setUTCDate(noon.getUTCDate() - (weekday === 0 ? 6 : weekday - 1));
+    noon.setUTCDate(noon.getUTCDate() - ((noon.getUTCDay() + 4) % 7));
     return calendarDateStart(noon.toISOString().slice(0, 10), timezone);
   }
 
-  private async purchaseProductSnapshot(organizationId: bigint, storeId: bigint, productId: bigint, timezone: string) {
+  // Fresh stock, sales and suggestion for a purchase line. A quantity set by hand is kept; otherwise it follows the suggestion.
+  private purchaseLineRefresh(item: { quantityEdited: boolean; orderedQuantity: number }, snapshot: { currentInventory: number; recentSevenDayQty: number; suggestedQuantity: number }) {
+    return { ...snapshot, orderedQuantity: item.quantityEdited ? item.orderedQuantity : snapshot.suggestedQuantity };
+  }
+
+  private async purchaseProductSnapshot(organizationId: bigint, storeId: bigint, productId: bigint, timezone: string, coverageWeeks = DEFAULT_COVERAGE_WEEKS) {
     const today = calendarDateInZone(new Date(), timezone);
     const end = nextCalendarDateStart(today, timezone);
     const start = new Date(calendarDateStart(today, timezone).getTime() - 27 * 86_400_000);
@@ -1705,14 +1758,18 @@ export class ManagementService {
     ]);
     const currentInventory = balances.reduce((sum, row) => sum + row.quantity, 0);
     const recent28DayQty = Math.max(0, Math.round(salesItems.reduce((sum, row) => sum + Math.abs(Number(row.quantity)) * (row.isMinus ? -1 : 1), 0)));
-    const { weeklyVelocity, gap } = purchaseCoverage(recent28DayQty, currentInventory);
+    const { weeklyVelocity, gap } = purchaseCoverage(recent28DayQty, currentInventory, coverageWeeks);
     return { currentInventory, recentSevenDayQty: Math.round(weeklyVelocity), suggestedQuantity: Math.max(1, gap) };
   }
 
   private serializePurchaseOrder(order: NonNullable<Awaited<ReturnType<ManagementService['findCurrentPurchaseOrder']>>>) {
     const totalCostCents = order.items.reduce((sum, item) => sum + (item.unitCostCents ?? 0) * item.orderedQuantity, 0);
+    // week_start holds the UTC date of the cycle's first local midnight (a day early east of UTC); midday on that date
+    // falls on the local start date in every zone within twelve hours of UTC.
+    const timezone = order.organization?.timezone ?? 'UTC';
+    const cycleDate = (offsetDays: number) => calendarDateInZone(new Date(order.weekStart.getTime() + (12 + offsetDays * 24) * 3_600_000), timezone);
     return {
-      id: order.id.toString(), orderNo: order.orderNo, weekStart: order.weekStart.toISOString().slice(0, 10), status: order.status,
+      id: order.id.toString(), orderNo: order.orderNo, weekStart: cycleDate(0), weekEnd: cycleDate(6), status: order.status,
       notes: order.notes, createdAt: order.createdAt.toISOString(), updatedAt: order.updatedAt.toISOString(),
       confirmedAt: order.confirmedAt?.toISOString() ?? null, orderedAt: order.orderedAt?.toISOString() ?? null,
       summary: { productCount: order.items.length, suggestedUnits: order.items.reduce((sum, item) => sum + item.suggestedQuantity, 0), orderedUnits: order.items.reduce((sum, item) => sum + item.orderedQuantity, 0), receivedUnits: order.items.reduce((sum, item) => sum + item.receivedQuantity, 0), totalCostCents },
@@ -1725,6 +1782,7 @@ export class ManagementService {
         currentInventory: item.currentInventory, recentSevenDayQty: item.recentSevenDayQty, suggestedQuantity: item.suggestedQuantity,
         orderedQuantity: item.orderedQuantity, receivedQuantity: item.receivedQuantity, supplierName: item.supplierName,
         unitCostCents: item.unitCostCents, caseSize: item.caseSize, notes: item.notes,
+        coverageWeeks: item.coverageWeeks, quantityEdited: item.quantityEdited,
       })),
     };
   }

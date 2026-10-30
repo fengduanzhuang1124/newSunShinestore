@@ -84,6 +84,61 @@ describe('经营管理页面组织', () => {
     expect(wrapper.find('.buy-rules').exists()).toBe(false);
   });
 
+  it('previews the purchase order, adjusts weeks of stock and recalculates the draft (CR-009)', async () => {
+    const line = (id: string, productName: string, currentInventory: number, orderedQuantity: number, extra: Record<string, unknown> = {}) => ({
+      id, productId: id, sku: `S${id}`, barcode: null, productName, brandName: '品牌A', categoryName: '保健品', source: 'WEEKLY_FORECAST',
+      currentInventory, recentSevenDayQty: 5, suggestedQuantity: orderedQuantity, orderedQuantity, receivedQuantity: 0, supplierName: null,
+      unitCostCents: null, caseSize: null, notes: null, coverageWeeks: 2, quantityEdited: false, ...extra,
+    });
+    const order = (items: ReturnType<typeof line>[]) => ({
+      id: '9', orderNo: 'PO-20261028-1', weekStart: '2026-10-28', weekEnd: '2026-11-03', status: 'DRAFT', createdAt: '', updatedAt: '', confirmedAt: null, orderedAt: null,
+      summary: { productCount: items.length, suggestedUnits: 0, orderedUnits: items.reduce((sum, item) => sum + item.orderedQuantity, 0), receivedUnits: 0, totalCostCents: 0 }, items,
+    });
+    const items = [line('1', '高之源白瓶', 3, 7), line('2', 'RedSeal 红印烟民牙膏100g', 10, 24), line('3', '科立纯妇科益生菌', 0, 12, { quantityEdited: true })];
+    fixtures['purchase-orders/current'] = { currency: 'NZD', order: order(items) };
+    fixtures['purchase-orders/items/coverage'] = order([{ ...items[0], coverageWeeks: 3, suggestedQuantity: 12, orderedQuantity: 12 }, items[1], items[2]]);
+    fixtures['purchase-orders/recalculate'] = order(items);
+    try {
+      const { wrapper, fetchSpy } = setup(); await flushPromises();
+      await go(wrapper, '本周进货');
+      await wrapper.findAll('.procurement-tabs button')[1].trigger('click');
+
+      expect(wrapper.get('.purchase-order-card .card-title p').text()).toContain('周期 2026-10-28 至 2026-11-03（周三至下周二）');
+      expect(wrapper.findAll('.purchase-order-table th').map((cell) => cell.text())).toEqual(['商品', '数量与供应商', '进价与整箱', '备货周期', '备注与操作']);
+      expect(wrapper.get('.purchase-order-table tbody tr:nth-child(3)').text()).toContain('已手动调整');
+
+      await wrapper.get('button[aria-label="高之源白瓶 备货周期增加一周"]').trigger('click');
+      await flushPromises();
+      const coverageCall = fetchSpy.mock.calls.find(([url]) => String(url).includes('purchase-orders/items/coverage'));
+      expect(JSON.parse(String(coverageCall?.[1]?.body))).toEqual({ itemId: '1', coverageWeeks: 3 });
+      expect(wrapper.get('.purchase-order-table tbody tr').get('.coverage-cell').text()).toContain('3 周');
+
+      await click(wrapper, '按最新数据重算');
+      expect(fetchSpy.mock.calls.some(([url, init]) => String(url).includes('purchase-orders/recalculate') && init?.method === 'POST')).toBe(true);
+      expect(document.body.querySelector('.purchase-toast')?.textContent).toContain('手动改过的数量保持不变');
+
+      await click(wrapper, '预览');
+      const preview = document.body.querySelector('.po-preview')!;
+      expect(preview).toBeTruthy();
+      // Largest quantity first, in both the fan of lines and the panel.
+      expect([...preview.querySelectorAll('.po-label')].map((label) => label.textContent)).toEqual(['RedSeal 红印烟民牙膏100g', '科立纯妇科益生菌', '高之源白瓶']);
+      expect([...preview.querySelectorAll('.po-table tbody tr')].map((row) => [...row.querySelectorAll('td')].map((cell) => cell.textContent))).toEqual([
+        ['RedSeal 红印烟民牙膏100g', '10', '24'], ['科立纯妇科益生菌', '0', '12'], ['高之源白瓶', '3', '7'],
+      ]);
+      const createObjectURL = vi.fn(() => 'blob:po');
+      Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+      (preview.querySelector('.glass-pill.download') as HTMLButtonElement).click();
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      (preview.querySelector('.glass-pill.back') as HTMLButtonElement).click();
+      await flushPromises();
+      expect(document.body.querySelector('.po-preview')).toBeNull();
+    } finally {
+      fixtures['purchase-orders/current'] = { order: null };
+      delete fixtures['purchase-orders/items/coverage'];
+      delete fixtures['purchase-orders/recalculate'];
+    }
+  });
+
   it('moves the built-in current-page marker with the selected module', async () => {
     const { wrapper } = setup(); await flushPromises();
     expect(wrapper.findAll('.nav-current-marker')).toHaveLength(1);

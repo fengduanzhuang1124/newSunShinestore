@@ -352,6 +352,22 @@ export class ManagementController {
     return { code: 200, message: '进货商品已更新', data: await this.management.updatePurchaseOrderItem(user.organizationId, user.id, storeId, BigInt(input.itemId), { orderedQuantity: Number(input.orderedQuantity), supplierName: input.supplierName, unitCostCents: input.unitCostCents, caseSize: input.caseSize, notes: input.notes }) };
   }
 
+  @Post('purchase-orders/items/coverage')
+  async setPurchaseItemCoverage(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue: string | undefined, @Body() input: { itemId?: string; coverageWeeks?: number }) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.itemId || !/^\d+$/.test(input.itemId)) throw new BadRequestException('进货单商品参数无效');
+    if (!Number.isInteger(input.coverageWeeks)) throw new BadRequestException('备货周期必须是整数周');
+    const user = request.inventoryUser!;
+    return { code: 200, message: '备货周期已更新', data: await this.management.setPurchaseItemCoverage(user.organizationId, user.id, storeId, BigInt(input.itemId), Number(input.coverageWeeks)) };
+  }
+
+  @Post('purchase-orders/recalculate')
+  async recalculatePurchaseOrder(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue: string | undefined) {
+    const storeId = this.storeId(storeIdValue);
+    const user = request.inventoryUser!;
+    return { code: 200, message: '进货单已按最新数据重算', data: await this.management.recalculatePurchaseOrder(user.organizationId, user.id, storeId) };
+  }
+
   @Post('purchase-orders/items/remove')
   async removePurchaseOrderItem(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue: string | undefined, @Body() input: { itemId?: string }) {
     const storeId = this.storeId(storeIdValue);

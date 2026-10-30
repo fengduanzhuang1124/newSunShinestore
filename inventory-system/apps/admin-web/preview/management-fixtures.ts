@@ -161,11 +161,12 @@ const orderItems = suggestions.filter((row) => row.alreadyIncluded).map((row, in
   id: String(700 + index), productId: row.productId, sku: row.sku, barcode: row.barcode, productName: row.productName, brandName: row.brandName, categoryName: row.categoryName,
   source: row.source, currentInventory: row.currentInventory, recentSevenDayQty: Math.round(row.weeklyVelocity), suggestedQuantity: row.suggestedQuantity,
   orderedQuantity: row.suggestedQuantity, receivedQuantity: 0, supplierName: index % 2 ? '奥克兰批发' : null, unitCostCents: index % 2 ? 1250 + index * 90 : null, caseSize: index % 3 ? 12 : null, notes: null,
+  coverageWeeks: index % 4 === 1 ? 3 : 2, quantityEdited: index % 5 === 2,
 }));
 const currentPurchaseOrder = {
   generatedAt: iso(0, 1), inventoryLatestUpdatedAt: iso(0, 1), currency: 'NZD',
   order: {
-    id: '31', orderNo: `PO-${today.replaceAll('-', '')}-01`, weekStart: day(2), status: 'DRAFT', createdAt: iso(2), updatedAt: iso(0, 1), confirmedAt: null, orderedAt: null,
+    id: '31', orderNo: `PO-${today.replaceAll('-', '')}-01`, weekStart: day(3), weekEnd: day(-3), status: 'DRAFT', createdAt: iso(2), updatedAt: iso(0, 1), confirmedAt: null, orderedAt: null,
     summary: { productCount: orderItems.length, suggestedUnits: sumBy(orderItems, (row) => row.suggestedQuantity), orderedUnits: sumBy(orderItems, (row) => row.orderedQuantity), receivedUnits: 0, totalCostCents: sumBy(orderItems, (row) => (row.unitCostCents ?? 0) * row.orderedQuantity) },
     items: orderItems,
   },
