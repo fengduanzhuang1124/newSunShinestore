@@ -206,6 +206,14 @@ export class ManagementController {
     };
   }
 
+  @Get('market-insights')
+  async marketInsights(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue?: string, @Query('period') period = 'WEEK') {
+    const storeId = this.storeId(storeIdValue);
+    if (!['WEEK', 'MONTH', 'QUARTER'].includes(period)) throw new BadRequestException('统计周期无效');
+    const user = request.inventoryUser!;
+    return { code: 200, message: '店铺经营发现查询成功', data: await this.management.marketInsights(user.organizationId, user.id, storeId, period as 'WEEK' | 'MONTH' | 'QUARTER') };
+  }
+
   @Get('inventory-operations')
   async inventoryOperations(
     @Req() request: AuthenticatedRequest,

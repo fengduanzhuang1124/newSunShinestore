@@ -7,6 +7,8 @@ import { PosInventoryApplicationService } from '../pos/application/pos-inventory
 import { PosRealtimeSyncService } from '../pos/application/pos-realtime-sync.service.js';
 import { isCoreReplenishmentProduct } from './core-replenishment.js';
 import { DEFAULT_COVERAGE_WEEKS, MAX_COVERAGE_WEEKS, MIN_COVERAGE_WEEKS, purchaseCoverage } from './purchase-coverage.js';
+import { baselineWindows, categoryTrends, findPairs, findSurges, NO_SALE_DAYS, overstockReason, PERIOD_DAYS, WINDOW_COUNT, windowBoundaries, windowCovered, windowIndex, type MarketPeriod } from './market-insights.js';
+import { productCategory, UNCLASSIFIED } from '../shared/product-taxonomy.js';
 import { ignoreIsActive, isDirectShip, productGroupKey, productNames, purchaseBrandGroup, setDirectShip } from '../shared/replenishment-rules.js';
 
 // Shipping and international fee lines are charged per kilogram: money received, but not goods sold, so they never
@@ -747,6 +749,155 @@ export class ManagementService {
       coverageNotice: salesCoverageReliable
         ? `库存覆盖天数按实际已有的${observedDays}天POS销售跨度与当前库存估算；无销量商品不生成虚假天数。`
         : `当前只有${observedDays}天POS销售跨度，少于${minimumReliableDays}天；暂不生成库存覆盖天数或滞销结论。`,
+    };
+  }
+
+  // REQ-014 §4.3: store findings for the market analysis page. Read only.
+  async marketInsights(organizationId: bigint, userId: bigint, storeId: bigint, period: MarketPeriod) {
+    const store = await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.sales);
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({
+      where: { id: organizationId }, select: { timezone: true, expiryAlertSettings: { select: { warningMonths: true } } },
+    });
+    const now = new Date();
+    const days = PERIOD_DAYS[period];
+    const today = calendarDateInZone(now, organization.timezone);
+    const boundaries = windowBoundaries(today, days, (date) => calendarDateStart(date, organization.timezone));
+    const end = boundaries[0];
+    const salesFrom = new Date(Math.min(boundaries[WINDOW_COUNT].getTime(), end.getTime() - (NO_SALE_DAYS + 1) * 86_400_000));
+    const productWhere = { organizationId, status: 'ACTIVE' as const, storeProducts: { some: { storeId, enabled: true } } };
+    const [products, balances, salesItems, firstOrder, currentOrder] = await Promise.all([
+      this.prisma.client.product.findMany({
+        where: productWhere,
+        select: {
+          id: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
+          storeProducts: { where: { storeId, enabled: true }, select: { directShip: true }, take: 1 },
+          posProductMappings: { where: { storeId, status: 'ACTIVE' }, select: { id: true }, take: 1 },
+        },
+      }),
+      this.prisma.client.inventoryBalance.findMany({
+        where: { organizationId, quantity: { gt: 0 }, warehouse: { storeId, status: 'ACTIVE' }, product: productWhere },
+        select: { productId: true, quantity: true, batch: { select: { expiryDate: true, expiryPrecision: true } } },
+      }),
+      this.prisma.client.posOrderItem.findMany({
+        where: {
+          status: 'ACTIVE', disposition: 'INVENTORY', isMinus: false, productId: { not: null }, product: productWhere,
+          order: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, orderedAt: { gte: salesFrom, lt: end } },
+        },
+        select: { orderId: true, productId: true, quantity: true, order: { select: { orderedAt: true } } },
+      }),
+      this.prisma.client.posOrder.findFirst({ where: { organizationId, storeId }, orderBy: { orderedAt: 'asc' }, select: { orderedAt: true } }),
+      this.findCurrentPurchaseOrder(organizationId, storeId, organization.timezone),
+    ]);
+    const firstSaleAt = firstOrder?.orderedAt ?? null;
+    const historyDays = firstSaleAt ? Math.floor((now.getTime() - firstSaleAt.getTime()) / 86_400_000) : 0;
+    const baselineCount = baselineWindows(boundaries, firstSaleAt);
+    const previousComplete = windowCovered(boundaries, 1, firstSaleAt);
+
+    const units = new Map<string, number[]>();
+    const units28 = new Map<string, number>();
+    const lastSold = new Map<string, Date>();
+    const currentOrders = new Map<string, Set<string>>();
+    for (const item of salesItems) {
+      const productId = item.productId!.toString();
+      const quantity = Math.abs(Number(item.quantity));
+      const orderedAt = item.order.orderedAt;
+      const index = windowIndex(orderedAt, boundaries);
+      if (index >= 0) {
+        const windows = units.get(productId) ?? Array<number>(WINDOW_COUNT).fill(0);
+        windows[index] += quantity;
+        units.set(productId, windows);
+      }
+      if (end.getTime() - orderedAt.getTime() <= 28 * 86_400_000) units28.set(productId, (units28.get(productId) ?? 0) + quantity);
+      if (!lastSold.has(productId) || orderedAt > lastSold.get(productId)!) lastSold.set(productId, orderedAt);
+      if (index === 0) {
+        const key = item.orderId.toString();
+        currentOrders.set(key, (currentOrders.get(key) ?? new Set()).add(productId));
+      }
+    }
+
+    const warningMonths = organization.expiryAlertSettings?.warningMonths ?? 3;
+    const todayDate = new Date(`${today}T00:00:00.000Z`);
+    const expiringBy = new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth() + warningMonths + 1, 0));
+    const stock = new Map<string, { quantity: number; nearestExpiry: Date | null; nearestPrecision: string | null }>();
+    for (const balance of balances) {
+      const key = balance.productId.toString();
+      const entry = stock.get(key) ?? { quantity: 0, nearestExpiry: null, nearestPrecision: null };
+      entry.quantity += balance.quantity;
+      if (!entry.nearestExpiry || balance.batch.expiryDate < entry.nearestExpiry) {
+        entry.nearestExpiry = balance.batch.expiryDate;
+        entry.nearestPrecision = balance.batch.expiryPrecision;
+      }
+      stock.set(key, entry);
+    }
+
+    const included = new Set(currentOrder?.items.map((item) => item.productId.toString()) ?? []);
+    const info = new Map(products.map((product) => {
+      const names = [product.name, product.chineseName, product.englishName];
+      return [product.id.toString(), {
+        productName: product.chineseName || product.name || product.englishName || '未命名商品',
+        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
+        category: productCategory(names, product.categoryName),
+        directShip: isDirectShip(product.storeProducts[0]?.directShip, productNames(product)),
+        posMapped: product.posProductMappings.length > 0,
+      }];
+    }));
+    const describe = (productId: string) => {
+      const product = info.get(productId)!;
+      const onHand = stock.get(productId)?.quantity ?? 0;
+      const weekly = (units28.get(productId) ?? 0) / 4;
+      return {
+        productId, productName: product.productName, brandName: product.brandName, level1: product.category.level1, level2: product.category.level2,
+        currentInventory: onHand, weeklyUnits: Math.round(weekly * 10) / 10,
+        coverageWeeks: weekly > 0 ? Math.round((onHand / weekly) * 10) / 10 : null,
+        inCurrentOrder: included.has(productId),
+      };
+    };
+    const expiryText = (date: Date | null, precision: string | null) => date ? date.toISOString().slice(0, precision === 'MONTH' ? 7 : 10) : null;
+
+    const surges = findSurges(new Map([...units].filter(([id]) => info.has(id))), baselineCount)
+      .map((surge) => ({ ...describe(surge.productId), currentUnits: surge.currentUnits, baselineUnits: surge.baselineUnits, ratio: surge.ratio, newlyRising: surge.newlyRising }));
+
+    const overstock = [...stock.entries()].flatMap(([productId, entry]) => {
+      const product = info.get(productId);
+      if (!product || product.directShip || !product.posMapped) return [];
+      const reason = overstockReason(entry.quantity, units28.get(productId) ?? 0, lastSold.get(productId) ?? null, now, historyDays);
+      if (!reason) return [];
+      const lastSoldAt = lastSold.get(productId) ?? null;
+      return [{
+        ...describe(productId), reason,
+        daysSinceLastSale: lastSoldAt ? Math.floor((now.getTime() - lastSoldAt.getTime()) / 86_400_000) : null,
+        nearestExpiry: expiryText(entry.nearestExpiry, entry.nearestPrecision),
+        expiring: entry.nearestExpiry !== null && entry.nearestExpiry <= expiringBy,
+      }];
+    }).sort((a, b) => Number(b.expiring) - Number(a.expiring) || (a.nearestExpiry ?? '9999').localeCompare(b.nearestExpiry ?? '9999') || (b.coverageWeeks ?? Infinity) - (a.coverageWeeks ?? Infinity) || b.currentInventory - a.currentInventory);
+
+    const pairs = findPairs(currentOrders.values()).map((pair) => ({
+      orders: pair.orders,
+      products: pair.productIds.map((id, index) => ({ productId: id, productName: info.get(id)?.productName ?? '未命名商品', share: pair.shares[index] })),
+    }));
+
+    const categories = categoryTrends([...units].filter(([id]) => info.has(id)).map(([id, windows]) => ({
+      level1: info.get(id)!.category.level1, level2: info.get(id)!.category.level2, currentUnits: windows[0], previousUnits: windows[1],
+    })), previousComplete).map((row) => ({ ...row, currentUnits: Math.round(row.currentUnits), previousUnits: Math.round(row.previousUnits) }));
+    const soldNow = [...units].filter(([id, windows]) => info.has(id) && windows[0] > 0);
+    const firstDay = (instant: Date) => calendarDateInZone(instant, organization.timezone);
+    const lastDay = (instant: Date) => calendarDateInZone(new Date(instant.getTime() - 1), organization.timezone);
+    return {
+      generatedAt: now.toISOString(), store: { id: store.id.toString(), name: store.name },
+      period: {
+        type: period, days, from: firstDay(boundaries[1]), to: lastDay(end),
+        previousFrom: firstDay(boundaries[2]), previousTo: lastDay(boundaries[1]),
+        baselineWindows: baselineCount, previousComplete, historyDays,
+      },
+      summary: {
+        surgeProducts: surges.filter((row) => !row.newlyRising).length, newlyRisingProducts: surges.filter((row) => row.newlyRising).length,
+        overstockProducts: overstock.length, expiringOverstockProducts: overstock.filter((row) => row.expiring).length,
+        pairs: pairs.length, risingCategories: categories.filter((row) => row.trend === 'UP').length,
+        fallingCategories: categories.filter((row) => row.trend === 'DOWN').length,
+        categoryCoverage: { identified: soldNow.filter(([id]) => info.get(id)!.category.code !== UNCLASSIFIED.code).length, total: soldNow.length },
+      },
+      surges: surges.slice(0, 50), overstock: overstock.slice(0, 100), pairs, categories,
+      rules: { surge: '本期 ≥ 5 件且 ≥ 前几期平均的 1.5 倍', overstock: '按近 28 天销量需 12 周以上卖完，或 60 天无销售', pairs: '同一订单出现 ≥ 5 次', category: '与上一期相比 ±10% 且 ≥ 10 件' },
     };
   }
 
