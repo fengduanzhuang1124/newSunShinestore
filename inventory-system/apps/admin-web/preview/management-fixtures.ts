@@ -183,7 +183,31 @@ const tags = [
   { id: 't3', code: 'gift', name: '送礼', dimension: 'USE_CASE', description: null, parentId: null, source: 'MANUAL', externalId: null, sortOrder: 3, status: 'ACTIVE' },
 ];
 
+// REQ-014 market analysis: store findings built from the sample catalogue.
+const levels: [string, string][] = [['保健品', '鱼油与 Omega-3'], ['护肤品', '绵羊油系列'], ['保健品', '维生素与矿物质'], ['食品', '蜂蜜'], ['奶粉与乳制品', '成人奶粉'], ['护肤品', '面部护理'], ['保健品', '益生菌与消化'], ['护肤品', '手部护理'], ['保健品', '辅酶与抗氧化营养素'], ['日用品', '口腔护理']];
+const fact = (row: typeof products[number], index: number) => ({
+  productId: row.productId, productName: row.productName, brandName: row.brandName, level1: levels[index % levels.length][0], level2: levels[index % levels.length][1],
+  currentInventory: row.currentInventory, weeklyUnits: Math.max(1, Math.round(row.unitsSold / 13)), coverageWeeks: row.currentInventory ? Math.round((row.currentInventory / Math.max(1, row.unitsSold / 13)) * 10) / 10 : 0, inCurrentOrder: index % 5 === 1,
+});
+const marketSurges = products.slice(0, 14).map((row, index) => ({ ...fact(row, index), currentUnits: 40 - index * 2, baselineUnits: index > 11 ? 0.5 : Math.round((14 - index * 0.6) * 10) / 10, ratio: index > 11 ? null : Math.round(((40 - index * 2) / (14 - index * 0.6)) * 10) / 10, newlyRising: index > 11 }));
+const marketOverstock = products.slice(10, 34).map((row, index) => ({ ...fact(row, index + 3), currentInventory: 40 + index * 9, coverageWeeks: index % 4 === 3 ? null : 14 + index * 3, reason: index % 4 === 3 ? 'NO_SALE' : 'COVERAGE', daysSinceLastSale: index % 4 === 3 ? 64 + index : 3, nearestExpiry: index < 3 ? day(-40 - index * 10).slice(0, 7) : day(-400 - index * 20), expiring: index < 3 }));
+const marketPairs = Array.from({ length: 8 }, (_, index) => ({ orders: 18 - index * 2, products: [{ productId: products[index].productId, productName: products[index].productName, share: 62 - index * 5 }, { productId: products[index + 9].productId, productName: products[index + 9].productName, share: 48 - index * 4 }] }));
+const marketCategories = levels.map(([level1, level2], index) => {
+  const previousUnits = 420 - index * 32;
+  const currentUnits = Math.round(previousUnits * [1.32, 0.71, 1.04, 0.86, 1.18, 1.84, 0.97, 2.16, 0.91, 1.12][index]);
+  const changePercent = Math.round(((currentUnits - previousUnits) / previousUnits) * 1000) / 10;
+  return { level1, level2, currentUnits, previousUnits, changePercent, trend: changePercent >= 10 ? 'UP' : changePercent <= -10 ? 'DOWN' : 'FLAT' };
+}).sort((a, b) => b.currentUnits - a.currentUnits);
+const marketInsights = {
+  generatedAt: iso(0, 1),
+  period: { type: 'WEEK', days: 7, from: day(6), to: today, previousFrom: day(13), previousTo: day(7), baselineWindows: 4, previousComplete: true, historyDays: 157 },
+  summary: { surgeProducts: 12, newlyRisingProducts: 2, overstockProducts: 642, expiringOverstockProducts: 3, pairs: marketPairs.length, risingCategories: 5, fallingCategories: 2, categoryCoverage: { identified: 247, total: 259 } },
+  surges: marketSurges, overstock: marketOverstock, pairs: marketPairs, categories: marketCategories,
+  rules: { surge: '本期 ≥ 5 件且 ≥ 前几期平均的 1.5 倍', overstock: '按近 28 天销量需 12 周以上卖完，或 60 天无销售', pairs: '同一订单出现 ≥ 5 次', category: '与上一期相比 ±10% 且 ≥ 10 件' },
+};
+
 export const managementFixtures: Record<string, unknown> = {
+  'market-insights': marketInsights,
   'access': { administrator: true, roleCodes: ['ADMIN'], capabilities: { overviewView: true, salesView: true, inventoryView: true, posSync: true, posIssues: true, permissionsManage: true }, grantedPermissionCodes: [] },
   'overview': overview,
   'data-foundation': {

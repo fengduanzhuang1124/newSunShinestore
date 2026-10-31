@@ -31,8 +31,8 @@ const {
         <article><span>有销售商品</span><strong>{{ productsBrands.summary.soldProductCount }}</strong><small>销售 {{ number(productsBrands.summary.unitsSold) }} 件</small></article>
         <article><span>商品销售额</span><strong>{{ money(productsBrands.summary.salesRevenue) }}</strong><small>{{ productsBrands.period.from }} 至 {{ productsBrands.period.to }}</small></article>
         <article><span>当前库存</span><strong>{{ number(productsBrands.summary.currentInventory) }} 件</strong><small>{{ productsBrands.summary.inStockProducts }} 种有正库存</small></article>
-        <article><button class="kpi-filter" type="button" @click="openInventoryAlert('OUT_OF_STOCK')"><span>缺货商品</span><strong>{{ productsBrands.summary.outOfStockProducts }}</strong><small>近180天有销售的零库存商品</small></button></article>
-        <article><button class="kpi-filter" type="button" @click="openInventoryAlert('LOW')"><span>低库存商品</span><strong>{{ productsBrands.summary.lowStockProducts }}</strong><small>{{ productsBrands.summary.minimumStockConfiguredProducts ? '按已配置最低库存判断' : '尚未配置最低库存阈值' }}</small></button></article>
+        <article><button class="kpi-filter" type="button" @click="openInventoryAlert('OUT_OF_STOCK')"><span>缺货商品</span><strong>{{ productsBrands.summary.outOfStockProducts }}</strong><small>点击到库存经营处理 →</small></button></article>
+        <article><button class="kpi-filter" type="button" @click="openInventoryAlert('LOW')"><span>低库存商品</span><strong>{{ productsBrands.summary.lowStockProducts }}</strong><small>点击到库存经营处理 →</small></button></article>
       </div>
       <div class="view-switcher" role="group" aria-label="商品分析视图"><button type="button" :aria-pressed="productView === 'products'" @click="productView = 'products'">商品明细</button><button type="button" :aria-pressed="productView === 'brands'" @click="productView = 'brands'">品牌结构</button><button type="button" :aria-pressed="productView === 'categories'" @click="productView = 'categories'">品类结构</button></div>
       <div v-show="productView !== 'products'" class="product-analysis-grid">

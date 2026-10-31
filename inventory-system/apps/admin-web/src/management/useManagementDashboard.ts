@@ -149,7 +149,7 @@ type InsightDimension = 'BUSINESS_CATEGORY' | 'AUDIENCE' | 'HEALTH_NEED' | 'USE_
 type InsightTag = { id: string; code: string; name: string; dimension: InsightDimension; description: string | null; parentId: string | null; source: string; externalId: string | null; sortOrder: number; status: 'ACTIVE' | 'INACTIVE' };
 type OverviewTrendPeriod = 'WEEK' | 'MONTH' | 'YEAR';
 type OverviewHotPeriod = 'DAY' | 'MONTH' | 'QUARTER' | 'YEAR';
-type ManagementSection = 'overview' | 'sales' | 'products' | 'inventory' | 'procurement' | 'customers' | 'stores' | 'system';
+export type ManagementSection = 'overview' | 'sales' | 'products' | 'inventory' | 'procurement' | 'market' | 'customers' | 'stores' | 'system';
 export type ManagementDashboardProps = { apiBaseUrl: string; token: string; storeId: string; storeName: string; administrator?: boolean };
 export type ManagementDashboardEmit = (event: 'open-report', view: 'receipts' | 'expiry' | 'movements') => void;
 
@@ -267,12 +267,13 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     { id: 'products', label: '商品分析', description: '商品、品牌与品类表现', ready: true },
     { id: 'inventory', label: '库存经营', description: '覆盖、滞销与低库存', ready: true },
     { id: 'procurement', label: '本周进货', description: '进货建议、草稿与订货状态', ready: true },
+    { id: 'market', label: '市场分析', description: '经营发现、AI 报告、趋势与活动', ready: true },
     { id: 'customers', label: '分类与标签', description: '商品标记与标签字典', ready: true },
     { id: 'stores', label: '门店对比', description: '门店经营基线与比较', ready: true },
     { id: 'system', label: '数据中心', description: 'POS 同步、检查与异常', ready: true },
   ];
   const navigationGroups = [
-    { label: '经营分析', ids: ['overview', 'sales', 'products', 'inventory', 'procurement', 'stores'] },
+    { label: '经营分析', ids: ['overview', 'sales', 'products', 'inventory', 'procurement', 'stores', 'market'] },
     { label: '资料维护', ids: ['customers'] },
     { label: '系统支持', ids: ['system'] },
   ];
@@ -290,10 +291,11 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
   const currentSection = computed(() => allSections.find((item) => item.id === activeSection.value) ?? allSections[0]);
   const pageGuides: Record<ManagementSection, { purpose: string; includes: string[]; decision: string; details?: string[] }> = {
     overview: { purpose: '快速判断今日经营状态与需要优先处理的事项。', includes: ['今日销售与昨日比较', '当前库存与临期', '今日库存作业待办', '可切换周期的销售趋势与热销商品'], decision: '适合作为每日入口；详细原因继续进入销售、商品或库存页面。' },
-    sales: { purpose: '回答卖了多少、何时卖、哪些商品贡献销售。', includes: ['销售趋势', '订单与客单价', '时段分布', '商品及品牌排行'], decision: '适合复盘销售变化；毛利和商品级退款在成本与退款数据完整前不作结论。' },
+    sales: { purpose: '回答卖了多少、何时卖，以及和上期相比的变化。', includes: ['销售趋势', '订单与客单价', '时段分布', '热销商品前 10'], decision: '适合复盘销售变化；毛利和商品级退款在成本与退款数据完整前不作结论。' },
     products: { purpose: '从商品、品牌和品类角度查看销售与当前库存结构。', includes: ['商品明细', '品牌结构', '品类结构', '资料与映射质量'], decision: '适合调整商品结构；售价、条码和商品主档仍在商品维护流程处理。' },
     inventory: { purpose: '识别缺货、低库存和滞销风险，帮助决定哪些商品需要补货或暂时隐藏提醒。', includes: ['库存状态', '观察期销量', '最低库存阈值', '最后销售时间'], decision: '缺货只统计近180天有销售的零库存商品；低库存只提醒核心品牌与绵羊油（默认20件）及单独设置了最低库存的商品。', details: ['库存来自正式库存系统，销量来自已同步的 POS 订单。', '销售历史不足时，不生成库存覆盖天数和滞销结论，避免把缺少数据误判为没有销售。', '名称含 stage、数字+tins 或数字+bag 的直邮奶粉不进入补货提醒。点击“忽略”会持续隐藏，点击“下周显示”会在7天后自动恢复。'] },
     procurement: { purpose: '把缺货、低库存和销售速度转为一张可确认的本周进货单。', includes: ['近7天进货建议', '进货数量与供应商', '草稿确认与已订货状态', '到货后转入正式入库流程'], decision: '加入进货单不会增加库存；只有完成扫码入库才改变正式库存。' },
+    market: { purpose: '把销售与库存数据整理成结论和可执行的事项。', includes: ['店铺经营发现：突然热销、超量滞销、常一起买、品类升降', 'AI 销售报告（即将上线）', '行业趋势（即将上线）', '活动策划（即将上线，系统不建议价格）'], decision: '只读分析；加入进货单、调整库存仍在对应页面完成。品类由商品名称自动识别，人工填写的品类优先。' },
     customers: { purpose: '维护商品经营分类、需求、人群倾向和营销标签。', includes: ['标签字典', '商品标签覆盖', '审核状态', '人工判断依据'], decision: '这是商品经营画像，不代表顾客真实身份，也不替代商品主档品类。' },
     stores: { purpose: '当前先保存单店经营基线，未来增加门店后再横向比较。', includes: ['单店销售基线', '订单与客单价', '库存与缺货', '后续多店排行'], decision: '目前只有一家门店，本页暂不作为重点开发模块。' },
     system: { purpose: '确认经营分析所依赖的数据是否已同步且足够可信。', includes: ['POS同步', '资料完整度', '商品映射', '异常与同步历史'], decision: '适合排查数据问题；同步保持观察模式，不直接修改正式库存。' },
@@ -370,9 +372,10 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
   function clearInventoryFilters() {
     inventoryTableQuery.value = ''; inventoryBrandFilter.value = ''; inventoryCategoryFilter.value = ''; inventoryStatusFilter.value = 'ALL';
   }
-  const pageBusy = computed(() => ({ overview: loading.value, sales: salesLoading.value, products: productsLoading.value, inventory: inventoryLoading.value, procurement: purchaseLoading.value, customers: insightLoading.value, stores: storeLoading.value, system: posLoading.value }[activeSection.value]));
+  const pageBusy = computed(() => ({ overview: loading.value, sales: salesLoading.value, products: productsLoading.value, inventory: inventoryLoading.value, procurement: purchaseLoading.value, market: false, customers: insightLoading.value, stores: storeLoading.value, system: posLoading.value }[activeSection.value]));
   function retryCurrentPage() {
-    const loaders = { overview: loadOverview, sales: loadSalesAnalysis, products: loadProductsBrands, inventory: loadInventoryOperations, procurement: loadProcurement, customers: loadProductInsights, stores: loadStoreComparison, system: loadSystemManagement };
+    // The market page loads and retries on its own.
+    const loaders: Record<ManagementSection, () => Promise<void>> = { overview: loadOverview, sales: loadSalesAnalysis, products: loadProductsBrands, inventory: loadInventoryOperations, procurement: loadProcurement, market: async () => undefined, customers: loadProductInsights, stores: loadStoreComparison, system: loadSystemManagement };
     void loaders[activeSection.value]();
   }
   const overviewTrendSeries = computed(() => overviewTrendAnalysis.value?.trend
@@ -1142,6 +1145,8 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     productInsights, insightLoading, insightProductId, insightTagCode, insightConfidence, insightEvidence,
     insightMessage, insightDetailPage, insightDetailPageSize, newTagName, newTagDimension, newTagParentId,
     newTagDescription, editingTagId, newTagSortOrder, newTagStatus, activeSection, showMobileMore, allSections,
+    // Pages that load their own data (market analysis) read the store from here.
+    currentStoreId: () => props.storeId,
     navigationGroups, canSection, sections, currentSection, pageGuides, currentGuide, selectSection, openDataCenter,
     openSalesFromOverview, STOCK_STATUS_LABEL, inventoryStatusLabel, posSyncState,
     POS_READINESS_LABEL, posReadinessLabel, realtimeSyncLabel, clearSalesFilters, clearProductFilters, setDateRange,

@@ -139,6 +139,68 @@ describe('经营管理页面组织', () => {
     }
   });
 
+  it('opens market analysis with module cards and a brief, and lists store findings (REQ-014)', async () => {
+    const fact = { brandName: '品牌A', level1: '保健品', level2: '鱼油与 Omega-3', weeklyUnits: 10, inCurrentOrder: false };
+    let added = false;
+    const insights = () => ({
+      generatedAt: '2026-10-31T00:00:00Z',
+      period: { type: 'WEEK', days: 7, from: '2026-10-25', to: '2026-10-31', previousFrom: '2026-10-18', previousTo: '2026-10-24', baselineWindows: 4, previousComplete: true, historyDays: 157 },
+      summary: { surgeProducts: 1, newlyRisingProducts: 1, overstockProducts: 1, expiringOverstockProducts: 1, pairs: 1, risingCategories: 1, fallingCategories: 0, categoryCoverage: { identified: 9, total: 10 } },
+      surges: [
+        { ...fact, productId: '7', productName: '鱼油 2000mg', currentInventory: 6, coverageWeeks: 0.6, currentUnits: 30, baselineUnits: 10, ratio: 3, newlyRising: false, inCurrentOrder: added },
+        { ...fact, productId: '8', productName: '新到益生菌', currentInventory: 40, coverageWeeks: 8, currentUnits: 6, baselineUnits: 0, ratio: null, newlyRising: true },
+      ],
+      overstock: [{ ...fact, productId: '9', productName: '木瓜膏', currentInventory: 400, coverageWeeks: 240, reason: 'COVERAGE', daysSinceLastSale: 2, nearestExpiry: '2026-12', expiring: true }],
+      pairs: [{ orders: 12, products: [{ productId: '1', productName: '精华液', share: 67 }, { productId: '2', productName: '修护乳液', share: 86 }] }],
+      categories: [{ level1: '护肤品', level2: '手部护理', currentUnits: 60, previousUnits: 30, changePercent: 100, trend: 'UP' }],
+      rules: { surge: '本期 ≥ 5 件', overstock: '12 周', pairs: '≥ 5 次', category: '±10%' },
+    });
+    fixtures['market-insights'] = insights();
+    fixtures['purchase-orders/items'] = { id: '9', orderNo: 'PO-1', weekStart: '2026-10-28', status: 'DRAFT', createdAt: '', updatedAt: '', confirmedAt: null, orderedAt: null, summary: { productCount: 1, suggestedUnits: 0, orderedUnits: 0, receivedUnits: 0, totalCostCents: 0 }, items: [] };
+    try {
+      const { wrapper, fetchSpy } = setup(); await flushPromises();
+      await go(wrapper, '市场分析');
+
+      const tiles = wrapper.findAll('.glass-card');
+      expect(tiles.map((tile) => tile.get('strong').text())).toEqual(['店铺经营发现', 'AI 销售报告', '行业趋势', '活动策划']);
+      expect(tiles[0].text()).toContain('1 种突然热销 · 1 种超量滞销');
+      expect(tiles[3].text()).toContain('即将上线');
+
+      // The brief on the home page shows what needs attention and opens the matching list.
+      expect(wrapper.get('.market-brief').text()).toContain('鱼油 2000mg');
+      expect(wrapper.get('.market-brief').text()).toContain('精华液');
+      await wrapper.findAll('.brief-card')[1].trigger('click');
+      expect(wrapper.get('.mk-kpi.active span').text()).toBe('超量滞销');
+      await wrapper.get('.mk-back').trigger('click');
+
+      await wrapper.findAll('.glass-card')[0].trigger('click');
+      expect(wrapper.findAll('.mk-kpi').map((kpi) => kpi.get('span').text())).toEqual(['突然热销', '超量滞销', '常一起买', '品类上升']);
+      expect(wrapper.get('.mk-focus').text()).toContain('鱼油 2000mg 本期卖出 30 件，是平时的 3 倍');
+      expect(wrapper.findAll('.mk-list.surges .mk-row')[1].text()).toContain('新品起量');
+
+      fixtures['market-insights'] = (added = true, insights());
+      await wrapper.get('.mk-list.surges .mk-row button').trigger('click');
+      await flushPromises();
+      const addCall = fetchSpy.mock.calls.find(([url]) => String(url).includes('purchase-orders/items'));
+      expect(JSON.parse(String(addCall?.[1]?.body))).toMatchObject({ productId: '7', source: 'HOT_SALES' });
+      expect(wrapper.get('.mk-list.surges .mk-row').text()).toContain('已在进货单');
+
+      await wrapper.findAll('.mk-kpi')[1].trigger('click');
+      expect(wrapper.get('.mk-list.overstock').text()).toContain('临期');
+      await wrapper.findAll('.mk-period button')[1].trigger('click');
+      await flushPromises();
+      expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('market-insights') && String(url).includes('period=MONTH'))).toBe(true);
+      // Market analysis is read only apart from the purchase order the user asked for.
+      expect(fetchSpy.mock.calls.filter(([, init]) => init?.method && init.method !== 'GET').map(([url]) => String(url).split('?')[0].split('/management/')[1])).toEqual(['purchase-orders/items']);
+
+      await wrapper.findAll('.mk-modules button')[3].trigger('click');
+      expect(wrapper.get('.mk-soon').text()).toContain('价格与优惠由决策者填写');
+    } finally {
+      delete fixtures['market-insights'];
+      delete fixtures['purchase-orders/items'];
+    }
+  });
+
   it('moves the built-in current-page marker with the selected module', async () => {
     const { wrapper } = setup(); await flushPromises();
     expect(wrapper.findAll('.nav-current-marker')).toHaveLength(1);
@@ -178,7 +240,7 @@ describe('经营管理页面组织', () => {
 
     const more = () => wrapper.findAll('.management-mobile-nav button').find(item => item.text() === '更多')!;
     await more().trigger('click');
-    expect(wrapper.findAll('.more-modules strong').map(item => item.text())).toEqual(['本周进货', '分类与标签', '门店对比', '数据中心']);
+    expect(wrapper.findAll('.more-modules strong').map(item => item.text())).toEqual(['本周进货', '市场分析', '分类与标签', '门店对比', '数据中心']);
     await wrapper.findAll('.more-modules button').find(item => item.text().includes('数据中心'))!.trigger('click'); await flushPromises();
     expect(wrapper.find('.management-more-sheet').exists()).toBe(false);
     expect(wrapper.get('.management-topbar h1').text()).toBe('数据中心');
@@ -205,7 +267,7 @@ describe('经营管理页面组织', () => {
   it('introduces the purpose and contents of every management page', async () => {
     const { wrapper } = setup(); await flushPromises();
     const expected: Record<string, string> = {
-      '经营总览': '今日销售与昨日比较', '销售分析': '商品及品牌排行', '商品分析': '品牌结构',
+      '经营总览': '今日销售与昨日比较', '销售分析': '热销商品前 10', '商品分析': '品牌结构',
       '库存经营': '覆盖天数', '分类与标签': '人工判断依据', '门店对比': '单店销售基线', '数据中心': '异常与同步历史',
     };
     for (const [section, content] of Object.entries(expected)) {

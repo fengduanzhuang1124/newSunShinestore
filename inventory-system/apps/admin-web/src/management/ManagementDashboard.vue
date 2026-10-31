@@ -5,6 +5,8 @@ import SalesPage from './pages/SalesPage.vue';
 import ProductsPage from './pages/ProductsPage.vue';
 import InventoryPage from './pages/InventoryPage.vue';
 import ProcurementPage from './pages/ProcurementPage.vue';
+import MarketPage from './pages/MarketPage.vue';
+import { useDraggableFab } from './useDraggableFab';
 import CustomersPage from './pages/CustomersPage.vue';
 import StoresPage from './pages/StoresPage.vue';
 import SystemPage from './pages/SystemPage.vue';
@@ -27,14 +29,14 @@ const {
 // First load of a page (nothing to show yet): phones show a skeleton instead of an empty page.
 const pageWaitingForFirstData = computed(() => pageBusy.value && !{
   overview: overview.value, sales: salesAnalysis.value, products: productsBrands.value, inventory: inventoryOperations.value,
-  procurement: purchaseSuggestions.value, customers: productInsights.value, stores: storeComparison.value, system: posStatus.value,
+  procurement: purchaseSuggestions.value, market: true, customers: productInsights.value, stores: storeComparison.value, system: posStatus.value,
 }[activeSection.value]);
 
 // Phone navigation: four primary pages in the bottom bar, the rest in the "更多" sheet.
 const MOBILE_PRIMARY_SECTIONS = [
   { id: 'overview', label: '总览' }, { id: 'sales', label: '销售' }, { id: 'products', label: '商品' }, { id: 'inventory', label: '库存' },
 ] as const;
-const MOBILE_MORE_SECTIONS: string[] = ['procurement', 'customers', 'stores', 'system'];
+const MOBILE_MORE_SECTIONS: string[] = ['procurement', 'market', 'customers', 'stores', 'system'];
 // 24 × 24 stroke icons drawn with currentColor.
 const ICON_PATH: Record<string, string> = {
   overview: 'M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z',
@@ -43,6 +45,7 @@ const ICON_PATH: Record<string, string> = {
   inventory: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
   more: 'M5 12h.01M12 12h.01M19 12h.01',
   procurement: 'M3 4h2l2.4 10.2a1 1 0 0 0 1 .8h8.9a1 1 0 0 0 1-.8L20 8H6.2M9 20h.01M17 20h.01',
+  market: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 3M3 12h2M19 12h2',
   customers: 'M3 12V4h8l9 9-8 8zM7.5 7.5h.01',
   stores: 'M4 10v10h16V10M3 10l2-6h14l2 6zM9 20v-5h6v5',
   system: 'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
@@ -52,6 +55,8 @@ const ICON_PATH: Record<string, string> = {
   chevron: 'M9 6l6 6-6 6',
   close: 'M6 6l12 12M18 6 6 18',
 };
+// The assistant button can be dragged away from content it covers.
+const guideFab = useDraggableFab(() => { pageGuideOpen.value = !pageGuideOpen.value; });
 function openFromMore(action: 'open-account' | 'exit') {
   showMobileMore.value = false;
   if (action === 'exit') emit('exit');
@@ -90,7 +95,7 @@ function openFromMore(action: 'open-account' | 'exit') {
       <div v-else-if="activeSection === 'system'" class="management-filters"><button type="button" :disabled="posLoading || posRunning" @click="loadSystemManagement">{{ posLoading ? '加载中…' : '刷新状态' }}</button></div>
     </header>
 
-    <button class="page-guide-fab" type="button" aria-label="查看本页说明" :aria-expanded="pageGuideOpen" @click="pageGuideOpen = !pageGuideOpen"><img src="/sunshine-fern-assistant.png" alt="" /><span aria-hidden="true"></span><b>页面说明</b></button>
+    <button class="page-guide-fab" :class="{ dragging: guideFab.dragging.value }" :style="guideFab.style.value" type="button" aria-label="查看本页说明（可拖动）" :aria-expanded="pageGuideOpen" @pointerdown="guideFab.onPointerDown" @pointermove="guideFab.onPointerMove" @pointerup="guideFab.onPointerUp" @pointercancel="guideFab.onPointerUp" @click="guideFab.onButtonClick"><img src="/sunshine-fern-assistant.png" alt="" draggable="false" /><span aria-hidden="true"></span><b>页面说明 · 可拖动</b></button>
     <Transition name="guide-pop"><aside v-if="pageGuideOpen" class="page-guide-popover" aria-label="本页包含什么"><header><span><small>阳光小助手 · 本页包含什么</small><strong>{{ currentSection.label }}怎么读</strong></span><button type="button" aria-label="关闭页面说明" @click="pageGuideOpen = false">×</button></header><p>{{ currentGuide.purpose }}</p><ul><li v-for="item in currentGuide.includes" :key="item">{{ item }}</li></ul><div v-if="currentGuide.details?.length" class="guide-details"><p v-for="detail in currentGuide.details" :key="detail">{{ detail }}</p></div><b>{{ currentGuide.decision }}</b></aside></Transition>
 
     <Teleport to="body"><Transition name="modal-pop"><div v-if="minimumStockDialog" class="management-modal-backdrop" @click.self="minimumStockDialog = null"><form class="minimum-stock-dialog" @submit.prevent="saveMinimumStock"><header><span><small>库存提醒设置</small><strong>{{ minimumStockDialog.product ? minimumStockDialog.product.productName : '统一设置最低库存' }}</strong></span><button type="button" aria-label="关闭最低库存设置" @click="minimumStockDialog = null">×</button></header><p>库存低于这个数量时标记为低库存。这里只改变提醒阈值，不会修改真实库存。</p><label>最低库存数量<input v-model="minimumStockDialog.value" type="number" min="0" max="100000" step="1" autofocus /></label><div v-if="!minimumStockDialog.product" class="dialog-scope-note"><strong>统一应用</strong><span>保存后会更新当前门店全部启用商品。</span></div><footer><button class="dialog-cancel" type="button" @click="minimumStockDialog = null">暂不修改</button><button class="dialog-confirm" type="submit" :disabled="minimumStockSaving">{{ minimumStockSaving ? '保存中…' : '保存阈值' }}</button></footer></form></div></Transition></Teleport>
@@ -110,6 +115,8 @@ function openFromMore(action: 'open-account' | 'exit') {
     <InventoryPage v-else-if="activeSection === 'inventory'" />
 
     <ProcurementPage v-else-if="activeSection === 'procurement'" />
+
+    <MarketPage v-else-if="activeSection === 'market'" />
 
     <CustomersPage v-else-if="activeSection === 'customers'" />
 
@@ -309,7 +316,7 @@ function openFromMore(action: 'open-account' | 'exit') {
 @media(max-width:720px){.procurement-summary{grid-template-columns:1fr}.purchase-order-card{padding:12px}.purchase-order-card>.card-title,.purchase-order-list header{display:grid}.purchase-order-actions{justify-content:flex-start}.purchase-item-fields{grid-template-columns:1fr}.purchase-notes{grid-column:auto}.purchase-order-list footer{flex-wrap:wrap}.purchase-order-list footer span{width:100%;margin:0}.procurement-tabs button{flex:1;min-width:0}.table-action{min-height:44px}}
 
 /* Compact management shell, floating page help, and dense procurement cards. */
-.management-heading{min-height:64px!important;padding:10px 16px!important;border-radius:14px!important}.management-heading p{margin:0 0 1px;font-size:8px}.management-heading h2{font-size:21px!important}.management-heading span{font-size:11px!important}.page-guide-fab{position:fixed;z-index:30;right:24px;bottom:28px;display:grid;width:54px;height:54px;place-items:center;padding:5px;color:#eafbff;border:1px solid #2f7890;border-radius:50%;background:linear-gradient(145deg,#176c8b,#4a58ca);box-shadow:0 14px 34px rgb(20 91 143 / 34%);font:inherit}.page-guide-fab span{font-size:20px}.page-guide-fab b{position:absolute;right:58px;padding:6px 9px;color:#c8d6e8;border:1px solid #2a3a51;border-radius:8px;background:#101a2a;font-size:10px;white-space:nowrap;opacity:0;transform:translateX(5px);transition:.18s}.page-guide-fab:hover b,.page-guide-fab:focus-visible b{opacity:1;transform:none}.page-guide-popover{position:fixed;z-index:29;right:24px;bottom:92px;width:min(360px,calc(100vw - 32px));padding:16px;border:1px solid #2a3b53;border-radius:16px;background:#0d1726;box-shadow:0 22px 60px rgb(0 0 0 / 38%)}.page-guide-popover header{display:flex;align-items:center;justify-content:space-between}.page-guide-popover header button{width:36px;height:36px;padding:0;border-radius:50%}.page-guide-popover p,.page-guide-popover>b{color:#aebdd0;font-size:12px}.page-guide-popover ul{display:flex;flex-wrap:wrap;gap:6px;padding:0;list-style:none}.page-guide-popover li{padding:5px 8px;border:1px solid #2c3d55;border-radius:999px;color:#bfd0e4;font-size:10px}.minimum-stock-tools{display:flex;align-items:center;gap:9px}.minimum-stock-value{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:4px 8px;color:#eaf6ff;border:1px solid #30445f;border-radius:8px;background:#111e30}.minimum-stock-value small{color:#6edce3}.pos-unmapped-tag{padding:1px 5px;border-radius:5px;color:#f5c26b;background:rgb(245 194 107 / 14%);font-size:9px;font-weight:800}.purchase-suggestion-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}.purchase-suggestion-grid>article{display:grid;align-content:start;gap:9px;min-width:0;min-height:220px;padding:12px;border:1px solid #202f44;border-radius:13px;background:#0c1624}.purchase-suggestion-grid header{display:grid;gap:3px;min-width:0}.purchase-suggestion-grid header strong,.purchase-suggestion-grid header small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.purchase-suggestion-grid header small,.purchase-suggestion-grid>article>p,.purchase-suggestion-grid>article>small{color:#7f90a8;font-size:9px}.purchase-suggestion-grid dl{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0}.purchase-suggestion-grid dl div{padding:7px;border-radius:8px;background:#111d2d}.purchase-suggestion-grid dt{color:#77889f;font-size:8px}.purchase-suggestion-grid dd{margin:2px 0 0;color:#eef6ff;font-size:12px;font-weight:850}.purchase-suggestion-grid .suggested{background:#12313d}.purchase-suggestion-grid .suggested dd{color:#66e0e7}.purchase-suggestion-grid footer{display:flex;gap:5px;margin-top:auto}.purchase-suggestion-grid footer button{flex:1;min-width:0;padding-inline:5px}
+.management-heading{min-height:64px!important;padding:10px 16px!important;border-radius:14px!important}.management-heading p{margin:0 0 1px;font-size:8px}.management-heading h2{font-size:21px!important}.management-heading span{font-size:11px!important}.page-guide-fab{position:fixed;z-index:30;right:24px;bottom:28px;display:grid;width:54px;height:54px;place-items:center;padding:5px;color:#eafbff;border:1px solid #2f7890;border-radius:50%;background:linear-gradient(145deg,#176c8b,#4a58ca);box-shadow:0 14px 34px rgb(20 91 143 / 34%);font:inherit}.page-guide-fab span{font-size:20px}.page-guide-fab b{position:absolute;right:58px;padding:6px 9px;color:#c8d6e8;border:1px solid #2a3a51;border-radius:8px;background:#101a2a;font-size:10px;white-space:nowrap;opacity:0;transform:translateX(5px);transition:.18s}.page-guide-fab:hover b,.page-guide-fab:focus-visible b{opacity:1;transform:none}.page-guide-fab{touch-action:none;cursor:grab}.page-guide-fab.dragging{cursor:grabbing}.page-guide-fab.dragging b{opacity:0}.page-guide-popover{position:fixed;z-index:29;right:24px;bottom:92px;width:min(360px,calc(100vw - 32px));padding:16px;border:1px solid #2a3b53;border-radius:16px;background:#0d1726;box-shadow:0 22px 60px rgb(0 0 0 / 38%)}.page-guide-popover header{display:flex;align-items:center;justify-content:space-between}.page-guide-popover header button{width:36px;height:36px;padding:0;border-radius:50%}.page-guide-popover p,.page-guide-popover>b{color:#aebdd0;font-size:12px}.page-guide-popover ul{display:flex;flex-wrap:wrap;gap:6px;padding:0;list-style:none}.page-guide-popover li{padding:5px 8px;border:1px solid #2c3d55;border-radius:999px;color:#bfd0e4;font-size:10px}.minimum-stock-tools{display:flex;align-items:center;gap:9px}.minimum-stock-value{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:4px 8px;color:#eaf6ff;border:1px solid #30445f;border-radius:8px;background:#111e30}.minimum-stock-value small{color:#6edce3}.pos-unmapped-tag{padding:1px 5px;border-radius:5px;color:#f5c26b;background:rgb(245 194 107 / 14%);font-size:9px;font-weight:800}.purchase-suggestion-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}.purchase-suggestion-grid>article{display:grid;align-content:start;gap:9px;min-width:0;min-height:220px;padding:12px;border:1px solid #202f44;border-radius:13px;background:#0c1624}.purchase-suggestion-grid header{display:grid;gap:3px;min-width:0}.purchase-suggestion-grid header strong,.purchase-suggestion-grid header small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.purchase-suggestion-grid header small,.purchase-suggestion-grid>article>p,.purchase-suggestion-grid>article>small{color:#7f90a8;font-size:9px}.purchase-suggestion-grid dl{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0}.purchase-suggestion-grid dl div{padding:7px;border-radius:8px;background:#111d2d}.purchase-suggestion-grid dt{color:#77889f;font-size:8px}.purchase-suggestion-grid dd{margin:2px 0 0;color:#eef6ff;font-size:12px;font-weight:850}.purchase-suggestion-grid .suggested{background:#12313d}.purchase-suggestion-grid .suggested dd{color:#66e0e7}.purchase-suggestion-grid footer{display:flex;gap:5px;margin-top:auto}.purchase-suggestion-grid footer button{flex:1;min-width:0;padding-inline:5px}
 @media(max-width:1500px){.purchase-suggestion-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}@media(max-width:1050px){.purchase-suggestion-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:720px){.purchase-suggestion-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-guide-fab{right:16px;bottom:82px}.page-guide-popover{right:16px;bottom:144px}.minimum-stock-tools{align-items:flex-end;flex-direction:column}}@media(max-width:420px){.purchase-suggestion-grid{grid-template-columns:1fr}}
 
 :root:not([data-theme="dark"]) .management-workspace{--dash-bg:#f5f5fb;--dash-panel:#ffffff;--dash-line:#e4e5f0;--dash-text:#252d4a;--dash-muted:#7d849e;--dash-cyan:#6d63dc;--dash-blue:#7569e8;background:linear-gradient(145deg,#f8f8fc,#f2f3fa);color:#252d4a}.management-workspace:where(:root:not([data-theme="dark"]) *){}
