@@ -47,7 +47,9 @@ describe('InventoryQueryService', () => {
     const permissions = { warehousePermission: jest.fn().mockResolvedValue({ warehouseId: 7n, warehouse: { name: '主仓库' } } as never) };
     const service = new InventoryQueryService({ client } as never, permissions as never);
 
-    const result = await service.expiryAlerts(1n, 9n, '', 'EARLY');
+    // 31 Oct in Auckland: the six-month window must end on 30 April, not roll into May.
+    jest.useFakeTimers({ now: new Date('2026-10-31T00:00:00.000Z'), doNotFake: ['nextTick', 'queueMicrotask', 'setImmediate'] });
+    const result = await service.expiryAlerts(1n, 9n, '', 'EARLY').finally(() => jest.useRealTimers());
 
     expect(result.items.map((item) => item.productName)).toEqual(['已过期商品', '两个月商品', '第六个月月底商品']);
     expect(client.inventoryBalance.findMany).toHaveBeenCalledWith(expect.objectContaining({
