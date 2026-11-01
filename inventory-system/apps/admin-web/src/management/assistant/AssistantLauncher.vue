@@ -9,7 +9,7 @@ const { mode, toggle } = useSunshineAssistant();
 <template>
   <div class="sa-launcher">
     <button class="sa-pill" type="button" :class="{ active: mode !== 'closed' }" :aria-expanded="mode !== 'closed'" aria-haspopup="dialog" @click="toggle">
-      <img src="/sunshine-fern-assistant.png" alt="" draggable="false" />
+      <img src="/sunshine-fern-assistant.webp" alt="" draggable="false" />
       <span>问问阳光小助手</span>
     </button>
     <Transition name="sa-rise">

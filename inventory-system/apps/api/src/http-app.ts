@@ -1,8 +1,12 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import compression from 'compression';
+import type { ServerResponse } from 'node:http';
 
 // Responses smaller than this are sent as-is; compressing them costs more than it saves.
 const COMPRESSION_THRESHOLD_BYTES = 1024;
+const ADMIN_DEV_PORT = '5174';
+export const DEFAULT_API_PORT = '3100';
 
 // HTTP behaviour shared by the running API (main.ts) and the end-to-end tests.
 export function configureHttpApp(app: INestApplication): void {
@@ -24,6 +28,18 @@ export function configureHttpApp(app: INestApplication): void {
   );
 }
 
+// Built admin pages served by the API in production (CR-013). Hashed bundles never change under the same name;
+// index.html is revalidated so a release is picked up on the next visit.
+export function serveAdminWeb(app: NestExpressApplication, root: string): void {
+  app.useStaticAssets(root, {
+    setHeaders(response: ServerResponse, filePath: string) {
+      if (/[\\/]assets[\\/]/.test(filePath)) response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      else if (filePath.endsWith('index.html')) response.setHeader('Cache-Control', 'no-cache');
+      else response.setHeader('Cache-Control', 'public, max-age=86400');
+    },
+  });
+}
+
 export function isLocalInventoryOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);
@@ -38,7 +54,8 @@ export function isLocalInventoryOrigin(origin: string): boolean {
       && (url.port === '' || url.port === '443');
     const isSupportedProtocol = url.protocol === 'http:' || url.protocol === 'https:';
     return isInventoryTailscaleHost
-      || (isSupportedProtocol && url.port === '5174' && (isLocalHost || isPrivateIpv4));
+      // 5174 is the dev server; the API port serves the built pages in production.
+      || (isSupportedProtocol && [ADMIN_DEV_PORT, process.env.API_PORT ?? DEFAULT_API_PORT].includes(url.port) && (isLocalHost || isPrivateIpv4));
   } catch {
     return false;
   }

@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "corepack pnpm --parallel --filter @sunshine/inventory-api --filter @sunshine/inventory-admin-web dev",
     "build": "corepack pnpm -r build",
+    "start:prod": "corepack pnpm --filter @sunshine/inventory-api start:prod",
     "test": "corepack pnpm -r test",
     "typecheck": "corepack pnpm -r typecheck",
     "db:format": "corepack pnpm --filter @sunshine/database prisma:format",

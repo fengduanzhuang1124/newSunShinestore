@@ -1505,7 +1505,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
     <section v-else class="workspace" :class="{ 'management-shell': activeMode === 'management' }">
       <header>
         <div class="brand-block">
-          <img class="brand-logo" src="/sunshine-health-horizontal-logo.png" alt="阳光特产 Sunshine Health" />
+          <img class="brand-logo" src="/sunshine-health-horizontal-logo.webp" alt="阳光特产 Sunshine Health" />
           <div>
             <p class="eyebrow">{{ activeMode === 'management' ? 'SUNSHINE MANAGEMENT' : 'SUNSHINE INVENTORY' }}</p>
             <h1>{{ activeMode === 'management' ? '经营管理中心' : '库存管理' }}</h1>
@@ -1539,7 +1539,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         </section>
         <section class="workbench-hero">
           <div class="workbench-brand">
-            <img src="/sunshine-health-horizontal-logo.png" alt="阳光特产 Sunshine Health" />
+            <img src="/sunshine-health-horizontal-logo.webp" alt="阳光特产 Sunshine Health" />
             <small>当前仓库：{{ reportWarehouseName || storeName }}</small>
           </div>
           <div class="workbench-tools">
