@@ -101,7 +101,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', fitWidth));
              :aria-valuenow="width" :aria-valuemin="PANEL_WIDTH.min" :aria-valuemax="PANEL_WIDTH.max"
              @pointerdown="startDrag('width', $event)" @pointermove="moveDrag" @pointerup="endDrag" @pointercancel="endDrag" @keydown="nudgeWidth"></div>
         <header class="sa-head">
-          <img src="/sunshine-fern-assistant.png" alt="" draggable="false" />
+          <img src="/sunshine-fern-assistant.webp" alt="" draggable="false" />
           <span><strong>阳光小助手</strong><small>粘贴客户问题，获得建议回复</small></span>
           <button type="button" aria-label="新对话" title="新对话" :disabled="!messages.length" @click="newConversation">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
@@ -113,7 +113,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', fitWidth));
 
         <div ref="thread" class="sa-thread" aria-live="polite">
           <div v-if="!messages.length" class="sa-empty">
-            <img src="/sunshine-fern-assistant.png" alt="" draggable="false" />
+            <img src="/sunshine-fern-assistant.webp" alt="" draggable="false" />
             <p>你好！把客户的问题粘贴进来</p>
             <small>接入问答库后，价格、库存和到期日会实时查询本系统</small>
             <div class="sa-chips">

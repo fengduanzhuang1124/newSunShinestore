@@ -6,6 +6,8 @@ describe('isLocalInventoryOrigin', () => {
     expect(isLocalInventoryOrigin('https://macmacbook-pro.tail10ff0a.ts.net')).toBe(true);
     expect(isLocalInventoryOrigin('https://localhost:5174')).toBe(true);
     expect(isLocalInventoryOrigin('http://192.168.1.73:5174')).toBe(true);
+    expect(isLocalInventoryOrigin('http://localhost:3100')).toBe(true);
+    expect(isLocalInventoryOrigin('http://192.168.1.73:3100')).toBe(true);
   });
 
   it('rejects other sites, plain http on the tailnet and look-alike hosts', () => {

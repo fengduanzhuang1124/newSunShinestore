@@ -101,7 +101,7 @@ function submit() {
     <i class="lg-floor" aria-hidden="true"></i>
     <div class="lg-frame">
       <div class="lg-top">
-        <img src="/sunshine-health-horizontal-logo.png" alt="阳光特产 Sunshine Health" />
+        <img src="/sunshine-health-horizontal-logo.webp" alt="阳光特产 Sunshine Health" />
         <button class="lg-theme" type="button" :aria-label="theme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="emit('toggle-theme')">
           <span aria-hidden="true">{{ theme === 'light' ? '☾' : '☀' }}</span>{{ theme === 'light' ? 'Dark' : 'Light' }}
         </button>
