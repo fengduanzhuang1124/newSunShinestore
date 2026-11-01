@@ -8,7 +8,8 @@ import { PosRealtimeSyncService } from '../pos/application/pos-realtime-sync.ser
 import { isCoreReplenishmentProduct } from './core-replenishment.js';
 import { DEFAULT_COVERAGE_WEEKS, MAX_COVERAGE_WEEKS, MIN_COVERAGE_WEEKS, purchaseCoverage } from './purchase-coverage.js';
 import { baselineWindows, categoryTrends, findPairs, findSurges, NO_SALE_DAYS, overstockReason, PERIOD_DAYS, WINDOW_COUNT, windowBoundaries, windowCovered, windowIndex, type MarketPeriod } from './market-insights.js';
-import { productCategory, UNCLASSIFIED } from '../shared/product-taxonomy.js';
+import { buildHighlights, categoryMovers, categoryShares, centsToAmount, changePercent, dataThroughDate, demandGroups, demandRows, heatmapSummary, periodTotals } from './store-analysis.js';
+import { AUDIENCE_OPTIONS, CATEGORY_OPTIONS, FUNCTION_OPTIONS, isCategoryOption, matchesCategory, productAudiences, productCategory, productFunctions, UNCLASSIFIED } from '../shared/product-taxonomy.js';
 import { ignoreIsActive, isDirectShip, productGroupKey, productNames, purchaseBrandGroup, setDirectShip } from '../shared/replenishment-rules.js';
 
 // Shipping and international fee lines are charged per kilogram: money received, but not goods sold, so they never
@@ -19,7 +20,7 @@ export function isShippingFeeLine(name: string | null | undefined) {
 
 type SalesLine = { productId: string | null; productName: string; brandName: string; quantity: number; revenue: number };
 type SalesAnalysisInput = { from: string; to: string; dimension: 'DAY' | 'WEEK' | 'MONTH'; brand?: string; category?: string };
-type ProductsBrandsInput = { from: string; to: string; query?: string; brand?: string; category?: string };
+type ProductsBrandsInput = { from: string; to: string; query?: string; brand?: string; category?: string; functionTag?: string; audience?: string };
 const DEFAULT_MINIMUM_STOCK = 20;
 // Zero-stock products count as out of stock only if they sold within this window (store owner, 2026-10-21).
 const SHORTAGE_SALES_WINDOW_DAYS = 180;
@@ -416,9 +417,10 @@ export class ManagementService {
     const duration = end.getTime() - start.getTime();
     const previousEnd = start;
     const previousStart = new Date(start.getTime() - duration);
+    const categoryProductIds = input.category ? await this.productIdsInCategory(organizationId, storeId, input.category) : undefined;
     const [orders, previousOrders] = await Promise.all([
-      this.loadAnalysisOrders(organizationId, storeId, start, end, input),
-      this.loadAnalysisOrders(organizationId, storeId, previousStart, previousEnd, input),
+      this.loadAnalysisOrders(organizationId, storeId, start, end, input, categoryProductIds),
+      this.loadAnalysisOrders(organizationId, storeId, previousStart, previousEnd, input, categoryProductIds),
     ]);
     const current = this.analyzeOrders(orders, organization.timezone, input);
     const previous = this.analyzeOrders(previousOrders, organization.timezone, input);
@@ -481,7 +483,6 @@ export class ManagementService {
       organizationId, status: 'ACTIVE' as const,
       storeProducts: { some: { storeId, enabled: true } },
       ...(input.brand ? { brandName: { contains: input.brand } } : {}),
-      ...(input.category ? { categoryName: { contains: input.category } } : {}),
       ...textFilter,
     };
     const recentSalesStart = new Date(Date.now() - SHORTAGE_SALES_WINDOW_DAYS * 86_400_000);
@@ -513,6 +514,16 @@ export class ManagementService {
         },
       }),
     ]);
+    // CR-010: categories are recognised from names (a category typed in by a person wins), so category, function and
+    // audience filters apply after classification.
+    const allProducts = products;
+    const classified = new Map(allProducts.map((product) => [product.id.toString(), this.classify(product)]));
+    const visibleProducts = allProducts.filter((product) => {
+      const info = classified.get(product.id.toString())!;
+      return (!input.category || matchesCategory(info.category, input.category))
+        && (!input.functionTag || info.functions.includes(input.functionTag))
+        && (!input.audience || info.audiences.includes(input.audience));
+    });
     const soldRecently = new Set(recentlySold.map((row) => row.productId?.toString()));
     const inventory = new Map<string, number>();
     for (const balance of balances) inventory.set(balance.productId.toString(), (inventory.get(balance.productId.toString()) ?? 0) + balance.quantity);
@@ -527,8 +538,9 @@ export class ManagementService {
       row.revenue += units * Number(item.unitPrice ?? 0);
       sales.set(key, row);
     }
-    const productRows = products.map((product) => {
+    const productRows = visibleProducts.map((product) => {
       const key = product.id.toString();
+      const info = classified.get(key)!;
       const sold = sales.get(key) ?? { units: 0, revenue: 0 };
       const currentInventory = inventory.get(key) ?? 0;
       const coreProduct = isCoreReplenishmentProduct(product.brandName, product.chineseName, product.name, product.englishName, product.categoryName);
@@ -536,7 +548,9 @@ export class ManagementService {
       return {
         productId: key, sku: product.sku,
         productName: product.chineseName || product.name || product.englishName || '未命名商品',
-        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName), categoryName: product.categoryName || '未标注品类',
+        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
+        categoryName: info.category.level2, categoryGroup: info.category.level1, categoryManual: info.manual,
+        functions: info.functions, audiences: info.audiences,
         barcode: product.barcodes[0]?.barcode ?? null,
         unitsSold: this.money(sold.units), salesRevenue: this.money(sold.revenue), currentInventory, minimumStock,
         sellingPriceCents: product.storeProducts[0]?.sellingPriceCents ?? product.storeProducts[0]?.level4PriceCents ?? null,
@@ -558,9 +572,9 @@ export class ManagementService {
     const ratio = (count: number) => products.length === 0 ? 0 : this.money(count / products.length * 100);
     return {
       generatedAt: new Date().toISOString(), store: { id: store.id.toString(), name: store.name }, currency: organization.currency,
-      period: { from: input.from, to: input.to }, filters: { query: input.query ?? null, brand: input.brand ?? null, category: input.category ?? null },
+      period: { from: input.from, to: input.to }, filters: { query: input.query ?? null, brand: input.brand ?? null, category: input.category ?? null, functionTag: input.functionTag ?? null, audience: input.audience ?? null },
       summary: {
-        productCount: products.length, soldProductCount: productRows.filter((row) => row.unitsSold !== 0).length,
+        productCount: visibleProducts.length, soldProductCount: productRows.filter((row) => row.unitsSold !== 0).length,
         unitsSold: this.money(productRows.reduce((sum, row) => sum + row.unitsSold, 0)),
         salesRevenue: this.money(productRows.reduce((sum, row) => sum + row.salesRevenue, 0)),
         currentInventory: productRows.reduce((sum, row) => sum + row.currentInventory, 0),
@@ -573,8 +587,9 @@ export class ManagementService {
       catalogQuality: {
         withBrand: products.filter((product) => Boolean(product.brandName?.trim())).length,
         brandCoveragePercent: ratio(products.filter((product) => Boolean(product.brandName?.trim())).length),
-        withCategory: products.filter((product) => Boolean(product.categoryName?.trim())).length,
-        categoryCoveragePercent: ratio(products.filter((product) => Boolean(product.categoryName?.trim())).length),
+        withCategory: allProducts.filter((product) => classified.get(product.id.toString())!.category.code !== UNCLASSIFIED.code).length,
+        categoryCoveragePercent: ratio(allProducts.filter((product) => classified.get(product.id.toString())!.category.code !== UNCLASSIFIED.code).length),
+        manualCategory: allProducts.filter((product) => classified.get(product.id.toString())!.manual).length,
         withBarcode: products.filter((product) => product.barcodes.length > 0).length,
         barcodeCoveragePercent: ratio(products.filter((product) => product.barcodes.length > 0).length), barcodeOptional: true,
       },
@@ -679,6 +694,7 @@ export class ManagementService {
       const key = product.id.toString();
       const productName = product.chineseName || product.name || product.englishName || '未命名商品';
       const directShipExcluded = isDirectShip(product.storeProducts[0]?.directShip, productNames(product));
+      const category = this.classify(product).category;
       const currentInventory = inventory.get(key)?.quantity ?? 0;
       const ignoreRow = hidden.get(key);
       const hiddenRow = ignoreRow && ignoreIsActive(ignoreRow, now) ? ignoreRow : undefined;
@@ -697,7 +713,8 @@ export class ManagementService {
       const slowMoving = posMapped && salesCoverageReliable && currentInventory > 0 && (soldUnits <= 0 || (daysSinceLastSale !== null && daysSinceLastSale >= Math.min(observedDays, 60)) || (coverageDays !== null && coverageDays > 180));
       return {
         productId: key, sku: product.sku, productName,
-        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName), categoryName: product.categoryName || '未标注品类',
+        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
+        categoryName: category.level2, categoryGroup: category.level1,
         currentInventory, minimumStock, configuredMinimumStock,
         minimumStockSource: configuredMinimumStock !== null ? 'MANUAL' : minimumStock !== null ? 'DEFAULT' : 'NONE',
         coreProduct, posMapped,
@@ -752,6 +769,72 @@ export class ManagementService {
     };
   }
 
+  // CR-010 F4: the category, function and audience lists used by filters and the assignment page.
+  productTaxonomy() {
+    return { categories: CATEGORY_OPTIONS, functions: FUNCTION_OPTIONS, audiences: AUDIENCE_OPTIONS };
+  }
+
+  // CR-010 F3: products with their category, unclassified ones first by recent sales; `q` searches any product.
+  async productCategories(organizationId: bigint, userId: bigint, storeId: bigint, input: { view: 'UNCLASSIFIED' | 'MANUAL' | 'ALL'; query?: string }) {
+    await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.sales);
+    const query = input.query?.trim();
+    const salesFrom = new Date(Date.now() - LONG_SALES_WINDOW_DAYS * 86_400_000);
+    const productWhere = {
+      organizationId, status: 'ACTIVE' as const, storeProducts: { some: { storeId, enabled: true } },
+      ...(query ? { OR: [{ name: { contains: query } }, { chineseName: { contains: query } }, { englishName: { contains: query } }, { sku: { contains: query } }, { barcodes: { some: { status: 'ACTIVE' as const, barcode: { contains: query } } } }] } : {}),
+    };
+    const [products, sales, balances] = await Promise.all([
+      this.prisma.client.product.findMany({
+        where: productWhere,
+        select: { id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true, barcodes: { where: { status: 'ACTIVE' }, orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }], select: { barcode: true }, take: 1 } },
+      }),
+      this.prisma.client.posOrderItem.groupBy({
+        by: ['productId'],
+        where: { status: 'ACTIVE', disposition: 'INVENTORY', isMinus: false, product: productWhere, order: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, orderedAt: { gte: salesFrom } } },
+        _sum: { quantity: true },
+      }),
+      this.prisma.client.inventoryBalance.groupBy({ by: ['productId'], where: { organizationId, warehouse: { storeId, status: 'ACTIVE' }, product: productWhere }, _sum: { quantity: true } }),
+    ]);
+    const units = new Map(sales.map((row) => [row.productId!.toString(), Math.round(Number(row._sum.quantity ?? 0))]));
+    const stock = new Map(balances.map((row) => [row.productId.toString(), row._sum.quantity ?? 0]));
+    const rows = products.map((product) => {
+      const names = [product.name, product.chineseName, product.englishName];
+      const info = this.classify(product);
+      const automatic = productCategory(names);
+      return {
+        productId: product.id.toString(), sku: product.sku, barcode: product.barcodes[0]?.barcode ?? null,
+        productName: product.chineseName || product.name || product.englishName || '未命名商品',
+        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
+        level1: info.category.level1, level2: info.category.level2, manualCategory: product.categoryName?.trim() || null,
+        automaticCategory: automatic.code === UNCLASSIFIED.code ? null : automatic.level2,
+        functions: info.functions, unitsLast90Days: units.get(product.id.toString()) ?? 0, currentInventory: stock.get(product.id.toString()) ?? 0,
+      };
+    });
+    const unclassified = rows.filter((row) => !row.manualCategory && !row.automaticCategory);
+    const visible = query ? rows : input.view === 'MANUAL' ? rows.filter((row) => row.manualCategory) : input.view === 'UNCLASSIFIED' ? unclassified : rows;
+    return {
+      summary: { products: rows.length, unclassified: unclassified.length, manual: rows.filter((row) => row.manualCategory).length, unclassifiedSelling: unclassified.filter((row) => row.unitsLast90Days > 0).length },
+      products: visible.sort((a, b) => b.unitsLast90Days - a.unitsLast90Days || b.currentInventory - a.currentInventory).slice(0, 300),
+    };
+  }
+
+  // CR-010 F3: set or clear the category typed in by a person (null clears it and returns to recognition). Admins only.
+  async assignProductCategory(organizationId: bigint, userId: bigint, storeId: bigint, productId: bigint, category: string | null) {
+    const access = await this.storeAccess(organizationId, userId, storeId);
+    if (!access.admin) throw new ForbiddenException('只有管理员可以修改商品品类');
+    const value = category?.trim() || null;
+    if (value && !isCategoryOption(value)) throw new BadRequestException('品类不在分类表中');
+    const product = await this.prisma.client.product.findFirst({ where: { id: productId, organizationId, status: 'ACTIVE' }, select: { id: true, name: true, chineseName: true, englishName: true, categoryName: true } });
+    if (!product) throw new NotFoundException('商品不存在');
+    const updated = await this.prisma.client.$transaction(async (tx) => {
+      const row = await tx.product.update({ where: { id: productId }, data: { categoryName: value }, select: { id: true, name: true, chineseName: true, englishName: true, categoryName: true } });
+      await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'catalog.product_category.assign', entityType: 'Product', entityId: productId.toString(), requestId: randomUUID(), beforeSummary: { categoryName: product.categoryName }, afterSummary: { categoryName: value } } });
+      return row;
+    });
+    const info = this.classify(updated);
+    return { productId: productId.toString(), level1: info.category.level1, level2: info.category.level2, manualCategory: updated.categoryName, functions: info.functions };
+  }
+
   // REQ-014 §4.3: store findings for the market analysis page. Read only.
   async marketInsights(organizationId: bigint, userId: bigint, storeId: bigint, period: MarketPeriod) {
     const store = await this.requireStorePermission(organizationId, userId, storeId, MANAGEMENT_PERMISSIONS.sales);
@@ -760,12 +843,16 @@ export class ManagementService {
     });
     const now = new Date();
     const days = PERIOD_DAYS[period];
-    const today = calendarDateInZone(now, organization.timezone);
-    const boundaries = windowBoundaries(today, days, (date) => calendarDateStart(date, organization.timezone));
+    const timeZone = organization.timezone;
+    const today = calendarDateInZone(now, timeZone);
+    // CR-011 F1: periods are whole days ending yesterday, or the last whole day with data.
+    const lastOrder = await this.prisma.client.posOrder.findFirst({ where: { organizationId, storeId }, orderBy: { orderedAt: 'desc' }, select: { orderedAt: true } });
+    const { through, stale } = dataThroughDate(today, lastOrder ? calendarDateInZone(lastOrder.orderedAt, timeZone) : null);
+    const boundaries = windowBoundaries(through, days, (date) => calendarDateStart(date, timeZone));
     const end = boundaries[0];
     const salesFrom = new Date(Math.min(boundaries[WINDOW_COUNT].getTime(), end.getTime() - (NO_SALE_DAYS + 1) * 86_400_000));
     const productWhere = { organizationId, status: 'ACTIVE' as const, storeProducts: { some: { storeId, enabled: true } } };
-    const [products, balances, salesItems, firstOrder, currentOrder] = await Promise.all([
+    const [products, balances, salesItems, firstOrder, currentOrder, paidOrders] = await Promise.all([
       this.prisma.client.product.findMany({
         where: productWhere,
         select: {
@@ -783,18 +870,65 @@ export class ManagementService {
           status: 'ACTIVE', disposition: 'INVENTORY', isMinus: false, productId: { not: null }, product: productWhere,
           order: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, orderedAt: { gte: salesFrom, lt: end } },
         },
-        select: { orderId: true, productId: true, quantity: true, order: { select: { orderedAt: true } } },
+        select: { orderId: true, productId: true, quantity: true, unitPrice: true, order: { select: { orderedAt: true } } },
       }),
       this.prisma.client.posOrder.findFirst({ where: { organizationId, storeId }, orderBy: { orderedAt: 'asc' }, select: { orderedAt: true } }),
       this.findCurrentPurchaseOrder(organizationId, storeId, organization.timezone),
+      // Amounts actually paid: line prices are list prices before order discounts.
+      this.prisma.client.posOrder.findMany({
+        where: { organizationId, storeId, sourceStatus: 'Paid', refundAmount: 0, orderedAt: { gte: boundaries[WINDOW_COUNT], lt: boundaries[0] } },
+        select: { orderedAt: true, orderAmount: true },
+      }),
     ]);
+    const firstDayOf = (instant: Date) => calendarDateInZone(instant, timeZone);
     const firstSaleAt = firstOrder?.orderedAt ?? null;
     const historyDays = firstSaleAt ? Math.floor((now.getTime() - firstSaleAt.getTime()) / 86_400_000) : 0;
     const baselineCount = baselineWindows(boundaries, firstSaleAt);
     const previousComplete = windowCovered(boundaries, 1, firstSaleAt);
 
+    const included = new Set(currentOrder?.items.map((item) => item.productId.toString()) ?? []);
+    const info = new Map(products.map((product) => {
+      const names = [product.name, product.chineseName, product.englishName];
+      const category = productCategory(names, product.categoryName);
+      return [product.id.toString(), {
+        productName: product.chineseName || product.name || product.englishName || '未命名商品',
+        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
+        category,
+        groups: demandGroups(names, category, productFunctions(names, category), productAudiences(names)),
+        directShip: isDirectShip(product.storeProducts[0]?.directShip, productNames(product)),
+        posMapped: product.posProductMappings.length > 0,
+      }];
+    }));
     const units = new Map<string, number[]>();
     const units28 = new Map<string, number>();
+    // CR-011: money in cents per window (0 current … 4 oldest); order-level facts for the current and previous window.
+    const windowRevenue = Array<number>(WINDOW_COUNT).fill(0);
+    const windowOrders = Array.from({ length: WINDOW_COUNT }, () => new Set<string>());
+    const windowUnits = [0, 0];
+    const windowProducts = [new Set<string>(), new Set<string>()];
+    const productRevenue = new Map<string, number[]>();
+    const level1Revenue: [Map<string, number>, Map<string, number>] = [new Map(), new Map()];
+    const level2Revenue: [Map<string, { level1: string; cents: number }>, Map<string, { level1: string; cents: number }>] = [new Map(), new Map()];
+    const orderGroups: [Map<string, Set<string>>, Map<string, Set<string>>] = [new Map(), new Map()];
+    const groupRevenue: [Map<string, number>, Map<string, number>] = [new Map(), new Map()];
+    const groupCategories = new Map<string, Map<string, number>>();
+    const windowStartDate = [firstDayOf(boundaries[1]), firstDayOf(boundaries[2])];
+    const daily = [Array.from({ length: days }, () => ({ orders: new Set<string>() })), Array.from({ length: days }, () => ({ orders: new Set<string>() }))];
+    const heat = Array.from({ length: 7 }, () => Array<number>(24).fill(0));
+    const paid = Array.from({ length: WINDOW_COUNT }, () => ({ cents: 0, orders: 0 }));
+    const paidDaily = [Array<number>(days).fill(0), Array<number>(days).fill(0)];
+    for (const order of paidOrders) {
+      const index = windowIndex(order.orderedAt, boundaries);
+      if (index < 0) continue;
+      const cents = Math.round(Number(order.orderAmount) * 100);
+      paid[index].cents += cents;
+      paid[index].orders += 1;
+      if (index <= 1) {
+        const day = Math.round((Date.parse(`${firstDayOf(order.orderedAt)}T00:00:00Z`) - Date.parse(`${windowStartDate[index]}T00:00:00Z`)) / 86_400_000);
+        if (day >= 0 && day < days) paidDaily[index][day] += cents;
+      }
+    }
+    const orderMoments = new Map<string, { day: number; weekday: number; hour: number }>();
     const lastSold = new Map<string, Date>();
     const currentOrders = new Map<string, Set<string>>();
     for (const item of salesItems) {
@@ -806,6 +940,43 @@ export class ManagementService {
         const windows = units.get(productId) ?? Array<number>(WINDOW_COUNT).fill(0);
         windows[index] += quantity;
         units.set(productId, windows);
+        const cents = Math.round(quantity * Number(item.unitPrice ?? 0) * 100);
+        const orderKey = item.orderId.toString();
+        windowRevenue[index] += cents;
+        windowOrders[index].add(orderKey);
+        const revenues = productRevenue.get(productId) ?? Array<number>(WINDOW_COUNT).fill(0);
+        revenues[index] += cents;
+        productRevenue.set(productId, revenues);
+        const product = info.get(productId);
+        if (index <= 1 && product) {
+          windowUnits[index] += quantity;
+          windowProducts[index].add(productId);
+          const { level1, level2 } = product.category;
+          level1Revenue[index].set(level1, (level1Revenue[index].get(level1) ?? 0) + cents);
+          const entry = level2Revenue[index].get(level2) ?? { level1, cents: 0 };
+          entry.cents += cents;
+          level2Revenue[index].set(level2, entry);
+          const groups = orderGroups[index].get(orderKey) ?? new Set<string>();
+          for (const group of product.groups) {
+            groups.add(group);
+            groupRevenue[index].set(group, (groupRevenue[index].get(group) ?? 0) + cents);
+            if (index === 0) {
+              const byCategory = groupCategories.get(group) ?? new Map<string, number>();
+              byCategory.set(level2, (byCategory.get(level2) ?? 0) + cents);
+              groupCategories.set(group, byCategory);
+            }
+          }
+          orderGroups[index].set(orderKey, groups);
+          let moment = orderMoments.get(orderKey);
+          if (!moment) {
+            const date = firstDayOf(orderedAt);
+            const day = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${windowStartDate[index]}T00:00:00Z`)) / 86_400_000);
+            moment = { day, weekday: (new Date(`${date}T00:00:00Z`).getUTCDay() + 6) % 7, hour: hourInZone(orderedAt, timeZone) };
+            orderMoments.set(orderKey, moment);
+            if (index === 0) heat[moment.weekday][moment.hour] += 1;
+            if (daily[index][moment.day]) daily[index][moment.day].orders.add(orderKey);
+          }
+        }
       }
       if (end.getTime() - orderedAt.getTime() <= 28 * 86_400_000) units28.set(productId, (units28.get(productId) ?? 0) + quantity);
       if (!lastSold.has(productId) || orderedAt > lastSold.get(productId)!) lastSold.set(productId, orderedAt);
@@ -830,17 +1001,6 @@ export class ManagementService {
       stock.set(key, entry);
     }
 
-    const included = new Set(currentOrder?.items.map((item) => item.productId.toString()) ?? []);
-    const info = new Map(products.map((product) => {
-      const names = [product.name, product.chineseName, product.englishName];
-      return [product.id.toString(), {
-        productName: product.chineseName || product.name || product.englishName || '未命名商品',
-        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
-        category: productCategory(names, product.categoryName),
-        directShip: isDirectShip(product.storeProducts[0]?.directShip, productNames(product)),
-        posMapped: product.posProductMappings.length > 0,
-      }];
-    }));
     const describe = (productId: string) => {
       const product = info.get(productId)!;
       const onHand = stock.get(productId)?.quantity ?? 0;
@@ -880,15 +1040,48 @@ export class ManagementService {
       level1: info.get(id)!.category.level1, level2: info.get(id)!.category.level2, currentUnits: windows[0], previousUnits: windows[1],
     })), previousComplete).map((row) => ({ ...row, currentUnits: Math.round(row.currentUnits), previousUnits: Math.round(row.previousUnits) }));
     const soldNow = [...units].filter(([id, windows]) => info.has(id) && windows[0] > 0);
-    const firstDay = (instant: Date) => calendarDateInZone(instant, organization.timezone);
-    const lastDay = (instant: Date) => calendarDateInZone(new Date(instant.getTime() - 1), organization.timezone);
+    const lastDay = (instant: Date) => calendarDateInZone(new Date(instant.getTime() - 1), timeZone);
+
+    // CR-011 F4–F9: the calculations live in store-analysis.ts.
+    const categoryShare = categoryShares(level1Revenue, [windowRevenue[0], windowRevenue[1]], previousComplete);
+    const movers = categoryMovers(level2Revenue, previousComplete);
+    const demand = demandRows({ orderGroups, groupCents: groupRevenue, groupCategoryCents: groupCategories, orderTotals: [windowOrders[0].size, windowOrders[1].size], previousComplete });
+    const productRows = [...units].filter(([id]) => info.has(id)).map(([id, windows]) => ({
+      ...describe(id), revenue: centsToAmount(productRevenue.get(id)?.[0] ?? 0), units: Math.round(windows[0]), previousUnits: Math.round(windows[1]),
+      history: [...windows].reverse().map((value) => Math.round(value)), changePercent: previousComplete ? changePercent(windows[0], windows[1]) : null,
+    }));
+    const top = productRows.filter((row) => row.revenue > 0).sort((a, b) => b.revenue - a.revenue).slice(0, 10);
+    const falling = previousComplete ? productRows.filter((row) => units.get(row.productId)![1] >= 5 && units.get(row.productId)![0] <= units.get(row.productId)![1] * 0.7)
+      .sort((a, b) => (b.previousUnits - b.units) - (a.previousUnits - a.units)).slice(0, 10) : [];
+    const highlights = buildHighlights({
+      shortBestSellers: surges.filter((row) => !row.newlyRising && row.coverageWeeks !== null && row.coverageWeeks < 2 && !row.inCurrentOrder),
+      expiringOverstock: overstock.filter((row) => row.expiring).length,
+      groups: demand.map((row) => ({ name: row.group, share: row.share, previousShare: row.previousShare })),
+      categories: categoryShare.map((row) => ({ name: row.level1, share: row.share, previousShare: row.previousShare })),
+      falling: movers.losses[0] ?? null,
+    });
     return {
       generatedAt: now.toISOString(), store: { id: store.id.toString(), name: store.name },
       period: {
-        type: period, days, from: firstDay(boundaries[1]), to: lastDay(end),
-        previousFrom: firstDay(boundaries[2]), previousTo: lastDay(boundaries[1]),
-        baselineWindows: baselineCount, previousComplete, historyDays,
+        type: period, days, from: firstDayOf(boundaries[1]), to: lastDay(end),
+        previousFrom: firstDayOf(boundaries[2]), previousTo: lastDay(boundaries[1]),
+        baselineWindows: baselineCount, previousComplete, historyDays, dataThrough: through, stale,
       },
+      overview: {
+        current: periodTotals(paid[0], windowUnits[0], windowProducts[0].size),
+        previous: previousComplete ? periodTotals(paid[1], windowUnits[1], windowProducts[1].size) : null,
+        history: { revenue: paid.map((row) => centsToAmount(row.cents)).reverse(), orders: paid.map((row) => row.orders).reverse() },
+      },
+      daily: {
+        dates: Array.from({ length: days }, (_, k) => firstDayOf(new Date(boundaries[1].getTime() + (k + 0.5) * 86_400_000))),
+        current: daily[0].map((day, k) => ({ revenue: centsToAmount(paidDaily[0][k]), orders: day.orders.size })),
+        previous: previousComplete ? daily[1].map((day, k) => ({ revenue: centsToAmount(paidDaily[1][k]), orders: day.orders.size })) : null,
+      },
+      categoryShare, categoryMovers: movers,
+      demand: { orders: windowOrders[0].size, rows: demand },
+      heatmap: heatmapSummary(heat),
+      rankings: { top, falling },
+      highlights,
       summary: {
         surgeProducts: surges.filter((row) => !row.newlyRising).length, newlyRisingProducts: surges.filter((row) => row.newlyRising).length,
         overstockProducts: overstock.length, expiringOverstockProducts: overstock.filter((row) => row.expiring).length,
@@ -897,7 +1090,7 @@ export class ManagementService {
         categoryCoverage: { identified: soldNow.filter(([id]) => info.get(id)!.category.code !== UNCLASSIFIED.code).length, total: soldNow.length },
       },
       surges: surges.slice(0, 50), overstock: overstock.slice(0, 100), pairs, categories,
-      rules: { surge: '本期 ≥ 5 件且 ≥ 前几期平均的 1.5 倍', overstock: '按近 28 天销量需 12 周以上卖完，或 60 天无销售', pairs: '同一订单出现 ≥ 5 次', category: '与上一期相比 ±10% 且 ≥ 10 件' },
+      rules: { revenue: '销售额、客单价按订单实收；品类、人群、商品金额按商品标价，用于比较占比', demand: '按所购商品判定需求人群，一个订单可计入多个人群', surge: '本期 ≥ 5 件且 ≥ 前几期平均的 1.5 倍', overstock: '按近 28 天销量需 12 周以上卖完，或 60 天无销售', pairs: '同一订单出现 ≥ 5 次', category: '与上一期相比 ±10% 且 ≥ 10 件' },
     };
   }
 
@@ -1005,7 +1198,7 @@ export class ManagementService {
         productId, sku: product.sku, barcode: product.barcodes[0]?.barcode ?? null,
         productName: displayName(product),
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
-        categoryName: product.categoryName || '未标注品类', currentInventory, minimumStock,
+        categoryName: this.classify(product).category.level2, currentInventory, minimumStock,
         recent28DayQty, salesBasis, weeklyVelocity, coverageWeeks, targetWeeks, targetInventory,
         brandGroup: purchaseBrandGroup(`${productNames(product)} ${product.brandName ?? ''}`),
         suggestedQuantity, displayStock, source, priority, alreadyIncluded: members.some((member) => included.has(member.id.toString())),
@@ -1352,7 +1545,7 @@ export class ManagementService {
       products: products.map((product) => ({
         productId: product.id.toString(), sku: product.sku,
         productName: product.chineseName || product.name || product.englishName || '未命名商品',
-        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName), categoryName: product.categoryName || '未标注品类',
+        brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName), categoryName: this.classify(product).category.level2,
         assignments: product.insightAssignments.map((assignment) => ({ ...assignment, id: assignment.id.toString(), updatedAt: assignment.updatedAt.toISOString() })),
       })),
     };
@@ -1463,6 +1656,7 @@ export class ManagementService {
         where: { organizationId, status: 'ACTIVE', storeProducts: { some: { storeId, enabled: true } } },
         select: {
           id: true,
+          name: true, chineseName: true, englishName: true,
           brandName: true,
           categoryName: true,
           barcodes: { where: { status: 'ACTIVE' }, select: { id: true }, take: 1 },
@@ -1490,7 +1684,8 @@ export class ManagementService {
     const productCount = products.length;
     const productsWithBarcode = products.filter((product) => product.barcodes.length > 0).length;
     const productsWithBrand = products.filter((product) => Boolean(product.brandName?.trim())).length;
-    const productsWithCategory = products.filter((product) => Boolean(product.categoryName?.trim())).length;
+    // CR-010: a category counts when typed in or recognised from the names.
+    const productsWithCategory = products.filter((product) => this.classify(product).category.code !== UNCLASSIFIED.code).length;
     const productsWithMinimumStock = products.filter((product) => product.storeProducts[0]?.minimumStock != null).length;
     const productsWithSellingPrice = products.filter((product) => {
       const storeProduct = product.storeProducts[0];
@@ -1749,10 +1944,10 @@ export class ManagementService {
     };
   }
 
-  private loadAnalysisOrders(organizationId: bigint, storeId: bigint, start: Date, end: Date, input: SalesAnalysisInput) {
+  private loadAnalysisOrders(organizationId: bigint, storeId: bigint, start: Date, end: Date, input: SalesAnalysisInput, categoryProductIds?: bigint[]) {
     const productFilter = {
       ...(input.brand ? { brandName: input.brand } : {}),
-      ...(input.category ? { categoryName: input.category } : {}),
+      ...(categoryProductIds ? { id: { in: categoryProductIds } } : {}),
     };
     const hasProductFilter = Boolean(input.brand || input.category);
     const itemWhere = {
@@ -1771,11 +1966,27 @@ export class ManagementService {
           where: itemWhere,
           select: {
             productId: true, externalProductId: true, sourceName: true, quantity: true, unitPrice: true, isMinus: true, disposition: true,
-            product: { select: { name: true, chineseName: true, brandName: true, categoryName: true } },
+            product: { select: { name: true, chineseName: true, englishName: true, brandName: true, categoryName: true } },
           },
         },
       },
     });
+  }
+
+  // CR-010: products of the store whose recognised (or typed-in) category matches a second- or first-level name.
+  private async productIdsInCategory(organizationId: bigint, storeId: bigint, category: string) {
+    const products = await this.prisma.client.product.findMany({
+      where: { organizationId, status: 'ACTIVE', storeProducts: { some: { storeId, enabled: true } } },
+      select: { id: true, name: true, chineseName: true, englishName: true, categoryName: true },
+    });
+    return products.filter((product) => matchesCategory(this.classify(product).category, category)).map((product) => product.id);
+  }
+
+  // Category (typed in by a person, otherwise recognised from the names), functions and audiences of a product.
+  private classify(product: { name?: string | null; chineseName?: string | null; englishName?: string | null; categoryName?: string | null }) {
+    const names = [product.name, product.chineseName, product.englishName];
+    const category = productCategory(names, product.categoryName);
+    return { category, manual: Boolean(product.categoryName?.trim()), functions: productFunctions(names, category), audiences: productAudiences(names) };
   }
 
   private analyzeOrders(orders: Awaited<ReturnType<ManagementService['loadAnalysisOrders']>>, timeZone: string, input: SalesAnalysisInput) {
@@ -1801,7 +2012,7 @@ export class ManagementService {
         orderUnits += quantity;
         const productName = item.product?.chineseName || item.product?.name || item.sourceName || '未命名商品';
         const brandName = this.displayBrand(item.product?.brandName, item.sourceName, item.product?.chineseName, item.product?.name);
-        const categoryName = item.product?.categoryName || '未标注品类';
+        const categoryName = item.product ? this.classify(item.product).category.level2 : '未识别';
         const productKey = item.productId ? `product:${item.productId.toString()}` : `pos:${item.externalProductId}`;
         const product = products.get(productKey) ?? { productId: item.productId?.toString() ?? null, productName, brandName, categoryName, quantity: 0, revenue: 0 };
         product.quantity += quantity; product.revenue += revenue; products.set(productKey, product);
@@ -1929,7 +2140,7 @@ export class ManagementService {
         barcode: item.product.barcodes[0]?.barcode ?? null,
         productName: item.product.chineseName || item.product.name || item.product.englishName || '未命名商品',
         brandName: this.displayBrand(item.product.brandName, item.product.chineseName, item.product.name, item.product.englishName),
-        categoryName: item.product.categoryName || '未标注品类', source: item.source,
+        categoryName: this.classify(item.product).category.level2, source: item.source,
         currentInventory: item.currentInventory, recentSevenDayQty: item.recentSevenDayQty, suggestedQuantity: item.suggestedQuantity,
         orderedQuantity: item.orderedQuantity, receivedQuantity: item.receivedQuantity, supplierName: item.supplierName,
         unitCostCents: item.unitCostCents, caseSize: item.caseSize, notes: item.notes,

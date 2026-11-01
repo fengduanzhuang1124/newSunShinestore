@@ -133,3 +133,19 @@ export function productAudiences(names: (string | null | undefined)[]): string[]
   const text = names.filter(Boolean).join(' ');
   return AUDIENCE_RULES.filter((candidate) => candidate.pattern.test(text)).map((candidate) => candidate.label);
 }
+
+// Options for drop-downs, in the order of the REQ-014 appendix: one entry per second-level category.
+const LEVEL1_ORDER = ['保健品', '奶粉与乳制品', '食品', '护肤品', '洗护用品', '日用品', '家庭常备'];
+export const CATEGORY_OPTIONS: ProductCategory[] = [...byCode.values()]
+  .sort((a, b) => LEVEL1_ORDER.indexOf(a.level1) - LEVEL1_ORDER.indexOf(b.level1) || Number(a.code.slice(1)) - Number(b.code.slice(1)));
+export const FUNCTION_OPTIONS = FUNCTION_RULES.map(({ group, label }) => ({ group, label }));
+export const AUDIENCE_OPTIONS = AUDIENCE_RULES.map(({ label }) => label);
+
+export function isCategoryOption(level2: string) {
+  return CATEGORY_OPTIONS.some((option) => option.level2 === level2);
+}
+
+// A category filter matches either the second-level name or a whole first-level group.
+export function matchesCategory(category: ProductCategory, filter: string) {
+  return category.level2 === filter || category.level1 === filter;
+}

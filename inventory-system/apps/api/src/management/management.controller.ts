@@ -189,6 +189,8 @@ export class ManagementController {
     @Query('q') query?: string,
     @Query('brand') brand?: string,
     @Query('category') category?: string,
+    @Query('functionTag') functionTag?: string,
+    @Query('audience') audience?: string,
   ) {
     const storeId = this.storeId(storeIdValue);
     if (!from || !this.isCalendarDate(from)) throw new BadRequestException('开始日期格式应为 YYYY-MM-DD');
@@ -202,8 +204,32 @@ export class ManagementController {
       message: '商品与品牌分析查询成功',
       data: await this.management.productsBrandsAnalysis(user.organizationId, user.id, storeId, {
         from, to, query: query?.trim() || undefined, brand: brand?.trim() || undefined, category: category?.trim() || undefined,
+        functionTag: functionTag?.trim() || undefined, audience: audience?.trim() || undefined,
       }),
     };
+  }
+
+  @Get('product-taxonomy')
+  productTaxonomy() {
+    return { code: 200, message: '分类表查询成功', data: this.management.productTaxonomy() };
+  }
+
+  @Get('product-categories')
+  async productCategories(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue?: string, @Query('view') view = 'UNCLASSIFIED', @Query('q') query?: string) {
+    const storeId = this.storeId(storeIdValue);
+    if (!['UNCLASSIFIED', 'MANUAL', 'ALL'].includes(view)) throw new BadRequestException('查看范围无效');
+    if (query && query.trim().length > 100) throw new BadRequestException('搜索内容不能超过100个字符');
+    const user = request.inventoryUser!;
+    return { code: 200, message: '商品品类查询成功', data: await this.management.productCategories(user.organizationId, user.id, storeId, { view: view as 'UNCLASSIFIED' | 'MANUAL' | 'ALL', query }) };
+  }
+
+  @Post('product-categories/assign')
+  async assignProductCategory(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue: string | undefined, @Body() input: { productId?: string; category?: string | null }) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.productId || !/^\d+$/.test(input.productId)) throw new BadRequestException('商品参数无效');
+    if (input.category !== null && input.category !== undefined && typeof input.category !== 'string') throw new BadRequestException('品类参数无效');
+    const user = request.inventoryUser!;
+    return { code: 200, message: input.category ? '商品品类已指定' : '已恢复自动识别', data: await this.management.assignProductCategory(user.organizationId, user.id, storeId, BigInt(input.productId), input.category ?? null) };
   }
 
   @Get('market-insights')

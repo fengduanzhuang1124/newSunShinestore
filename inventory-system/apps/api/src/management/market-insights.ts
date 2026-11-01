@@ -1,5 +1,6 @@
 // Store findings for the market analysis page (REQ-014 §4.3): sudden best sellers, overstock, products bought
 // together and category trends. Pure functions over already-loaded sales so the rules can be tested directly.
+import { changePercent } from './store-analysis.js';
 
 export type MarketPeriod = 'WEEK' | 'MONTH' | 'QUARTER';
 // Rolling windows ending today: a calendar week or month still in progress would always look like a drop.
@@ -123,11 +124,11 @@ export function categoryTrends(rows: { level1: string; level2: string; currentUn
   return [...grouped.values()]
     .filter((row) => row.currentUnits > 0 || row.previousUnits > 0)
     .map((row) => {
-      const changePercent = previousComplete && row.previousUnits > 0 ? Math.round(((row.currentUnits - row.previousUnits) / row.previousUnits) * 1000) / 10 : null;
+      const change = previousComplete ? changePercent(row.currentUnits, row.previousUnits) : null;
       const significant = Math.max(row.currentUnits, row.previousUnits) >= CATEGORY_TREND_MIN_UNITS;
-      const trend = changePercent !== null && significant && changePercent >= CATEGORY_TREND_PERCENT ? 'UP' as const
-        : changePercent !== null && significant && changePercent <= -CATEGORY_TREND_PERCENT ? 'DOWN' as const : 'FLAT' as const;
-      return { ...row, changePercent, trend };
+      const trend = change !== null && significant && change >= CATEGORY_TREND_PERCENT ? 'UP' as const
+        : change !== null && significant && change <= -CATEGORY_TREND_PERCENT ? 'DOWN' as const : 'FLAT' as const;
+      return { ...row, changePercent: change, trend };
     })
     .sort((a, b) => b.currentUnits - a.currentUnits);
 }
