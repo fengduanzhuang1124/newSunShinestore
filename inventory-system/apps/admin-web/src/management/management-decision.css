@@ -7,7 +7,7 @@
   --decision-surface: var(--dash-card, #101a2a);
   --decision-selected: #193347;
 }
-.decision-workspace .management-content { grid-template-rows: none; grid-auto-rows: max-content; }
+.decision-workspace .management-content { grid-template-rows: none; grid-auto-rows: max-content; grid-template-columns: minmax(0, 1fr); }
 .decision-workspace .management-alert { margin: 0; min-height: 0; flex-wrap: wrap; align-items: center; line-height: 1.6; }
 .decision-workspace .management-alert > span { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
 .decision-workspace .management-heading { min-height: 72px; border-radius: 10px; }
@@ -121,3 +121,28 @@
 .modal-pop-enter-active,.modal-pop-leave-active,.guide-pop-enter-active,.guide-pop-leave-active{transition:opacity .22s ease}.modal-pop-enter-active .minimum-stock-dialog,.modal-pop-leave-active .minimum-stock-dialog,.guide-pop-enter-active .page-guide-popover,.guide-pop-leave-active .page-guide-popover{transition:transform .28s cubic-bezier(.2,.8,.2,1),opacity .22s ease}.modal-pop-enter-from,.modal-pop-leave-to,.guide-pop-enter-from,.guide-pop-leave-to{opacity:0}.modal-pop-enter-from .minimum-stock-dialog,.modal-pop-leave-to .minimum-stock-dialog{opacity:0;transform:translateY(16px) scale(.96)}.guide-pop-enter-from .page-guide-popover,.guide-pop-leave-to .page-guide-popover{opacity:0;transform:translateY(12px) scale(.94)}
 @media(max-width:720px){.management-modal-backdrop{padding:14px}.minimum-stock-dialog{border-radius:22px;padding:20px}.minimum-stock-dialog footer{display:grid;grid-template-columns:1fr 1fr}.decision-workspace .stock-status-actions{min-width:150px}}
 @media(prefers-reduced-motion:reduce){.modal-pop-enter-active,.modal-pop-leave-active,.guide-pop-enter-active,.guide-pop-leave-active,.modal-pop-enter-active .minimum-stock-dialog,.modal-pop-leave-active .minimum-stock-dialog,.guide-pop-enter-active .page-guide-popover,.guide-pop-leave-active .page-guide-popover{transition:none!important}}
+
+/* REQ-015: page actions sit at the top right with the 阳光小助手 entry; overview date shares the data-freshness row. */
+.heading-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.decision-workspace .data-freshness { justify-content: flex-end; }
+.decision-workspace .data-freshness .overview-date { display: inline-flex; align-items: center; gap: 8px; margin: 0; color: var(--decision-muted); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.decision-workspace .data-freshness .overview-date input { width: 150px; min-height: 32px; padding: 0 10px; border-radius: 9px; font-size: 13px; }
+/* With the question column open the page gets a third grid column, so nothing is covered. The navigation folds into
+   an icon rail to leave the page at least 860px (REQ-015 F5). */
+.nav-rail-icon { display: none; }
+@media (min-width: 1360px) {
+  .management-workspace.assistant-docked { grid-template-columns: 68px minmax(0, 1fr) auto; }
+  .assistant-docked .management-sidebar { padding: 14px 8px; }
+  .assistant-docked :is(.sidebar-heading, .navigation-group h3, .management-sidebar > p) { display: none; }
+  .assistant-docked .management-sidebar button { display: grid; place-items: center; min-height: 46px; padding: 0; }
+  .assistant-docked .management-sidebar button > :not(.nav-rail-icon) { display: none; }
+  .assistant-docked .nav-rail-icon { display: block; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+}
+.assistant-docked :is(.page-guide-fab, .page-guide-popover) { display: none; }
+.management-topbar .assistant-topbar-button img { width: 30px; height: 30px; object-fit: contain; }
+/* Layout follows the page's own width, not the window's, so it holds up beside the open question column. */
+.decision-workspace .management-content { container: page / inline-size; }
+.decision-workspace .pos-management { grid-template-columns: minmax(0, 1fr); }
+@container page (max-width: 940px) {
+  .overview-metric-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; }
+}

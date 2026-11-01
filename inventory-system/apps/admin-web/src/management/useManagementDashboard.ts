@@ -1,7 +1,9 @@
 // State, data loading and actions of the management center, shared by
 // ManagementDashboard.vue (shell and navigation) and the page components in pages/.
+import type { ProductTaxonomy } from './components/CategorySelect.vue';
 import { computed, inject, onBeforeUnmount, onMounted, provide, ref, watch, type InjectionKey } from 'vue';
 import { storeToday } from '../store-date';
+const OVERVIEW_RELOAD_MS = 5 * 60 * 1000;
 
 type SalesSummary = {
   period: string; revenue: number; refunds: number; netRevenue: number; orderCount: number;
@@ -103,7 +105,7 @@ type SalesAnalysis = {
 type ProductsBrands = {
   currency: string; period: { from: string; to: string };
   summary: { productCount: number; soldProductCount: number; unitsSold: number; salesRevenue: number; currentInventory: number; inStockProducts: number; outOfStockProducts: number; lowStockProducts: number; minimumStockConfiguredProducts: number };
-  products: { productId: string; sku: string; productName: string; brandName: string; categoryName: string; barcode: string | null; unitsSold: number; salesRevenue: number; currentInventory: number; minimumStock: number | null; sellingPriceCents: number | null; stockStatus: 'OUT_OF_STOCK' | 'LOW' | 'IN_STOCK'; shortageVisible?: boolean; salesToStockRatio: number | null }[];
+  products: { productId: string; sku: string; productName: string; brandName: string; categoryName: string; categoryGroup?: string; categoryManual?: boolean; functions?: string[]; audiences?: string[]; barcode: string | null; unitsSold: number; salesRevenue: number; currentInventory: number; minimumStock: number | null; sellingPriceCents: number | null; stockStatus: 'OUT_OF_STOCK' | 'LOW' | 'IN_STOCK'; shortageVisible?: boolean; salesToStockRatio: number | null }[];
   brands: { name: string; productCount: number; unitsSold: number; salesRevenue: number; currentInventory: number }[];
   categories: { name: string; productCount: number; unitsSold: number; salesRevenue: number; currentInventory: number }[];
   catalogQuality: { withBrand: number; brandCoveragePercent: number; withCategory: number; categoryCoveragePercent: number; withBarcode: number; barcodeCoveragePercent: number; barcodeOptional: boolean };
@@ -156,7 +158,7 @@ export type ManagementDashboardEmit = (event: 'open-report', view: 'receipts' | 
 export function useManagementDashboard(props: Readonly<ManagementDashboardProps>, emit: ManagementDashboardEmit) {
 
   const productView = ref<'products' | 'brands' | 'categories'>('products');
-  const tagView = ref<'products' | 'dictionary'>('products');
+  const tagView = ref<'products' | 'dictionary' | 'categories'>('products');
   const tagEditorOpen = ref(false);
   const systemView = ref<'sync' | 'quality' | 'issues'>('sync');
   const posLoadError = ref('');
@@ -207,6 +209,10 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
   const productQuery = ref('');
   const productBrand = ref('');
   const productCategory = ref('');
+  const productFunction = ref('');
+  const productAudience = ref('');
+  // CR-010: category, function and audience lists for the filters; loaded once.
+  const productTaxonomy = ref<ProductTaxonomy | null>(null);
   const productsBrands = ref<ProductsBrands | null>(null);
   const productsLoading = ref(false);
   const productDetailPage = ref(1);
@@ -296,7 +302,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     inventory: { purpose: '识别缺货、低库存和滞销风险，帮助决定哪些商品需要补货或暂时隐藏提醒。', includes: ['库存状态', '观察期销量', '最低库存阈值', '最后销售时间'], decision: '缺货只统计近180天有销售的零库存商品；低库存只提醒核心品牌与绵羊油（默认20件）及单独设置了最低库存的商品。', details: ['库存来自正式库存系统，销量来自已同步的 POS 订单。', '销售历史不足时，不生成库存覆盖天数和滞销结论，避免把缺少数据误判为没有销售。', '名称含 stage、数字+tins 或数字+bag 的直邮奶粉不进入补货提醒。点击“忽略”会持续隐藏，点击“下周显示”会在7天后自动恢复。'] },
     procurement: { purpose: '把缺货、低库存和销售速度转为一张可确认的本周进货单。', includes: ['近7天进货建议', '进货数量与供应商', '草稿确认与已订货状态', '到货后转入正式入库流程'], decision: '加入进货单不会增加库存；只有完成扫码入库才改变正式库存。' },
     market: { purpose: '把销售与库存数据整理成结论和可执行的事项。', includes: ['店铺经营发现：突然热销、超量滞销、常一起买、品类升降', 'AI 销售报告（即将上线）', '行业趋势（即将上线）', '活动策划（即将上线，系统不建议价格）'], decision: '只读分析；加入进货单、调整库存仍在对应页面完成。品类由商品名称自动识别，人工填写的品类优先。' },
-    customers: { purpose: '维护商品经营分类、需求、人群倾向和营销标签。', includes: ['标签字典', '商品标签覆盖', '审核状态', '人工判断依据'], decision: '这是商品经营画像，不代表顾客真实身份，也不替代商品主档品类。' },
+    customers: { purpose: '维护商品经营分类、需求、人群倾向和营销标签，并为识别不了的商品指定品类。', includes: ['标签字典', '商品标签覆盖', '审核状态', '人工判断依据', '品类指定：未识别商品按销量排序，人工指定优先于自动识别'], decision: '这是商品经营画像，不代表顾客真实身份，也不替代商品主档品类。' },
     stores: { purpose: '当前先保存单店经营基线，未来增加门店后再横向比较。', includes: ['单店销售基线', '订单与客单价', '库存与缺货', '后续多店排行'], decision: '目前只有一家门店，本页暂不作为重点开发模块。' },
     system: { purpose: '确认经营分析所依赖的数据是否已同步且足够可信。', includes: ['POS同步', '资料完整度', '商品映射', '异常与同步历史'], decision: '适合排查数据问题；同步保持观察模式，不直接修改正式库存。' },
   };
@@ -350,7 +356,11 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
   });
 
   function clearSalesFilters() { salesBrand.value = ''; salesCategory.value = ''; }
-  function clearProductFilters() { productQuery.value = ''; productBrand.value = ''; productCategory.value = ''; }
+  function clearProductFilters() { productQuery.value = ''; productBrand.value = ''; productCategory.value = ''; productFunction.value = ''; productAudience.value = ''; }
+  async function ensureProductTaxonomy() {
+    if (productTaxonomy.value) return;
+    try { productTaxonomy.value = await managementRequest<ProductTaxonomy>('/management/product-taxonomy'); } catch { /* filters fall back to “全部” */ }
+  }
   function setDateRange(target: 'sales' | 'products' | 'stores', preset: 'today' | 'week' | 'month' | 'year') {
     const weekStart = new Date(`${today}T00:00:00Z`);
     weekStart.setUTCDate(weekStart.getUTCDate() - 6);
@@ -523,26 +533,6 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value > today) return;
     overviewDate.value = value;
     void loadOverview();
-  }
-
-  async function refreshOverviewRealtime() {
-    if (!props.storeId) return;
-    if (!managementAccess.value?.capabilities.posSync) {
-      await loadOverview();
-      return;
-    }
-    loading.value = true;
-    error.value = '';
-    try {
-      await managementRequest(`/management/pos-sync/run?storeId=${encodeURIComponent(props.storeId)}`, {
-        method: 'POST', body: JSON.stringify({ date: today, reconcile: false }),
-      });
-      await loadOverview();
-    } catch (reason) {
-      error.value = reason instanceof Error ? reason.message : '今日实时数据刷新失败';
-    } finally {
-      loading.value = false;
-    }
   }
 
   function isoDate(date: Date) { return date.toISOString().slice(0, 10); }
@@ -745,6 +735,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
 
   async function loadSalesAnalysis() {
     if (!props.storeId || !salesFrom.value || !salesTo.value) return;
+    void ensureProductTaxonomy();
     salesLoading.value = true;
     error.value = '';
     try {
@@ -759,8 +750,11 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     }
   }
 
+  // Drop-downs reload on change, so only the newest request may write the result.
+  let productsRequest = 0;
   async function loadProductsBrands() {
     if (!props.storeId || !productFrom.value || !productTo.value) return;
+    const request = ++productsRequest;
     productsLoading.value = true;
     error.value = '';
     try {
@@ -768,12 +762,17 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
       if (productQuery.value.trim()) params.set('q', productQuery.value.trim());
       if (productBrand.value.trim()) params.set('brand', productBrand.value.trim());
       if (productCategory.value.trim()) params.set('category', productCategory.value.trim());
-      productsBrands.value = await managementRequest<ProductsBrands>(`/management/products-brands?${params.toString()}`);
+      if (productFunction.value) params.set('functionTag', productFunction.value);
+      if (productAudience.value) params.set('audience', productAudience.value);
+      void ensureProductTaxonomy();
+      const result = await managementRequest<ProductsBrands>(`/management/products-brands?${params.toString()}`);
+      if (request !== productsRequest) return;
+      productsBrands.value = result;
       productDetailPage.value = 1;
     } catch (reason) {
-      error.value = reason instanceof Error ? reason.message : '商品分析加载失败';
+      if (request === productsRequest) error.value = reason instanceof Error ? reason.message : '商品分析加载失败';
     } finally {
-      productsLoading.value = false;
+      if (request === productsRequest) productsLoading.value = false;
     }
   }
 
@@ -1126,6 +1125,13 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     if (section === 'customers') void loadProductInsights();
   });
   onMounted(async () => { await loadManagementAccess(); if (canSection('overview')) await loadOverview(); });
+  // Today's overview reloads itself while the window is visible. It only reads the local database; POS orders arrive
+  // through the scheduled sync on the store PC (REQ-015 F7).
+  const overviewReload = setInterval(() => {
+    if (activeSection.value !== 'overview' || overviewDate.value !== today || loading.value || document.visibilityState !== 'visible') return;
+    void loadOverview();
+  }, OVERVIEW_RELOAD_MS);
+  onBeforeUnmount(() => clearInterval(overviewReload));
   onBeforeUnmount(() => { if (purchaseMessageTimer) clearTimeout(purchaseMessageTimer); });
   return {
     productView, tagView, tagEditorOpen, systemView, posLoadError, overview, foundation, loading, error, posCheck,
@@ -1135,7 +1141,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     posInventoryApplyState, salesFrom, salesTo, salesDimension, salesBrand, salesCategory, salesAnalysis,
     salesLoading, overviewTrendPeriods, overviewHotPeriods, overviewTrendPeriod, overviewHotPeriod,
     overviewTrendAnalysis, overviewHotAnalysis, overviewWidgetsLoading, overviewWidgetError, productFrom, productTo,
-    productQuery, productBrand, productCategory, productsBrands, productsLoading, productDetailPage,
+    productQuery, productBrand, productCategory, productFunction, productAudience, productTaxonomy, ensureProductTaxonomy, productsBrands, productsLoading, productDetailPage,
     productDetailPageSize, inventoryLookbackDays, inventoryQuery, inventoryOperations, inventoryLoading,
     inventoryTableQuery, inventoryBrandFilter, inventoryCategoryFilter, inventoryStatusFilter, inventorySort,
     inventoryPage, inventoryPageSize, pageGuideOpen, minimumStockDialog, minimumStockSaving,
@@ -1156,7 +1162,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     pagedProductDetails, insightDetailPageCount, pagedInsightProducts, inventoryBrands, inventoryCategories,
     inventoryStatusCounts, filteredInventoryProducts, inventoryPageCount, pagedInventoryProducts,
     thisWeekPurchaseSuggestions, followUpPurchaseSuggestions, money, number, percent, comparisonClass, dateTime,
-    readinessLabel, domainLabel, openNativePicker, loadOverview, refreshOverviewRealtime, isoDate, overviewRange,
+    readinessLabel, domainLabel, openNativePicker, loadOverview, isoDate, overviewRange,
     loadOverviewTrend, loadOverviewHotProducts, selectOverviewTrend, selectOverviewHot, managementRequest, overviewDate, selectOverviewDate,
     loadManagementAccess, loadPosManagement, loadSystemManagement, runManualSync, posInventoryIssueLabel,
     previewPosInventory, openPosInventoryConfirmation, reapplyReviewLines, applyPosInventory, loadSalesAnalysis,

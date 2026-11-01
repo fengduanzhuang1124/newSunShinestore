@@ -192,6 +192,8 @@ function suggestionNote(item: PurchaseSuggestion) {
 :root .management-workspace .buy-btn.primary{border-color:var(--buy-accent);color:var(--buy-accent)}
 :root .management-workspace .buy-btn.primary:hover:not(:disabled){background:var(--buy-accent);color:var(--buy-accent-ink)}
 :root .management-workspace .buy-btn:disabled{border-color:var(--buy-line);color:var(--buy-muted);cursor:default}
+/* A narrower page (e.g. beside the open 阳光小助手 column) tightens the table so the actions stay visible. */
+@container page (max-width: 940px){:root .management-workspace .buy-actions{width:196px;min-width:196px}:root .management-workspace .buy-product{min-width:180px;white-space:normal}:root .management-workspace .buy-table :is(th,td){padding-inline:8px}}
 @media(max-width:720px){
   :root .management-workspace .buy-panel{padding:14px}
   :root .management-workspace .buy-panel-head{flex-direction:column}

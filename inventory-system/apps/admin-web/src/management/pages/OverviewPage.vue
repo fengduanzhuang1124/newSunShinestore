@@ -8,7 +8,7 @@ const {
   overviewTrendAnalysis, overviewHotAnalysis, overviewWidgetsLoading, overviewWidgetError, currentPurchaseOrder,
   purchaseLoading, canSection, openDataCenter, openSalesFromOverview, overviewTrendSeries, maxDailyRevenue,
   overviewTrendPoints, linePath, areaPath, money, number, percent, comparisonClass, dateTime, selectOverviewTrend,
-  selectOverviewHot, addToPurchaseOrder, isProductInCurrentOrder, openProcurement, emit, overviewDate
+  selectOverviewHot, addToPurchaseOrder, isProductInCurrentOrder, openProcurement, emit, overviewDate, selectOverviewDate, loading
 } = useManagementContext();
 
 // Labels follow the chosen day: "今日" for today, the date itself for a past day (CR-007 E3).
@@ -20,7 +20,7 @@ const showSoldItems = ref(false);
 
 <template>
   <p v-if="overview && !overview.salesAvailable" class="management-alert pending sync-required-alert"><strong>POS 销售数据尚未同步</strong><span>当前销售卡片显示为 0，“刷新数据”只查询本地数据库，不会从 POS 拉取订单，也不会使用演示数据。</span><button type="button" :disabled="!canSection('system')" @click="openDataCenter('sync')">前往 POS 同步</button></p>
-  <div class="data-freshness" aria-label="数据更新时间"><span>库存更新：{{ dateTime(foundation?.quality.inventory.latestUpdatedAt ?? null) }}</span><span>POS 最近成功同步：{{ dateTime(overview?.lastPosSyncAt ?? null) }}</span><button v-if="canSection('system')" class="text-action" type="button" @click="openDataCenter()">查看数据检查</button></div>
+  <div class="data-freshness" aria-label="数据更新时间"><span>库存更新：{{ dateTime(foundation?.quality.inventory.latestUpdatedAt ?? null) }}</span><span>POS 最近成功同步：{{ dateTime(overview?.lastPosSyncAt ?? null) }}</span><button v-if="canSection('system')" class="text-action" type="button" @click="openDataCenter()">查看数据检查</button><label class="overview-date">经营日期<input type="date" :value="overviewDate" :max="today" aria-label="选择经营日期" @change="selectOverviewDate(($event.target as HTMLInputElement).value)" /></label><button v-if="overviewDate !== today" class="text-action" type="button" :disabled="loading" @click="selectOverviewDate(today)">回到今天</button></div>
 
   <template v-if="overview">
     <SoldItemsSheet v-if="showSoldItems" :title="`${dayLabel}卖出的商品（${overview.period.date}）`" :items="overview.sales.current.soldProducts ?? []" :format-number="number" @close="showSoldItems = false" />

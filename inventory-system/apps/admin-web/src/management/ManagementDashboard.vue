@@ -11,17 +11,23 @@ import CustomersPage from './pages/CustomersPage.vue';
 import StoresPage from './pages/StoresPage.vue';
 import SystemPage from './pages/SystemPage.vue';
 import { provideManagementDashboard, useManagementDashboard } from './useManagementDashboard';
+import AssistantLauncher from './assistant/AssistantLauncher.vue';
+import AssistantPanel from './assistant/AssistantPanel.vue';
+import { createSunshineAssistant, provideSunshineAssistant } from './assistant/useSunshineAssistant';
 
 const props = defineProps<{ apiBaseUrl: string; token: string; storeId: string; storeName: string; administrator?: boolean }>();
 const emit = defineEmits<{ 'open-report': [view: 'receipts' | 'expiry' | 'movements']; 'open-account': []; exit: [] }>();
 const management = useManagementDashboard(props, emit);
 provideManagementDashboard(management);
+const assistant = createSunshineAssistant();
+provideSunshineAssistant(assistant);
+const assistantDocked = assistant.docked;
 const {
-  overview, loading, error, posLoading, posRunning, today, overviewDate, selectOverviewDate, posInventoryFrom, posInventoryTo, posInventoryPreview,
+  overview, error, posLoading, posRunning, posInventoryFrom, posInventoryTo, posInventoryPreview,
   posInventoryConfirmOpen, posInventoryApplyState, pageGuideOpen, minimumStockDialog, minimumStockSaving,
   purchaseMessage, purchaseMessageTone, purchaseConfirm, purchaseConfirmBusy, activeSection, showMobileMore,
   navigationGroups, canSection, sections, currentSection, currentGuide, selectSection, pageBusy,
-  retryCurrentPage, number, refreshOverviewRealtime, loadSystemManagement, applyPosInventory, saveMinimumStock,
+  retryCurrentPage, number, loadSystemManagement, applyPosInventory, saveMinimumStock,
   confirmPurchaseAction, salesAnalysis, productsBrands, inventoryOperations, purchaseSuggestions, productInsights,
   storeComparison, posStatus
 } = management;
@@ -65,7 +71,7 @@ function openFromMore(action: 'open-account' | 'exit') {
 </script>
 
 <template>
-  <section class="management-workspace decision-workspace" :class="{ 'inventory-master': activeSection === 'inventory' }">
+  <section class="management-workspace decision-workspace" :class="{ 'inventory-master': activeSection === 'inventory', 'assistant-docked': assistantDocked }">
     <aside class="management-sidebar">
       <div class="sidebar-heading">
         <p>MANAGEMENT</p>
@@ -75,8 +81,8 @@ function openFromMore(action: 'open-account' | 'exit') {
       <nav aria-label="经营管理功能">
         <section v-for="group in navigationGroups" :key="group.label" class="navigation-group" :aria-label="group.label">
         <h3>{{ group.label }}</h3>
-        <button v-for="section in sections.filter(item => group.ids.includes(item.id))" :key="section.id" type="button" :disabled="!canSection(section.id)" :aria-current="activeSection === section.id ? 'page' : undefined" :class="{ active: activeSection === section.id, locked: !canSection(section.id) }" :title="canSection(section.id) ? section.description : '当前账号没有此模块权限'" @click="selectSection(section.id)">
-          <span>{{ section.label }}</span><small>{{ section.description }}</small><i v-if="activeSection === section.id" class="nav-current-marker" aria-hidden="true">›</i><em v-if="!canSection(section.id)">无权限</em><em v-else-if="!section.ready">规划中</em>
+        <button v-for="section in sections.filter(item => group.ids.includes(item.id))" :key="section.id" type="button" :disabled="!canSection(section.id)" :aria-current="activeSection === section.id ? 'page' : undefined" :class="{ active: activeSection === section.id, locked: !canSection(section.id) }" :title="canSection(section.id) ? (assistantDocked ? `${section.label}：${section.description}` : section.description) : '当前账号没有此模块权限'" @click="selectSection(section.id)">
+          <svg class="nav-rail-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH[section.id]" /></svg><span>{{ section.label }}</span><small>{{ section.description }}</small><i v-if="activeSection === section.id" class="nav-current-marker" aria-hidden="true">›</i><em v-if="!canSection(section.id)">无权限</em><em v-else-if="!section.ready">规划中</em>
         </button>
         </section>
       </nav>
@@ -85,14 +91,14 @@ function openFromMore(action: 'open-account' | 'exit') {
 
     <header class="management-topbar">
       <div><h1>{{ currentSection.label }}</h1><small>{{ overview?.store.name || storeName }}</small></div>
+      <button class="assistant-topbar-button" type="button" aria-label="问问阳光小助手" @click="assistant.openPanel()"><img src="/sunshine-fern-assistant.png" alt="" draggable="false" /></button>
       <button type="button" aria-label="查看本页说明" :aria-expanded="pageGuideOpen" @click="pageGuideOpen = !pageGuideOpen"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH.guide" /></svg></button>
     </header>
 
     <main class="management-content" :class="{ 'overview-content': activeSection === 'overview' }">
-    <header class="management-heading" :class="{ 'has-filters': activeSection === 'overview' || activeSection === 'system' }">
+    <header class="management-heading" :class="{ 'has-filters': activeSection === 'system' }">
       <div><p>MANAGEMENT / {{ activeSection.toUpperCase() }}</p><h2>{{ currentSection.label }}</h2><span>{{ overview?.store.name || storeName }} · {{ currentSection.description }}</span></div>
-      <div v-if="activeSection === 'overview'" class="management-filters"><label class="overview-date">经营日期<input type="date" :value="overviewDate" :max="today" aria-label="选择经营日期" @change="selectOverviewDate(($event.target as HTMLInputElement).value)" /></label><button v-if="overviewDate !== today" class="secondary" type="button" :disabled="loading" @click="selectOverviewDate(today)">回到今天</button><button type="button" :disabled="loading" @click="refreshOverviewRealtime">{{ loading ? '同步中…' : overviewDate === today ? '刷新今日数据' : '刷新数据' }}</button></div>
-      <div v-else-if="activeSection === 'system'" class="management-filters"><button type="button" :disabled="posLoading || posRunning" @click="loadSystemManagement">{{ posLoading ? '加载中…' : '刷新状态' }}</button></div>
+      <div class="heading-actions"><div v-if="activeSection === 'system'" class="management-filters"><button type="button" :disabled="posLoading || posRunning" @click="loadSystemManagement">{{ posLoading ? '加载中…' : '刷新状态' }}</button></div><AssistantLauncher /></div>
     </header>
 
     <button class="page-guide-fab" :class="{ dragging: guideFab.dragging.value }" :style="guideFab.style.value" type="button" aria-label="查看本页说明（可拖动）" :aria-expanded="pageGuideOpen" @pointerdown="guideFab.onPointerDown" @pointermove="guideFab.onPointerMove" @pointerup="guideFab.onPointerUp" @pointercancel="guideFab.onPointerUp" @click="guideFab.onButtonClick"><img src="/sunshine-fern-assistant.png" alt="" draggable="false" /><span aria-hidden="true"></span><b>页面说明 · 可拖动</b></button>
@@ -131,6 +137,8 @@ function openFromMore(action: 'open-account' | 'exit') {
       <span>{{ currentSection.description }}已经作为独立功能区预留。接入对应数据接口后，这里会展示专属图表、筛选条件和明细表，不会继续堆放到经营总览。</span>
     </section>
     </main>
+
+    <AssistantPanel />
 
     <nav class="management-mobile-nav" aria-label="手机经营管理导航">
       <button v-for="item in MOBILE_PRIMARY_SECTIONS" :key="item.id" type="button" :class="{ active: activeSection === item.id }" :aria-current="activeSection === item.id ? 'page' : undefined" :disabled="!canSection(item.id)" @click="selectSection(item.id)"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICON_PATH[item.id]" /></svg></span>{{ item.label }}</button>
