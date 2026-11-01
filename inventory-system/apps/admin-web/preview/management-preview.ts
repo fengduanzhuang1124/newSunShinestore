@@ -1,7 +1,7 @@
 // Local-only preview of the management center with fixed sample data.
 // Served by the Vite dev server at /preview/management.html; it is not part of
 // the production build (vite build only bundles index.html).
-// Query parameters: theme=dark|light, state=ready|loading|error|forbidden.
+// Query parameters: theme=dark|light, state=ready|loading|error|forbidden, orderItems=<n> (pad this week's purchase order).
 import { createApp } from 'vue';
 import App from '../src/App.vue';
 import '../src/styles.css';
@@ -35,5 +35,17 @@ window.fetch = async (input) => {
   }
   return json(200, { data });
 };
+
+// A long purchase order checks the preview's fan of lines and its "+ N more" node.
+const orderItems = Number(params.get('orderItems') ?? 0);
+const current = managementFixtures['purchase-orders/current'] as { order: { items: Record<string, unknown>[] } } | undefined;
+if (orderItems > 0 && current?.order) {
+  const seed = current.order.items;
+  current.order.items = Array.from({ length: orderItems }, (_, index) => ({
+    ...seed[index % seed.length], id: `p${index}`, productId: `p${index}`,
+    productName: `${seed[index % seed.length].productName as string}${index >= seed.length ? ` ${index + 1}` : ''}`,
+    orderedQuantity: Math.max(1, 60 - index * 2), currentInventory: (index * 7) % 30,
+  }));
+}
 
 createApp(App).mount('#app');

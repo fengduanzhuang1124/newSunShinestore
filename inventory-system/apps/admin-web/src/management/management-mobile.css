@@ -383,6 +383,8 @@
   /* Purchase order rows hold editable fields: stack them. */
   .management-workspace .purchase-order-table { min-width: 0; }
   .management-workspace .purchase-order-table tr { grid-template-columns: minmax(0, 1fr); }
+  /* Desktop column widths would squeeze each stacked cell to a fraction of the card. */
+  .management-workspace .purchase-order-table td:nth-child(n) { width: auto; }
   .management-workspace .purchase-order-table td label { display: grid; gap: 4px; margin-bottom: 8px; }
 
   /* Paged lists: "加载更多" replaces page buttons. */

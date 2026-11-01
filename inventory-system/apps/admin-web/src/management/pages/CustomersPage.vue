@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import CategoryAssignPanel from '../components/CategoryAssignPanel.vue';
 import { useManagementContext } from '../useManagementDashboard';
 
 const {
@@ -12,11 +13,12 @@ const {
 
 <template>
   <section class="product-insight-page">
-    <p v-if="productInsights" class="management-alert pending"><strong>分析口径</strong><span>{{ productInsights.disclaimer }}</span></p>
-    <form class="insight-search" @submit.prevent="loadProductInsights"><label>商品搜索<input v-model="insightQuery" placeholder="商品名称、品牌或SKU" /></label><button type="submit" :disabled="insightLoading">{{ insightLoading ? '查询中…' : '查询商品' }}</button></form>
+    <p v-if="productInsights && tagView !== 'categories'" class="management-alert pending"><strong>分析口径</strong><span>{{ productInsights.disclaimer }}</span></p>
+    <form v-if="tagView !== 'categories'" class="insight-search" @submit.prevent="loadProductInsights"><label>商品搜索<input v-model="insightQuery" placeholder="商品名称、品牌或SKU" /></label><button type="submit" :disabled="insightLoading">{{ insightLoading ? '查询中…' : '查询商品' }}</button></form>
     <template v-if="productInsights">
-      <p class="inline-notice">当前查询最多返回 200 种商品，以下分页和覆盖统计仅针对已返回商品，并非全店总数。已审核与待复核可能重叠，“未标记”接口统计暂待核对。</p>
-      <div class="view-switcher" role="group" aria-label="分类与标签视图"><button type="button" :aria-pressed="tagView === 'products'" @click="tagView = 'products'">商品标记</button><button type="button" :aria-pressed="tagView === 'dictionary'" @click="tagView = 'dictionary'">标签字典</button></div>
+      <p v-if="tagView !== 'categories'" class="inline-notice">当前查询最多返回 200 种商品，以下分页和覆盖统计仅针对已返回商品，并非全店总数。已审核与待复核可能重叠，“未标记”接口统计暂待核对。</p>
+      <div class="view-switcher" role="group" aria-label="分类与标签视图"><button type="button" :aria-pressed="tagView === 'products'" @click="tagView = 'products'">商品标记</button><button type="button" :aria-pressed="tagView === 'dictionary'" @click="tagView = 'dictionary'">标签字典</button><button type="button" :aria-pressed="tagView === 'categories'" @click="tagView = 'categories'">品类指定</button></div>
+      <CategoryAssignPanel v-if="tagView === 'categories'" />
       <div v-show="tagView === 'products'" class="insight-kpis"><article><span>已返回商品</span><strong>{{ productInsights.coverage.productCount }}</strong><small>当前筛选范围</small></article><article><span>已审核标记</span><strong>{{ productInsights.coverage.approvedProducts }}</strong><small>覆盖率 {{ productInsights.coverage.approvedCoveragePercent }}%</small></article><article><span>待复核</span><strong>{{ productInsights.coverage.pendingProducts }}</strong><small>不得直接用于正式分析</small></article><article><span>未标记（待核对）</span><strong>{{ productInsights.coverage.untaggedProducts }}</strong><small>后续逐步人工补充</small></article></div>
       <section v-show="tagView === 'dictionary'" class="system-card taxonomy-card"><div class="card-title"><div><h3>小程序分类与经营标签</h3><p>小程序分类作为正式标签来源；点击标签可编辑、排序或停用</p></div><span>{{ productInsights.tags.length }} 个</span></div><div class="taxonomy-columns management-detail-scroll"><article v-for="dimension in productInsights.dimensions" :key="dimension.code"><h4>{{ dimension.name }}</h4><div class="taxonomy-list"><div v-for="root in productInsights.tagTree.filter(item => item.dimension === dimension.code)" :key="root.id" :class="{ inactive: root.status === 'INACTIVE' }"><button type="button" :disabled="!managementAccess?.capabilities.permissionsManage" @click="editInsightTag(root)"><strong>{{ root.name }}</strong><small>{{ root.source === 'MINIPROGRAM' ? `小程序分类 #${root.externalId}` : '人工标签' }} · {{ root.status === 'ACTIVE' ? '启用' : '已停用' }}</small></button><ul v-if="root.children.length"><li v-for="child in root.children" :key="child.id" :class="{ inactive: child.status === 'INACTIVE' }"><button type="button" :disabled="!managementAccess?.capabilities.permissionsManage" @click="editInsightTag(child)">{{ child.name }}</button></li></ul></div><p v-if="!productInsights.tagTree.some(item => item.dimension === dimension.code)">暂无标签</p></div></article></div><p class="detail-scroll-hint">分类区域固定高度；可在区域内滚动查看全部 {{ productInsights.tags.length }} 个标签。</p></section>
       <div v-if="managementAccess?.capabilities.permissionsManage && tagView === 'dictionary'" class="dictionary-actions"><button class="secondary-action" type="button" @click="resetInsightTagEditor(); tagEditorOpen = true">新增标签</button><span class="scope-note">标签仅用于商品经营描述，不会自动改写商品主档品类。</span></div>

@@ -189,6 +189,8 @@ export class ManagementController {
     @Query('q') query?: string,
     @Query('brand') brand?: string,
     @Query('category') category?: string,
+    @Query('functionTag') functionTag?: string,
+    @Query('audience') audience?: string,
   ) {
     const storeId = this.storeId(storeIdValue);
     if (!from || !this.isCalendarDate(from)) throw new BadRequestException('开始日期格式应为 YYYY-MM-DD');
@@ -202,8 +204,40 @@ export class ManagementController {
       message: '商品与品牌分析查询成功',
       data: await this.management.productsBrandsAnalysis(user.organizationId, user.id, storeId, {
         from, to, query: query?.trim() || undefined, brand: brand?.trim() || undefined, category: category?.trim() || undefined,
+        functionTag: functionTag?.trim() || undefined, audience: audience?.trim() || undefined,
       }),
     };
+  }
+
+  @Get('product-taxonomy')
+  productTaxonomy() {
+    return { code: 200, message: '分类表查询成功', data: this.management.productTaxonomy() };
+  }
+
+  @Get('product-categories')
+  async productCategories(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue?: string, @Query('view') view = 'UNCLASSIFIED', @Query('q') query?: string) {
+    const storeId = this.storeId(storeIdValue);
+    if (!['UNCLASSIFIED', 'MANUAL', 'ALL'].includes(view)) throw new BadRequestException('查看范围无效');
+    if (query && query.trim().length > 100) throw new BadRequestException('搜索内容不能超过100个字符');
+    const user = request.inventoryUser!;
+    return { code: 200, message: '商品品类查询成功', data: await this.management.productCategories(user.organizationId, user.id, storeId, { view: view as 'UNCLASSIFIED' | 'MANUAL' | 'ALL', query }) };
+  }
+
+  @Post('product-categories/assign')
+  async assignProductCategory(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue: string | undefined, @Body() input: { productId?: string; category?: string | null }) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.productId || !/^\d+$/.test(input.productId)) throw new BadRequestException('商品参数无效');
+    if (input.category !== null && input.category !== undefined && typeof input.category !== 'string') throw new BadRequestException('品类参数无效');
+    const user = request.inventoryUser!;
+    return { code: 200, message: input.category ? '商品品类已指定' : '已恢复自动识别', data: await this.management.assignProductCategory(user.organizationId, user.id, storeId, BigInt(input.productId), input.category ?? null) };
+  }
+
+  @Get('market-insights')
+  async marketInsights(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue?: string, @Query('period') period = 'WEEK') {
+    const storeId = this.storeId(storeIdValue);
+    if (!['WEEK', 'MONTH', 'QUARTER'].includes(period)) throw new BadRequestException('统计周期无效');
+    const user = request.inventoryUser!;
+    return { code: 200, message: '店铺经营发现查询成功', data: await this.management.marketInsights(user.organizationId, user.id, storeId, period as 'WEEK' | 'MONTH' | 'QUARTER') };
   }
 
   @Get('inventory-operations')
@@ -350,6 +384,22 @@ export class ManagementController {
     if (input.notes && input.notes.trim().length > 255) throw new BadRequestException('备注不能超过255个字符');
     const user = request.inventoryUser!;
     return { code: 200, message: '进货商品已更新', data: await this.management.updatePurchaseOrderItem(user.organizationId, user.id, storeId, BigInt(input.itemId), { orderedQuantity: Number(input.orderedQuantity), supplierName: input.supplierName, unitCostCents: input.unitCostCents, caseSize: input.caseSize, notes: input.notes }) };
+  }
+
+  @Post('purchase-orders/items/coverage')
+  async setPurchaseItemCoverage(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue: string | undefined, @Body() input: { itemId?: string; coverageWeeks?: number }) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.itemId || !/^\d+$/.test(input.itemId)) throw new BadRequestException('进货单商品参数无效');
+    if (!Number.isInteger(input.coverageWeeks)) throw new BadRequestException('备货周期必须是整数周');
+    const user = request.inventoryUser!;
+    return { code: 200, message: '备货周期已更新', data: await this.management.setPurchaseItemCoverage(user.organizationId, user.id, storeId, BigInt(input.itemId), Number(input.coverageWeeks)) };
+  }
+
+  @Post('purchase-orders/recalculate')
+  async recalculatePurchaseOrder(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue: string | undefined) {
+    const storeId = this.storeId(storeIdValue);
+    const user = request.inventoryUser!;
+    return { code: 200, message: '进货单已按最新数据重算', data: await this.management.recalculatePurchaseOrder(user.organizationId, user.id, storeId) };
   }
 
   @Post('purchase-orders/items/remove')

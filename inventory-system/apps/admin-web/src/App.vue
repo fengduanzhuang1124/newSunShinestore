@@ -3,6 +3,7 @@
 import type { IScannerControls } from '@zxing/browser';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ManagementDashboard from './management/ManagementDashboard.vue';
+import LoginPage from './login/LoginPage.vue';
 import StockCountTasks from './stockcount/StockCountTasks.vue';
 import ProductMergeSheet from './management/components/ProductMergeSheet.vue';
 import ProductLocationBulk from './locations/ProductLocationBulk.vue';
@@ -1499,33 +1500,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
 
 <template>
   <main class="app-shell" :class="{ 'management-app-shell': Boolean(token) && activeMode === 'management' }">
-    <section v-if="!token" class="login-card login-ip-card">
-      <button class="theme-toggle login-theme-toggle" type="button" :aria-label="effectiveTheme === 'light' ? '切换到深色模式' : '切换到浅色模式'" @click="toggleTheme">
-        <span aria-hidden="true">{{ effectiveTheme === 'light' ? '☾' : '☀' }}</span>{{ effectiveTheme === 'light' ? 'Dark' : 'Light' }}
-      </button>
-      <div class="login-layout">
-        <div class="login-form-panel">
-          <div class="login-brand-row">
-            <span class="login-logo-stage"><img class="login-logo" src="/sunshine-health-horizontal-logo.png" alt="阳光特产 Sunshine Health" /></span>
-            <p class="eyebrow">SUNSHINE HEALTH</p>
-          </div>
-          <p class="login-kicker">员工库存工作台</p>
-          <h1>阳光特产库存管理</h1>
-          <p class="summary">扫码点货、上架出库、日期查询，一站完成。</p>
-          <form @submit.prevent="login">
-            <label>员工账号<input v-model="username" autocomplete="username" autofocus placeholder="请输入员工账号" /></label>
-            <label>密码<input v-model="password" type="password" autocomplete="current-password" placeholder="请输入密码" /></label>
-            <p v-if="error" class="alert error">{{ error }}</p>
-            <button class="login-submit" :disabled="loading" type="submit">{{ loading ? '登录中…' : '进入库存系统' }}</button>
-          </form>
-        </div>
-        <div class="login-hero" aria-hidden="true">
-          <img src="/inventory-open-capsule-hero.png" alt="" />
-          <span class="animated-capsule"><i class="capsule-half capsule-blue"></i><i class="capsule-half capsule-pink"></i></span>
-          <span class="powder-stream"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
-        </div>
-      </div>
-    </section>
+    <LoginPage v-if="!token" v-model:username="username" v-model:password="password" :loading="loading" :error="error" :theme="effectiveTheme" @submit="login" @toggle-theme="toggleTheme" />
 
     <section v-else class="workspace" :class="{ 'management-shell': activeMode === 'management' }">
       <header>

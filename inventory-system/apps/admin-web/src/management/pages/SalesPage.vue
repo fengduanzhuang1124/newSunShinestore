@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import CategorySelect from '../components/CategorySelect.vue';
 import FilterSheet from '../components/FilterSheet.vue';
 import { useManagementContext } from '../useManagementDashboard';
 
 const {
-  today, salesFrom, salesTo, salesDimension, salesBrand, salesCategory, salesAnalysis, salesLoading, canSection,
+  today, salesFrom, salesTo, salesDimension, salesBrand, salesCategory, salesAnalysis, salesLoading, canSection, productTaxonomy,
   openDataCenter, clearSalesFilters, setDateRange, salesTimeBuckets, singleDaySales, salesTrendSeries, maxSalesTrend,
-  salesTrendPoints, linePath, areaPath, money, number, percent, comparisonClass, openNativePicker, loadSalesAnalysis
+  salesTrendPoints, linePath, areaPath, money, number, percent, comparisonClass, openNativePicker, loadSalesAnalysis, selectSection
 } = useManagementContext();
 </script>
 
@@ -18,7 +19,7 @@ const {
       <label>结束日期<input v-model="salesTo" type="date" @click="openNativePicker" /></label>
       <label>统计维度<select v-model="salesDimension"><option value="DAY">按日</option><option value="WEEK">按周</option><option value="MONTH">按月</option></select></label>
       <label>品牌<input v-model="salesBrand" placeholder="全部品牌" /></label>
-      <label>品类<input v-model="salesCategory" placeholder="全部品类" /></label>
+      <label>品类<CategorySelect v-model="salesCategory" :taxonomy="productTaxonomy" /></label>
       <button type="submit" :disabled="salesLoading">{{ salesLoading ? '查询中…' : '更新分析' }}</button><button class="secondary-action" type="button" @click="clearSalesFilters">清除品牌 / 品类</button>
     </form>
     </FilterSheet>
@@ -41,8 +42,7 @@ const {
           <details class="system-card source-quality"><summary>本次查询的数据范围</summary><div class="card-title"><div><h3>数据可用情况</h3><p>帮助判断分析结果是否完整</p></div></div><dl><div><dt>已读取订单</dt><dd>{{ salesAnalysis.sourceQuality.orders }}</dd></div><div><dt>商品销售行</dt><dd>{{ salesAnalysis.sourceQuality.activeItems }}</dd></div><div><dt>已关联商品</dt><dd>{{ salesAnalysis.sourceQuality.mappedItems }}</dd></div><div><dt>待人工确认</dt><dd>{{ salesAnalysis.sourceQuality.reviewRequiredItems }}</dd></div></dl><button v-if="canSection('system')" type="button" class="text-action" @click="openDataCenter('issues')">查看关联异常 →</button></details>
           <section v-if="!singleDaySales" class="system-card hourly-card"><div class="card-title"><div><h3>销售时段概览</h3><p>每 3 小时汇总</p></div></div><div class="time-bucket-grid"><article v-for="item in salesTimeBuckets" :key="item.label"><span>{{ item.label }}</span><strong>{{ money(item.revenue) }}</strong><small>{{ item.orders }} 单</small></article></div></section>
         </div>
-        <section class="system-card sales-ranking"><div class="card-title"><div><h3>热销商品</h3><p>{{ salesAnalysis.period.from }} 至 {{ salesAnalysis.period.to }} · 按销售金额排序</p></div></div><ol v-if="salesAnalysis.topProducts.length"><li v-for="(item,index) in salesAnalysis.topProducts.slice(0,10)" :key="item.productName"><b>{{ index + 1 }}</b><span><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ number(item.quantity) }} 件</small></span><em>{{ money(item.revenue) }}</em></li></ol><p v-else class="system-empty">暂无商品排行。</p></section>
-        <section class="system-card sales-ranking"><div class="card-title"><div><h3>品牌销售贡献</h3><p>按商品销售金额排序，未分摊订单级退款；品牌优先取正式资料，缺失时由名称识别</p></div></div><ol v-if="salesAnalysis.topBrands.length"><li v-for="(item,index) in salesAnalysis.topBrands.slice(0,10)" :key="item.brandName"><b>{{ index + 1 }}</b><span><strong>{{ item.brandName }}</strong><small>{{ number(item.quantity) }} 件</small></span><em>{{ money(item.revenue) }}</em></li></ol><p v-else class="system-empty">同步销售数据后显示品牌排行。</p></section>
+        <section class="system-card sales-ranking sales-ranking-wide"><div class="card-title"><div><h3>热销商品 前 10</h3><p>{{ salesAnalysis.period.from }} 至 {{ salesAnalysis.period.to }} · 按销售金额排序；品牌排行见商品分析的“品牌结构”</p></div><button class="text-action" type="button" @click="selectSection('products')">查看全部 →</button></div><ol v-if="salesAnalysis.topProducts.length"><li v-for="(item,index) in salesAnalysis.topProducts.slice(0,10)" :key="item.productName"><b>{{ index + 1 }}</b><span><strong>{{ item.productName }}</strong><small>{{ item.brandName }} · {{ number(item.quantity) }} 件</small></span><em>{{ money(item.revenue) }}</em></li></ol><p v-else class="system-empty">暂无商品排行。</p></section>
       </div>
     </template>
   </section>
@@ -50,4 +50,8 @@ const {
 
 <style scoped>
 /* Shares the ManagementDashboard style scope (see vite.config.ts); page-specific styles go here. */
+/* REQ-014 §4.2: brand ranking lives in product analysis; the top ten spans the row in two columns. */
+.sales-ranking-wide{grid-column:1/-1}
+.sales-ranking-wide .card-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+@media(min-width:900px){.sales-ranking-wide ol{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-flow:column;grid-template-rows:repeat(5,auto);column-gap:24px}}
 </style>

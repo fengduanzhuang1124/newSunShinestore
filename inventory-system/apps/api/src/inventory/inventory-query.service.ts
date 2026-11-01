@@ -32,10 +32,10 @@ export class InventoryQueryService {
     return value;
   }
 
+  // First day of the month `months` later. Moving the day itself would overflow on the 31st (31 Oct + 6 months
+  // landing in May), stretching the expiry window by a month.
   private addUtcMonths(value: Date, months: number) {
-    const result = new Date(value);
-    result.setUTCMonth(result.getUTCMonth() + months);
-    return result;
+    return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + months, 1));
   }
 
   private endOfUtcMonth(value: Date) {

@@ -708,6 +708,8 @@ model PurchaseOrderItem {
   suggestedQuantity Int                     @map("suggested_quantity")
   orderedQuantity   Int                     @map("ordered_quantity")
   receivedQuantity  Int                     @default(0) @map("received_quantity")
+  coverageWeeks     Int                     @default(2) @map("coverage_weeks") @db.TinyInt
+  quantityEdited    Boolean                 @default(false) @map("quantity_edited")
   supplierName      String?                 @map("supplier_name") @db.VarChar(120)
   unitCostCents     Int?                    @map("unit_cost_cents")
   caseSize          Int?                    @map("case_size")

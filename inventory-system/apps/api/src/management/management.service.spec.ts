@@ -115,7 +115,7 @@ describe('ManagementService.purchaseSuggestions', () => {
       },
       inventoryBalance: {
         findMany: jest.fn().mockResolvedValue([
-          { productId: 1n, quantity: 37, updatedAt: new Date() },
+          { productId: 1n, quantity: 12, updatedAt: new Date() },
           { productId: 2n, quantity: 3, updatedAt: new Date() },
         ] as never),
       },
@@ -145,9 +145,9 @@ describe('ManagementService.purchaseSuggestions', () => {
     const byId = new Map(result.suggestions.map((row) => [row.productId, row]));
 
     expect([...byId.keys()].sort()).toEqual(['1', '2', '3', '4']);
-    expect(byId.get('1')).toMatchObject({ suggestedQuantity: 15, recentReceivedQty: 40, lastReceivedAt: '2026-10-20T03:00:00.000Z' });
-    expect(byId.get('3')).toMatchObject({ recent28DayQty: 14, salesBasis: '90_DAYS', suggestedQuantity: 21 });
-    expect(byId.get('4')).toMatchObject({ ignored: false, suggestedQuantity: 12 });
+    expect(byId.get('1')).toMatchObject({ suggestedQuantity: 9, recentReceivedQty: 40, lastReceivedAt: '2026-10-20T03:00:00.000Z' });
+    expect(byId.get('3')).toMatchObject({ recent28DayQty: 14, salesBasis: '90_DAYS', suggestedQuantity: 7 });
+    expect(byId.get('4')).toMatchObject({ ignored: false, suggestedQuantity: 4 });
     expect(result.ignoredSuggestions.map((row) => row.productId)).toEqual(['5']);
     expect(result.arrivedSuggestions).toEqual([]);
     expect(stockMovement.groupBy).toHaveBeenCalledWith(expect.objectContaining({
@@ -194,7 +194,7 @@ describe('ManagementService.purchaseSuggestions same-name records', () => {
 
     // 63 in stock across both liver records covers 20 sales a month, so nothing to buy.
     expect(result.suggestions.map((row) => row.productId)).toEqual(['21']);
-    expect(result.suggestions[0]).toMatchObject({ currentInventory: 24, recent28DayQty: 60, weeklyVelocity: 15, suggestedQuantity: 51 });
+    expect(result.suggestions[0]).toMatchObject({ currentInventory: 24, recent28DayQty: 60, weeklyVelocity: 15, suggestedQuantity: 6 });
     expect(result.suggestions[0].mergedProducts.map((member) => [member.productId, member.currentInventory, member.recent28DayQty])).toEqual([['21', 15, 40], ['20', 9, 20]]);
   });
 });
@@ -235,7 +235,84 @@ describe('ManagementService.purchaseSuggestions CR-006 rules', () => {
     expect(byId.get('30')).toMatchObject({ displayStock: true, targetInventory: 2, suggestedQuantity: 2, priority: 'FOLLOW_UP' });
     expect(byId.has('31')).toBe(false);
     // Six a week with nine on hand is 1.5 weeks: this week (was follow-up under the one-week rule).
-    expect(byId.get('32')).toMatchObject({ weeklyVelocity: 6, coverageWeeks: 1.5, priority: 'THIS_WEEK', suggestedQuantity: 27 });
+    expect(byId.get('32')).toMatchObject({ weeklyVelocity: 6, coverageWeeks: 1.5, priority: 'THIS_WEEK', suggestedQuantity: 3 });
+  });
+});
+
+describe('ManagementService purchase cycle and coverage (CR-009)', () => {
+  const weekStartOf = (service: ManagementService, now: string) => (service as unknown as { purchaseWeekStart(timezone: string, now: Date): Date })
+    .purchaseWeekStart('Pacific/Auckland', new Date(now)).toISOString();
+
+  it('runs purchase cycles from Wednesday to Tuesday in the store time zone', () => {
+    const service = new ManagementService({ client: {} } as never, {} as never, {} as never, {} as never);
+    const wednesday = '2026-10-27T11:00:00.000Z'; // Wednesday 28 Oct 00:00 in Auckland
+    expect(weekStartOf(service, '2026-10-28T00:30:00+13:00')).toBe(wednesday);
+    expect(weekStartOf(service, '2026-10-31T15:00:00+13:00')).toBe(wednesday); // Saturday: order written
+    expect(weekStartOf(service, '2026-11-03T18:00:00+13:00')).toBe(wednesday); // Tuesday: goods arrive
+    expect(weekStartOf(service, '2026-11-04T00:10:00+13:00')).toBe('2026-11-03T11:00:00.000Z'); // next Wednesday
+  });
+
+  function purchaseClient(items: { id: bigint; productId: bigint; orderedQuantity: number; quantityEdited: boolean; coverageWeeks: number; suggestedQuantity: number }[], status = 'DRAFT') {
+    const order = { id: 9n, orderNo: 'PO-1', weekStart: new Date('2026-10-27T00:00:00.000Z'), organization: { timezone: 'Pacific/Auckland' }, status, notes: null, createdAt: new Date(), updatedAt: new Date(), confirmedAt: null, orderedAt: null };
+    const withProduct = (item: typeof items[number]) => ({ purchaseOrderId: 9n, source: 'MANUAL', currentInventory: 0, recentSevenDayQty: 0, receivedQuantity: 0, supplierName: null, unitCostCents: null, caseSize: null, notes: null, ...item, product: { sku: 'S', name: `P${item.productId}`, chineseName: null, englishName: null, brandName: null, categoryName: null, barcodes: [] } });
+    const purchaseOrderItem = {
+      findFirst: jest.fn(async ({ where }: { where: { id: bigint } }) => { const item = items.find((row) => row.id === where.id); return item ? { ...withProduct(item), purchaseOrder: order } : null; }),
+      update: jest.fn(async ({ where, data }: { where: { id: bigint }; data: Record<string, unknown> }) => { const item = items.find((row) => row.id === where.id)!; Object.assign(item, data); return withProduct(item); }),
+    };
+    const client = {
+      userStoreRole: { findMany: jest.fn().mockResolvedValue([{ store: { id: 1n, name: 'City' }, role: { code: 'ADMIN', permissions: [] } }] as never) },
+      organization: { findUniqueOrThrow: jest.fn().mockResolvedValue({ timezone: 'Pacific/Auckland' } as never) },
+      // 40 sold in 28 days = 10 a week; 6 in stock.
+      inventoryBalance: { findMany: jest.fn().mockResolvedValue([{ quantity: 6 }] as never) },
+      posOrderItem: { findMany: jest.fn().mockResolvedValue([{ quantity: '40', isMinus: false }] as never) },
+      purchaseOrder: {
+        findUnique: jest.fn(async () => ({ ...order, items: items.map(withProduct) })),
+        findUniqueOrThrow: jest.fn(async () => ({ ...order, items: items.map(withProduct) })),
+      },
+      purchaseOrderItem,
+      auditLog: { create: jest.fn().mockResolvedValue({} as never) },
+      $transaction: jest.fn(async (callback: (tx: unknown) => unknown) => callback(client)),
+    };
+    return { service: new ManagementService({ client } as never, {} as never, {} as never, {} as never), client };
+  }
+
+  it('recalculates a line for the chosen weeks and keeps a quantity set by hand', async () => {
+    const items = [
+      { id: 1n, productId: 11n, orderedQuantity: 14, quantityEdited: false, coverageWeeks: 2, suggestedQuantity: 14 },
+      { id: 2n, productId: 12n, orderedQuantity: 50, quantityEdited: true, coverageWeeks: 2, suggestedQuantity: 14 },
+    ];
+    const { service, client } = purchaseClient(items);
+
+    const order = await service.setPurchaseItemCoverage(1n, 2n, 1n, 1n, 4);
+    // Stored as the UTC date of Wednesday's local midnight; shown as the local Wednesday-to-Tuesday cycle.
+    expect(order).toMatchObject({ weekStart: '2026-10-28', weekEnd: '2026-11-03' });
+    // Four weeks of 10 a week is 40; 6 on hand leaves 34.
+    expect(order.items.find((item) => item.id === '1')).toMatchObject({ coverageWeeks: 4, suggestedQuantity: 34, orderedQuantity: 34, currentInventory: 6 });
+
+    await service.setPurchaseItemCoverage(1n, 2n, 1n, 2n, 3);
+    expect(items[1]).toMatchObject({ coverageWeeks: 3, suggestedQuantity: 24, orderedQuantity: 50 });
+    expect(client.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'management.purchase_order.item.coverage' }) }));
+
+    await expect(service.setPurchaseItemCoverage(1n, 2n, 1n, 1n, 9)).rejects.toThrow('备货周期应为 1–8 周');
+  });
+
+  it('refreshes every line of the draft with live data before the order is written up', async () => {
+    const items = [
+      { id: 1n, productId: 11n, orderedQuantity: 3, quantityEdited: false, coverageWeeks: 2, suggestedQuantity: 3 },
+      { id: 2n, productId: 12n, orderedQuantity: 50, quantityEdited: true, coverageWeeks: 2, suggestedQuantity: 3 },
+    ];
+    const { service, client } = purchaseClient(items);
+
+    await service.recalculatePurchaseOrder(1n, 2n, 1n);
+    expect(items[0]).toMatchObject({ suggestedQuantity: 14, orderedQuantity: 14 });
+    expect(items[1]).toMatchObject({ suggestedQuantity: 14, orderedQuantity: 50 });
+    expect(client.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'management.purchase_order.recalculate', afterSummary: { items: 2, quantityChanged: 1, keptHandSet: 1 } }) }));
+  });
+
+  it('does not change a confirmed order', async () => {
+    const { service } = purchaseClient([{ id: 1n, productId: 11n, orderedQuantity: 3, quantityEdited: false, coverageWeeks: 2, suggestedQuantity: 3 }], 'CONFIRMED');
+    await expect(service.recalculatePurchaseOrder(1n, 2n, 1n)).rejects.toThrow('只有草稿进货单可以重算');
+    await expect(service.setPurchaseItemCoverage(1n, 2n, 1n, 1n, 3)).rejects.toThrow('只有草稿进货单可以调整备货周期');
   });
 });
 

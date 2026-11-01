@@ -20,8 +20,25 @@ describe('App', () => {
   it('shows the employee login before inventory tools', () => {
     const wrapper = mount(App);
 
-    expect(wrapper.text()).toContain('阳光特产库存管理');
-    expect(wrapper.text()).toContain('扫码点货、上架出库、日期查询，一站完成');
+    expect(wrapper.text()).toContain('欢迎登录阳光特产');
+    expect(wrapper.text()).toContain('让阳光特产再次伟大');
+  });
+
+  it('switches the login slogan and keeps SMS sign-in and registration closed (CR-012)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const wrapper = mount(App);
+
+    await wrapper.get('button[aria-label="切换标语"]').trigger('click');
+    expect(wrapper.text()).toContain('一站式澳新好物专家');
+    await wrapper.get('button[aria-label="切换标语"]').trigger('click');
+    expect(wrapper.text()).toContain('让阳光特产再次伟大');
+
+    await wrapper.findAll('[role="tab"]').find((tab) => tab.text() === '验证码登录')!.trigger('click');
+    expect(wrapper.text()).toContain('验证码登录暂未开放');
+    expect(wrapper.get('input[aria-label="手机号"]').attributes('disabled')).toBeDefined();
+    await wrapper.findAll('button').find((button) => button.text() === '立即注册')!.trigger('click');
+    expect(wrapper.text()).toContain('请联系管理员开通员工账号');
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('switches between light and dark themes and remembers the choice', async () => {
