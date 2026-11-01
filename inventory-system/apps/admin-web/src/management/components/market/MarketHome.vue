@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import MarketArt from './MarketArt.vue';
-import { MARKET_MODULES, PERIOD_LABEL, type InsightTab, type MarketInsights, type MarketModuleId } from './market-types';
+import { MARKET_MODULES, PERIOD_LABEL, type InsightTab, type MarketInsights, type MarketModuleId, type ProductList } from './market-types';
 
 // REQ-014 §4.1.2: four frosted-glass module cards, then the findings that need attention
 // now so the page is useful without opening a module.
 const props = defineProps<{ insights: MarketInsights | null; loading: boolean; metrics: Record<MarketModuleId, string> }>();
-const emit = defineEmits<{ open: [id: MarketModuleId, tab?: InsightTab] }>();
+const emit = defineEmits<{ open: [id: MarketModuleId, tab?: InsightTab, list?: ProductList] }>();
 
 const modules = MARKET_MODULES;
 
@@ -20,11 +20,10 @@ const slowExpiring = computed(() => {
   const expiring = rows.filter((row) => row.expiring);
   return (expiring.length ? expiring : rows).slice(0, 3);
 });
-const movers = computed(() => (props.insights?.categories ?? [])
-  .filter((row) => row.changePercent !== null && row.trend !== 'FLAT')
-  .sort((a, b) => Math.abs(b.changePercent!) - Math.abs(a.changePercent!))
-  .slice(0, 4));
-const maxMove = computed(() => Math.max(...movers.value.map((row) => Math.abs(row.changePercent!)), 1));
+// CR-011: who the store's customers buy for, largest groups first (the catch-all family group is left out).
+const groups = computed(() => (props.insights?.demand?.rows ?? []).filter((row) => row.group !== '家庭通用' && row.orders > 0)
+  .sort((a, b) => b.share - a.share).slice(0, 4));
+const maxShare = computed(() => Math.max(...groups.value.map((row) => row.share), 1));
 const pairs = computed(() => (props.insights?.pairs ?? []).slice(0, 2));
 const coverage = computed(() => {
   const value = props.insights?.summary.categoryCoverage;
@@ -62,20 +61,20 @@ const generated = computed(() => props.insights ? new Date(props.insights.genera
     <section class="market-brief" aria-label="本期要点">
       <header><h3>本期要点</h3><span>{{ insights ? `${PERIOD_LABEL[insights.period.type]} · ${insights.period.from} 至 ${insights.period.to}` : loading ? '正在读取…' : '暂无数据' }}</span></header>
       <div class="brief-grid">
-        <button type="button" class="brief-card" style="--art-a: 40 150 220; --art-b: 128 220 255" @click="emit('open', 'insights', 'surges')">
+        <button type="button" class="brief-card" style="--art-a: 40 150 220; --art-b: 128 220 255" @click="emit('open', 'insights', 'products', 'short')">
           <span class="brief-title">热销且库存不足<small>→</small></span>
           <ul v-if="shortSellers.length"><li v-for="row in shortSellers" :key="row.productId"><span>{{ row.productName }}</span><b>× {{ row.ratio }}</b><em>{{ row.coverageWeeks === null ? '—' : `够 ${row.coverageWeeks} 周` }}</em></li></ul>
           <p v-else>{{ loading ? '读取中…' : '本期没有突然热销的商品' }}</p>
         </button>
-        <button type="button" class="brief-card" style="--art-a: 226 132 30; --art-b: 255 206 110" @click="emit('open', 'insights', 'overstock')">
+        <button type="button" class="brief-card" style="--art-a: 226 132 30; --art-b: 255 206 110" @click="emit('open', 'insights', 'products', 'overstock')">
           <span class="brief-title">临期且卖得慢<small>→</small></span>
           <ul v-if="slowExpiring.length"><li v-for="row in slowExpiring" :key="row.productId"><span>{{ row.productName }}</span><b>{{ row.currentInventory }} 件</b><em :class="{ warn: row.expiring }">{{ row.nearestExpiry ?? '—' }}</em></li></ul>
           <p v-else>{{ loading ? '读取中…' : '没有超量滞销的商品' }}</p>
         </button>
-        <button type="button" class="brief-card" style="--art-a: 118 82 230; --art-b: 196 160 255" @click="emit('open', 'insights', 'categories')">
-          <span class="brief-title">品类升降<small>→</small></span>
-          <ul v-if="movers.length" class="bars"><li v-for="row in movers" :key="`${row.level1}/${row.level2}`" :class="row.trend === 'UP' ? 'up' : 'down'"><span>{{ row.level2 }}</span><i :style="{ width: `${Math.max(8, (Math.abs(row.changePercent!) / maxMove) * 100)}%` }"></i><b>{{ row.changePercent! > 0 ? '+' : '' }}{{ row.changePercent }}%</b></li></ul>
-          <p v-else>{{ loading ? '读取中…' : insights && !insights.period.previousComplete ? '上期数据不完整，暂不比较' : '没有明显升降的品类' }}</p>
+        <button type="button" class="brief-card" style="--art-a: 118 82 230; --art-b: 196 160 255" @click="emit('open', 'insights', 'overview')">
+          <span class="brief-title">为谁买<small>→</small></span>
+          <ul v-if="groups.length" class="bars"><li v-for="row in groups" :key="row.group" class="up"><span>{{ row.group }}</span><i :style="{ width: `${Math.max(8, (row.share / maxShare) * 100)}%` }"></i><b>{{ row.share }}%</b></li></ul>
+          <p v-else>{{ loading ? '读取中…' : '本期没有订单' }}</p>
         </button>
         <button type="button" class="brief-card" style="--art-a: 42 160 104; --art-b: 150 236 186" @click="emit('open', 'insights', 'pairs')">
           <span class="brief-title">常一起买<small>→</small></span>

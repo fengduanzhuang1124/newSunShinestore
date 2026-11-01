@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import CategorySelect from '../components/CategorySelect.vue';
 import FilterSheet from '../components/FilterSheet.vue';
 import { useManagementContext } from '../useManagementDashboard';
 
 const {
-  today, salesFrom, salesTo, salesDimension, salesBrand, salesCategory, salesAnalysis, salesLoading, canSection,
+  today, salesFrom, salesTo, salesDimension, salesBrand, salesCategory, salesAnalysis, salesLoading, canSection, productTaxonomy,
   openDataCenter, clearSalesFilters, setDateRange, salesTimeBuckets, singleDaySales, salesTrendSeries, maxSalesTrend,
   salesTrendPoints, linePath, areaPath, money, number, percent, comparisonClass, openNativePicker, loadSalesAnalysis, selectSection
 } = useManagementContext();
@@ -18,7 +19,7 @@ const {
       <label>结束日期<input v-model="salesTo" type="date" @click="openNativePicker" /></label>
       <label>统计维度<select v-model="salesDimension"><option value="DAY">按日</option><option value="WEEK">按周</option><option value="MONTH">按月</option></select></label>
       <label>品牌<input v-model="salesBrand" placeholder="全部品牌" /></label>
-      <label>品类<input v-model="salesCategory" placeholder="全部品类" /></label>
+      <label>品类<CategorySelect v-model="salesCategory" :taxonomy="productTaxonomy" /></label>
       <button type="submit" :disabled="salesLoading">{{ salesLoading ? '查询中…' : '更新分析' }}</button><button class="secondary-action" type="button" @click="clearSalesFilters">清除品牌 / 品类</button>
     </form>
     </FilterSheet>

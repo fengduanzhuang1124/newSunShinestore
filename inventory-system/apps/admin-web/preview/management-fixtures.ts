@@ -200,13 +200,68 @@ const marketCategories = levels.map(([level1, level2], index) => {
 }).sort((a, b) => b.currentUnits - a.currentUnits);
 const marketInsights = {
   generatedAt: iso(0, 1),
-  period: { type: 'WEEK', days: 7, from: day(6), to: today, previousFrom: day(13), previousTo: day(7), baselineWindows: 4, previousComplete: true, historyDays: 157 },
+  period: { type: 'WEEK', days: 7, from: day(7), to: day(1), previousFrom: day(14), previousTo: day(8), baselineWindows: 4, previousComplete: true, historyDays: 157, dataThrough: day(1), stale: false },
+  // CR-011
+  overview: {
+    current: { revenue: 80738, orders: 462, units: 3454, avgOrderValue: 174.76, products: 566 },
+    previous: { revenue: 74456.43, orders: 460, units: 3318, avgOrderValue: 161.86, products: 506 },
+    history: { revenue: [52962.17, 49375.86, 61544.25, 74456.43, 80738], orders: [330, 316, 387, 460, 462] },
+  },
+  daily: {
+    dates: [7, 6, 5, 4, 3, 2, 1].map((n) => day(n)),
+    current: [17511.69, 11982.74, 9973.17, 8259.81, 12321.16, 7076.82, 13612.61].map((revenue, k) => ({ revenue, orders: 50 + k * 5 })),
+    previous: [7878.38, 7875.99, 16365.9, 14230.01, 9256.52, 7642.47, 11207.16].map((revenue, k) => ({ revenue, orders: 48 + k * 4 })),
+  },
+  categoryShare: [['保健品', 60.1, 63, 66460], ['护肤品', 16.2, 13.2, 17914], ['食品', 9.3, 9.6, 10284], ['奶粉与乳制品', 7.8, 8.3, 8625], ['洗护用品', 3.6, 2.5, 3981], ['日用品', 1.3, 0.9, 1437], ['其他', 0.9, 2.3, 995], ['家庭常备', 0.7, 0.2, 774]]
+    .map(([level1, share, previousShare, revenue]) => ({ level1, share, previousShare, revenue })),
+  categoryMovers: {
+    gains: [['面部护理', '护肤品', 3197.4, 38.2], ['鱼油与 Omega-3', '保健品', 2765.33, 21.5], ['洗发护发', '洗护用品', 1562.3, 64], ['维生素与矿物质', '保健品', 1553.16, 9.8], ['蜂蜜', '食品', 842.44, 12.1], ['口腔护理', '日用品', 626.43, 55.3]]
+      .map(([level2, level1, delta, changePercent]) => ({ level1, level2, revenue: 0, previousRevenue: 0, delta, changePercent })),
+    losses: [['美容口服', '保健品', -2816.32, -43.1], ['蜂胶与蜂产品保健', '保健品', -1719.48, -27], ['植物与草本提取', '保健品', -1460.21, -19.9], ['喉糖与蜂蜜糖果', '食品', -1218.61, -53.3], ['面膜', '护肤品', -579.25, -28.1]]
+      .map(([level2, level1, delta, changePercent]) => ({ level1, level2, revenue: 0, previousRevenue: 0, delta, changePercent })),
+  },
+  demand: {
+    orders: 447,
+    rows: [['游客（伴手礼）', 129, 28.9, 27.9, '蜂蜜'], ['婴幼儿', 17, 3.8, 2.2, '婴幼儿与儿童奶粉'], ['儿童', 42, 9.4, 9.8, '其他功能营养'], ['青少年', 7, 1.6, 0.4, '维生素与矿物质'], ['孕产', 6, 1.3, 0.7, '维生素与矿物质'], ['女性', 49, 11, 8.6, '面部护理'], ['男性', 16, 3.6, 4.2, '动物来源营养'], ['中老年', 172, 38.5, 36.8, '鱼油与 Omega-3'], ['家庭通用', 345, 77.2, 72.7, '维生素与矿物质']]
+      .map(([group, orders, share, previousShare, topCategory]) => ({ group, orders, share, previousShare, revenue: (orders as number) * 172, topCategory })),
+  },
+  heatmap: {
+    hours: [9, 10, 11, 12, 13, 14, 15, 16, 17],
+    cells: [0, 1, 2, 3, 4, 5, 6].map((d) => [9, 10, 11, 12, 13, 14, 15, 16, 17].map((h) => Math.max(0, Math.round(8 + 6 * Math.sin((h - 9) / 2.5) + (d === 5 ? 6 : 0) - (d === 2 ? 4 : 0) + ((d * 7 + h) % 4))))),
+    peak: { weekday: 5, hour: 13, orders: 21 },
+  },
+  rankings: {
+    top: marketSurges.slice(0, 6).map((row, index) => ({ ...row, revenue: 3500 - index * 380, units: 60 - index * 6, previousUnits: 40 - index * 3, history: [20, 26, 31, 40 - index * 3, 60 - index * 6], changePercent: Math.round(((20 - index * 3) / (40 - index * 3)) * 1000) / 10 })),
+    falling: marketSurges.slice(0, 4).map((row, index) => ({ ...row, revenue: 900 - index * 120, units: 18 - index * 3, previousUnits: 80 - index * 12, history: [70, 76, 81, 80 - index * 12, 18 - index * 3], changePercent: -Math.round(((62 - index * 9) / (80 - index * 12)) * 1000) / 10 })),
+  },
+  highlights: [
+    { tone: 'urgent', title: '热销但库存不足 27 种', text: '如 辅酶150mg，现有库存约够 0.2 周', advice: '加入本周进货单', action: 'procurement' },
+    { tone: 'warn', title: '临期滞销 12 种', text: '库存多、卖得慢且临近到期', advice: '近期策划清货活动', action: 'inventory' },
+    { tone: 'info', title: '中老年需求较多', text: '相关订单占 38.5%（上期 36.8%）', advice: '针对中老年推出商品组合和活动', action: 'demand' },
+    { tone: 'info', title: '游客（伴手礼）需求较多', text: '相关订单占 28.9%（上期 27.9%）', advice: '重视游客产品：增加陈列、备货和礼盒组合', action: 'demand' },
+    { tone: 'up', title: '护肤品占比上升', text: '销售额占 16.2%（上期 13.2%）', advice: '增加护肤品广告曝光', action: 'categories' },
+  ],
   summary: { surgeProducts: 12, newlyRisingProducts: 2, overstockProducts: 642, expiringOverstockProducts: 3, pairs: marketPairs.length, risingCategories: 5, fallingCategories: 2, categoryCoverage: { identified: 247, total: 259 } },
   surges: marketSurges, overstock: marketOverstock, pairs: marketPairs, categories: marketCategories,
-  rules: { surge: '本期 ≥ 5 件且 ≥ 前几期平均的 1.5 倍', overstock: '按近 28 天销量需 12 周以上卖完，或 60 天无销售', pairs: '同一订单出现 ≥ 5 次', category: '与上一期相比 ±10% 且 ≥ 10 件' },
+  rules: { revenue: '销售额、客单价按订单实收；品类、人群、商品金额按商品标价，用于比较占比', demand: '按所购商品判定需求人群，一个订单可计入多个人群', surge: '本期 ≥ 5 件且 ≥ 前几期平均的 1.5 倍', overstock: '按近 28 天销量需 12 周以上卖完，或 60 天无销售', pairs: '同一订单出现 ≥ 5 次', category: '与上一期相比 ±10% 且 ≥ 10 件' },
 };
 
+// CR-010: category lists and the category assignment page.
+const productTaxonomy = {
+  categories: levels.map(([level1, level2], index) => ({ code: `X${index}`, level1, level2 })),
+  functions: [{ group: '器官与系统', label: '护肝' }, { group: '器官与系统', label: '护眼' }, { group: '全身', label: '免疫力' }, { group: '护肤', label: '保湿补水' }],
+  audiences: ['婴幼儿', '儿童', '女性', '男性', '中老年'],
+};
+const productCategoryRows = products.slice(0, 12).map((row, index) => ({
+  productId: row.productId, sku: row.sku, barcode: row.barcode, productName: index < 5 ? ['careline', 'antipodes kiwi gold 30ml', 'Grans food powder scented35g', 'natures way trio 60 soft', 'niceicesmall'][index] : row.productName, brandName: row.brandName,
+  level1: index < 5 ? '其他' : levels[index % levels.length][0], level2: index < 5 ? '未识别' : levels[index % levels.length][1],
+  manualCategory: index === 6 ? levels[6][1] : null, automaticCategory: index < 5 || index === 6 ? null : levels[index % levels.length][1],
+  functions: index < 5 ? [] : ['免疫力', '护肝'].slice(0, index % 3), unitsLast90Days: 60 - index * 4, currentInventory: row.currentInventory,
+}));
+
 export const managementFixtures: Record<string, unknown> = {
+  'product-taxonomy': productTaxonomy,
+  'product-categories': { summary: { products: 3727, unclassified: 853, manual: 1, unclassifiedSelling: 70 }, products: productCategoryRows },
   'market-insights': marketInsights,
   'access': { administrator: true, roleCodes: ['ADMIN'], capabilities: { overviewView: true, salesView: true, inventoryView: true, posSync: true, posIssues: true, permissionsManage: true }, grantedPermissionCodes: [] },
   'overview': overview,
