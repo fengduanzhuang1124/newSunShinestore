@@ -41,8 +41,16 @@ const fixtures: Record<string, unknown> = {
   'purchase-orders/current': { order: null },
 };
 
+const assistantReply = {
+  replyId: '9', reply: '有货哦～日期是28年5月哈～', needsHuman: false,
+  facts: { kind: 'store', intents: ['stock'], store: { name: '护肝片', priceCents: 3500, totalQuantity: 6, batches: [{ expiryDate: '2028-05-31', label: '28年5月', quantity: 2 }, { expiryDate: '2029-03-31', label: '29年3月', quantity: 4 }], recentDiscountCents: null }, mail: null, candidates: [], answers: [], notes: [] },
+};
+
 function setup(options: { failPos?: boolean; limited?: boolean; multipleStores?: boolean } = {}) {
   const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const assistantPath = String(input).split('/assistant/')[1]?.split('?')[0];
+    if (assistantPath === 'replies') return new Response(JSON.stringify({ data: assistantReply }), { status: 200 });
+    if (assistantPath?.endsWith('/feedback')) return new Response(JSON.stringify({ data: { replyId: '9', outcome: JSON.parse(String(init?.body)).outcome } }), { status: 200 });
     const path = String(input).split('/management/')[1]?.split('?')[0];
     if (options.failPos && path?.startsWith('pos-sync/')) return new Response(JSON.stringify({ message: 'POS 状态读取失败' }), { status: 500 });
     const data = path === 'access' ? { administrator: !options.limited, roleCodes: ['ADMIN'], capabilities: options.limited ? { ...capabilities, posSync: false, posIssues: false, permissionsManage: false } : capabilities, grantedPermissionCodes: [] }
@@ -286,8 +294,10 @@ describe('经营管理页面组织', () => {
     expect(fetchSpy.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
   });
 
-  it('keeps the 阳光小助手 conversation across pages without inventing a reply (REQ-015)', async () => {
-    const { wrapper } = setup(); await flushPromises();
+  it('answers in the 阳光小助手 column from the system and keeps the conversation across pages (REQ-015)', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const { wrapper, fetchSpy } = setup(); await flushPromises();
     expect(wrapper.text()).not.toContain('刷新今日数据');
     expect(wrapper.find('.data-freshness input[type="date"]').exists()).toBe(true);
 
@@ -297,8 +307,15 @@ describe('经营管理页面组织', () => {
     await box.trigger('keydown', { key: 'Enter' });
     expect(wrapper.find('.sa-float').exists()).toBe(false);
     expect(wrapper.get('.sa-ask').text()).toBe('护肝片还有货吗？');
-    expect(wrapper.get('.sa-reply').text()).toContain('问答库整理中');
-    expect(wrapper.get('.sa-actions button').attributes('disabled')).toBeDefined();
+    await flushPromises();
+    expect(wrapper.get('.sa-answer').text()).toBe('有货哦～日期是28年5月哈～');
+    expect(wrapper.get('.sa-facts').text()).toContain('28年5月（2028-05-31）× 2');
+    expect(wrapper.get('.sa-facts').text()).toContain('库存合计6');
+    const ask = fetchSpy.mock.calls.find(([url]) => String(url).includes('/assistant/replies?storeId=1'));
+    expect(JSON.parse(String(ask?.[1]?.body))).toEqual({ question: '护肝片还有货吗？' });
+    await wrapper.get('.sa-actions button.primary').trigger('click'); await flushPromises();
+    expect(writeText).toHaveBeenCalledWith('有货哦～日期是28年5月哈～');
+    expect(wrapper.get('.sa-outcome').text()).toBe('已复制采用');
     expect(wrapper.classes()).toContain('assistant-docked');
 
     await go(wrapper, '商品分析');

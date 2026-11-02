@@ -189,6 +189,10 @@ model Organization {
   productInsightAssignments ProductInsightTagAssignment[]
   purchaseOrders            PurchaseOrder[]
   stockCountTasks           StockCountTask[]
+  mailMilkProfiles          MailMilkProfile[]
+  assistantAliases          AssistantAlias[]
+  assistantAnswers          AssistantAnswer[]
+  assistantReplyLogs        AssistantReplyLog[]
 
   @@map("organizations")
 }
@@ -219,6 +223,7 @@ model Store {
   posSimulations       PosInventorySimulation[]
   purchaseOrders       PurchaseOrder[]
   stockCountTasks      StockCountTask[]
+  assistantReplyLogs   AssistantReplyLog[]
 
   @@unique([organizationId, code])
   @@index([organizationId, status])
@@ -303,6 +308,7 @@ model Product {
   purchaseOrderItems  PurchaseOrderItem[]
   inventoryPlacements InventoryPlacement[]
   productLocations    ProductLocation[]
+  mailMilkProfile     MailMilkProfile?
   stockCountItems     StockCountTaskItem[]
 
   @@unique([organizationId, sku])
@@ -418,6 +424,7 @@ model User {
   cancelledPurchaseOrders    PurchaseOrder[]               @relation("PurchaseOrderCancelledBy")
   createdWarehouseLocations  WarehouseLocation[]           @relation("WarehouseLocationCreatedBy")
   updatedWarehouseLocations  WarehouseLocation[]           @relation("WarehouseLocationUpdatedBy")
+  assistantReplyLogs         AssistantReplyLog[]
   createdStockCountTasks     StockCountTask[]              @relation("StockCountCreatedBy")
   confirmedStockCountItems   StockCountTaskItem[]          @relation("StockCountConfirmedBy")
 
@@ -1180,4 +1187,99 @@ model PosInventorySimulationItem {
   @@index([simulationId, status])
   @@index([productId, status])
   @@map("pos_inventory_simulation_items")
+}
+
+enum MailMilkLine {
+  NORMAL
+  EXPRESS
+}
+
+enum AssistantReplyOutcome {
+  PENDING
+  ADOPTED
+  EDITED
+  REJECTED
+  HANDOFF
+}
+
+// Mail-order milk sold as whole packs (REQ-015 stage 2). The price is the product's POS retail price; this keeps
+// what POS does not know: the shipping line, pack, transit time, ship-from and promotion shown to customers.
+// Expiry is not kept: mail-order stock changes batch too often, so staff confirm it with the warehouse.
+model MailMilkProfile {
+  productId          BigInt       @id @map("product_id") @db.UnsignedBigInt
+  organizationId     BigInt       @map("organization_id") @db.UnsignedBigInt
+  displayName        String       @map("display_name") @db.VarChar(120)
+  line               MailMilkLine
+  stage              Int?         @db.TinyInt
+  packCount          Int          @map("pack_count") @db.TinyInt
+  packUnit           String       @map("pack_unit") @db.VarChar(10)
+  transitText        String       @map("transit_text") @db.VarChar(60)
+  shipFrom           String       @default("新西兰") @map("ship_from") @db.VarChar(20)
+  promoText          String?      @map("promo_text") @db.VarChar(120)
+  promoDiscountCents Int?         @map("promo_discount_cents")
+  outOfStock         Boolean      @default(false) @map("out_of_stock")
+  enabled            Boolean      @default(true)
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+  organization       Organization @relation(fields: [organizationId], references: [id])
+  product            Product      @relation(fields: [productId], references: [id])
+
+  @@index([organizationId, enabled])
+  @@map("mail_milk_profiles")
+}
+
+// How customers name things ("铂金", "羊奶") mapped to words found in product names.
+model AssistantAlias {
+  id             BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt       @map("organization_id") @db.UnsignedBigInt
+  term           String       @db.VarChar(60)
+  keyword        String       @db.VarChar(120)
+  enabled        Boolean      @default(true)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, term])
+  @@map("assistant_aliases")
+}
+
+// Fixed answers (freight to remote regions, opening hours) and questions that must go to a person.
+model AssistantAnswer {
+  id             BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt       @map("organization_id") @db.UnsignedBigInt
+  topic          String       @db.VarChar(60)
+  keywords       String       @db.VarChar(255)
+  reply          String       @db.Text
+  handoff        Boolean      @default(false)
+  enabled        Boolean      @default(true)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, enabled])
+  @@map("assistant_answers")
+}
+
+// Every suggested reply and what staff did with it. No customer names, phone numbers or ID documents are stored.
+model AssistantReplyLog {
+  id             BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt                @map("organization_id") @db.UnsignedBigInt
+  storeId        BigInt                @map("store_id") @db.UnsignedBigInt
+  userId         BigInt                @map("user_id") @db.UnsignedBigInt
+  question       String                @db.Text
+  intents        String                @db.VarChar(120)
+  reply          String                @db.Text
+  facts          Json
+  needsHuman     Boolean               @map("needs_human")
+  outcome        AssistantReplyOutcome @default(PENDING)
+  editedReply    String?               @map("edited_reply") @db.Text
+  feedbackAt     DateTime?             @map("feedback_at")
+  createdAt      DateTime              @default(now()) @map("created_at")
+  organization   Organization          @relation(fields: [organizationId], references: [id])
+  store          Store                 @relation(fields: [storeId], references: [id])
+  user           User                  @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([storeId, outcome])
+  @@map("assistant_reply_logs")
 }

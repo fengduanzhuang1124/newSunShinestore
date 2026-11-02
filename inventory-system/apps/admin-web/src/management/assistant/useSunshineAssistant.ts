@@ -1,8 +1,30 @@
 import { inject, provide, ref, watch, type InjectionKey } from 'vue';
 
-// 阳光小助手 (REQ-015): staff paste a customer's question and get a suggested reply. The state lives on the management
-// shell so the conversation survives page switches; it is kept for this browser session only.
-export type AssistantMessage = { id: number; role: 'user' | 'notice'; text: string };
+// 阳光小助手 (REQ-015): staff paste a customer's question and get a suggested reply built from this system's prices,
+// stock and expiry dates. The state lives on the management shell so the conversation survives page switches; it is
+// kept for this browser session only.
+export type AssistantOutcome = 'ADOPTED' | 'EDITED' | 'REJECTED' | 'HANDOFF';
+export type AssistantBatch = { expiryDate: string; label: string; quantity: number };
+export type AssistantMailRow = {
+  productId: string; displayName: string; line: 'NORMAL' | 'EXPRESS'; stage: number | null; packCount: number; packUnit: string;
+  priceCents: number | null; transitText: string; shipFrom: string; promoText: string | null;
+  promoDiscountCents: number | null; outOfStock: boolean;
+};
+export type AssistantFacts = {
+  kind: 'store' | 'mail' | 'none';
+  store: { name: string; priceCents: number | null; totalQuantity: number; batches: AssistantBatch[]; recentDiscountCents: number | null } | null;
+  mail: AssistantMailRow[] | null;
+  candidates: { productId: string; name: string; kind: 'mail' | 'store' }[];
+  answers: string[];
+  notes: string[];
+};
+export type AssistantMessage = {
+  id: number; role: 'user' | 'reply' | 'notice'; text: string;
+  question?: string; replyId?: string; needsHuman?: boolean; facts?: AssistantFacts; outcome?: AssistantOutcome; pending?: boolean;
+};
+type AssistantReply = { replyId: string; reply: string; needsHuman: boolean; facts: AssistantFacts };
+export type AssistantRequest = <T>(path: string, init?: RequestInit) => Promise<T>;
+export type AssistantOptions = { request: AssistantRequest; storeId: () => string; administrator: () => boolean };
 export type AssistantMode = 'closed' | 'composer' | 'panel';
 
 const SESSION_KEY = 'sunshine_assistant_session';
@@ -13,9 +35,8 @@ export const DOCK_QUERY = '(min-width: 1360px)';
 // Docked, the page keeps at least 860px beside the icon rail, grid gaps, padding and the outer frame (184px together).
 const DOCKED_PAGE_RESERVE = 1044;
 export const INPUT_HEIGHT = { min: 72, max: 320, initial: 96 };
-// Stage 1 has no Q&A library yet, so nothing is answered on its behalf.
-export const PENDING_REPLY = '问答库整理中，暂未接入。接入后这里会给出建议回复，可直接复制发给客户。';
-export const QUICK_QUESTIONS = ['这款还有货吗？', '这个多少钱？会员价多少？', '日期新吗？什么时候到期？', '今天几点关门？'];
+export const QUICK_QUESTIONS = ['可瑞康山羊奶1段多少钱？', '爱他美铂金3段顺丰几天到？', '这款鱼油还有货吗？', '日期新吗？'];
+const INTERRUPTED = '上次查询没有完成，请重新发送。';
 
 function readJson<T>(storage: () => Storage, key: string): T | null {
   try {
@@ -30,10 +51,17 @@ function writeJson(storage: () => Storage, key: string, value: unknown) {
 }
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), Math.max(min, max));
 
-export function createSunshineAssistant() {
+// A reply still waiting when the page was reloaded will never arrive.
+function restoreMessages(saved: AssistantMessage[] | undefined) {
+  if (!Array.isArray(saved)) return [];
+  return saved.map((message) => (message.pending ? { id: message.id, role: 'notice' as const, text: INTERRUPTED } : message));
+}
+
+export function createSunshineAssistant(options: AssistantOptions) {
   const saved = readJson<{ messages: AssistantMessage[]; open: boolean }>(() => sessionStorage, SESSION_KEY);
   const size = readJson<{ width: number; inputHeight: number }>(() => localStorage, SIZE_KEY);
-  const messages = ref<AssistantMessage[]>(Array.isArray(saved?.messages) ? saved.messages : []);
+  const messages = ref<AssistantMessage[]>(restoreMessages(saved?.messages));
+  const settingsOpen = ref(false);
   const mode = ref<AssistantMode>(saved?.open && messages.value.length ? 'panel' : 'closed');
   const draft = ref('');
   const width = ref(clamp(Number(size?.width) || PANEL_WIDTH.initial, PANEL_WIDTH.min, PANEL_WIDTH.max));
@@ -51,13 +79,41 @@ export function createSunshineAssistant() {
   }
   function openPanel() { mode.value = 'panel'; }
   function close() { mode.value = 'closed'; }
-  function send(from: DOMRect | null = null) {
-    const text = draft.value.trim();
+  function storePath(path: string) {
+    return `/assistant/${path}?storeId=${encodeURIComponent(options.storeId())}`;
+  }
+  async function ask(question: string) {
+    const id = nextId++;
+    messages.value.push({ id, role: 'reply', text: '', question, pending: true });
+    let next: AssistantMessage;
+    try {
+      const result = await options.request<AssistantReply>(storePath('replies'), { method: 'POST', body: JSON.stringify({ question }) });
+      next = { id, role: 'reply', text: result.reply, question, replyId: result.replyId, needsHuman: result.needsHuman, facts: result.facts };
+    } catch (reason) {
+      next = { id, role: 'notice', text: reason instanceof Error ? reason.message : '查询失败，请稍后再试' };
+    }
+    // The conversation may have been cleared while waiting.
+    const index = messages.value.findIndex((message) => message.id === id);
+    if (index >= 0) messages.value[index] = next;
+  }
+  function send(from: DOMRect | null = null, question = draft.value) {
+    const text = question.trim();
     if (!text) return;
-    messages.value.push({ id: nextId++, role: 'user', text }, { id: nextId++, role: 'notice', text: PENDING_REPLY });
-    draft.value = '';
+    messages.value.push({ id: nextId++, role: 'user', text });
+    if (question === draft.value) draft.value = '';
     launchRect.value = mode.value === 'composer' ? from : null;
     mode.value = 'panel';
+    settingsOpen.value = false;
+    void ask(text);
+  }
+  async function feedback(message: AssistantMessage, outcome: AssistantOutcome, editedReply?: string) {
+    if (!message.replyId) return;
+    await options.request(storePath(`replies/${message.replyId}/feedback`), { method: 'POST', body: JSON.stringify({ outcome, editedReply }) });
+    const target = messages.value.find((item) => item.id === message.id);
+    if (target) {
+      target.outcome = outcome;
+      if (outcome === 'EDITED' && editedReply) target.text = editedReply;
+    }
   }
   function newConversation() {
     messages.value = [];
@@ -73,7 +129,10 @@ export function createSunshineAssistant() {
   watch([messages, mode], () => writeJson(() => sessionStorage, SESSION_KEY, { messages: messages.value, open: mode.value === 'panel' }), { deep: true });
   watch([width, inputHeight], () => writeJson(() => localStorage, SIZE_KEY, { width: width.value, inputHeight: inputHeight.value }));
 
-  return { mode, messages, draft, docked, width, inputHeight, launchRect, toggle, openPanel, close, send, newConversation, setWidth, setInputHeight };
+  return {
+    mode, messages, draft, docked, width, inputHeight, launchRect, settingsOpen, administrator: options.administrator, request: options.request, storePath,
+    toggle, openPanel, close, send, feedback, newConversation, setWidth, setInputHeight,
+  };
 }
 
 export type SunshineAssistant = ReturnType<typeof createSunshineAssistant>;
