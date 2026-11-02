@@ -19,7 +19,7 @@ const props = defineProps<{ apiBaseUrl: string; token: string; storeId: string; 
 const emit = defineEmits<{ 'open-report': [view: 'receipts' | 'expiry' | 'movements']; 'open-account': []; exit: [] }>();
 const management = useManagementDashboard(props, emit);
 provideManagementDashboard(management);
-const assistant = createSunshineAssistant();
+const assistant = createSunshineAssistant({ request: management.managementRequest, storeId: () => props.storeId, administrator: () => Boolean(props.administrator) });
 provideSunshineAssistant(assistant);
 const assistantDocked = assistant.docked;
 const {
