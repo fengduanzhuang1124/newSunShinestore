@@ -1,0 +1,518 @@
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import ManagementDashboard from './ManagementDashboard.vue';
+
+// Test-only API fixtures. Production continues to read the existing API.
+const capabilities = { overviewView: true, salesView: true, inventoryView: true, posSync: true, posIssues: true, permissionsManage: true };
+const salesSummary = { revenue: 100, refunds: 0, netRevenue: 100, orderCount: 2, unitsSold: 3, averageOrderValue: 50, dailySales: [{ date: '2026-09-01', revenue: 100, orders: 2 }], topProducts: Array.from({ length: 8 }, (_, i) => ({ productName: `商品${i}`, brandName: '品牌', quantity: 1, revenue: 10 })), topBrands: [] };
+const overview = {
+  store: { id: '1', name: '测试门店' }, currency: 'NZD', period: { date: '2026-09-28', previousDate: '2026-09-27' }, salesAvailable: true, lastPosSyncAt: null,
+  sales: { current: salesSummary, previous: salesSummary, comparison: { netRevenuePercent: null, orderCountPercent: null, unitsSoldPercent: null, averageOrderValuePercent: null } },
+  inventory: { totalQuantity: 20, productCount: 2, batchCount: 3, expiryAttentionQuantity: 1, expiry: { expired: 1, urgent: 0, warning: 0, early: 0 }, activity: { movementCountToday: 4, stocktakeAdjustmentsToday: 0, openReceiptCount: 1, latestMovement: null } },
+};
+const foundation = { generatedAt: '2026-10-01T00:00:00Z', overallStatus: 'PARTIALLY_READY', quality: { inventory: { productCount: 2, latestUpdatedAt: null }, catalog: { productCount: 3, brandCoveragePercent: 0, categoryCoveragePercent: 0, barcodeCoveragePercent: 100, sellingPriceCoveragePercent: 100, minimumStockCoveragePercent: 0 }, sales: { mappingCoveragePercent: 50, mappedOrderItemCount: 1, orderItemCount: 2 } }, domains: [] };
+const product = { productId: '1', productName: '商品A', sku: 'A', brandName: '品牌A', categoryName: '奶粉', barcode: null, unitsSold: 2, salesRevenue: 100, currentInventory: 20, minimumStock: null, salesToStockRatio: .1, stockStatus: 'IN_STOCK' };
+const inventoryProduct = { ...product, soldUnits: 2, dailyVelocity: .02, coverageDays: 900, daysSinceLastSale: 2, slowMoving: true };
+const fixtures: Record<string, unknown> = {
+  'overview': overview,
+  'data-foundation': foundation,
+  'products-brands': { period: { from: '2026-10-01', to: '2026-10-06' }, summary: { productCount: 1, soldProductCount: 1, unitsSold: 2, salesRevenue: 100, currentInventory: 20, lowStockProducts: 0 }, products: [product], brands: [{ name: '品牌A', productCount: 1, unitsSold: 2, salesRevenue: 100, currentInventory: 20 }], categories: [{ name: '奶粉', productCount: 1, unitsSold: 2, salesRevenue: 100, currentInventory: 20 }], marginAvailable: false, marginNotice: '无确认成本' },
+  'sales-analysis': { period: { from: '2026-09-01', to: '2026-09-30', previousFrom: '2026-08-02', previousTo: '2026-08-31' }, dataAvailable: true, metrics: { netRevenue: 100, grossRevenue: 100, refunds: 0, orderCount: 2, unitsSold: 2, averageOrderValue: 50 }, comparison: overview.sales.comparison, trend: [{ period: '2026-09-01', revenue: 100 }], hourlySales: [], topProducts: salesSummary.topProducts, topBrands: [], sourceQuality: { orders: 2, activeItems: 2, mappedItems: 1, reviewRequiredItems: 1 } },
+  'inventory-operations': { period: { lookbackDays: 90, from: '2026-07-01', to: '2026-10-01' }, salesCoverage: { observedDays: 90, reliable: true, firstObservedSaleAt: '2026-07-01T00:00:00Z', lastObservedSaleAt: '2026-10-01T00:00:00Z', minimumReliableDays: 30 }, summary: { totalInventory: 20, stockedProducts: 1, outOfStockProducts: 0, lowStockProducts: 0, slowMovingProducts: 1, productCount: 1 }, products: [inventoryProduct], coverageBuckets: { noSales: 0, under30: 0, days30To90: 0, over90: 1 }, alerts: [], slowMoving: [inventoryProduct], turnoverNotice: '不可计算周转率', coverageNotice: '仅按已同步订单估算' },
+  'product-insight-tags': { disclaimer: '不代表购买者真实身份', coverage: { productCount: 1, approvedProducts: 0, pendingProducts: 0, untaggedProducts: 1, approvedCoveragePercent: 0 }, tags: [{ id: 't1', code: 'milk', name: '奶粉', dimension: 'BUSINESS_CATEGORY', parentId: null, status: 'ACTIVE', sortOrder: 1 }], tagTree: [{ id: 't1', code: 'milk', name: '奶粉', dimension: 'BUSINESS_CATEGORY', children: [], status: 'ACTIVE', sortOrder: 1 }], dimensions: [{ code: 'BUSINESS_CATEGORY', name: '商品分类' }], products: [{ ...product, assignments: [] }] },
+  'pos-sync/check': { checkedAt: null, readiness: 'NEEDS_REVIEW', orders: { total: 2, lastOrderedAt: null }, items: { mappingCoveragePercent: 50, mapped: 1, total: 2 }, issues: { total: 1 }, checks: [] },
+  'pos-sync/status': { running: false, latestRun: null, cursor: null, history: [] },
+  'pos-mapping/unlisted-stock': { products: [{ productId: '3734', sku: 'LOCAL-1', productName: '8分钟Pro Xylane玻色因细胞焕活精华液', englishName: null, barcodes: ['9421907711157'], stock: 240, createdAt: '2026-10-20T00:00:00.000Z' }], totalUnits: 240 },
+  'pos-inventory/review-lines': { lines: [
+    { itemId: '501', orderNo: 'RO-1', orderedAt: '2026-10-21T01:00:00.000Z', sourceName: 'alpine hand cream', productId: '40', productName: 'alpine 蜂蜜护手霜', reason: 'INSUFFICIENT_INVENTORY', required: 2, applied: 0, remaining: 2, availableStock: 12, canReapply: true },
+    { itemId: '502', orderNo: 'RO-2', orderedAt: '2026-10-21T02:00:00.000Z', sourceName: 'careline', productId: null, productName: null, reason: 'UNMAPPED', required: 1, applied: 0, remaining: 1, availableStock: 0, canReapply: false },
+  ] },
+  'pos-sync/issues': { summary: { itemIssues: 0, pendingRefunds: 0 }, itemIssues: { items: [], pagination: { total: 0 } }, pendingRefunds: { items: [] } },
+  'pos-inventory/preview': { mode: 'PREVIEW', period: { from: '2026-10-12T05:15:22.401Z', toExclusive: '2026-10-17T11:00:00.000Z' }, summary: { ordersScanned: 178, eligibleOrders: 105, unitsPlanned: 455, reviewRequiredOrders: 6, blockedOrders: 0, reviewLines: 73, shortfallUnits: 12 }, issues: [{ orderId: '9', orderNo: 'POS-9', reason: 'INSUFFICIENT_INVENTORY', itemId: '90', productId: '33', required: 4, available: 0 }] },
+  'store-comparison': { storeCount: 1, comparisonAvailable: false, period: { from: '2026-10-01', to: '2026-10-06' }, stores: [{ store: { id: '1', name: '测试门店', code: 'ONE' }, selected: true, sales: salesSummary, inventory: { totalQuantity: 20, outOfStockProducts: 0, lowStockProducts: 0 } }], ranking: { byRevenue: [], byOrders: [], byInventory: [] } },
+  'purchase-suggestions': (() => {
+    const base = { sku: 'S', barcode: null, brandName: '品牌A', categoryName: '保健品', minimumStock: null, targetWeeks: 6, source: 'WEEKLY_FORECAST', priority: 'THIS_WEEK', alreadyIncluded: false, ignored: false, ignoredReason: null, ignoredAt: null };
+    return { generatedAt: '2026-10-25T00:00:00Z', inventoryLatestUpdatedAt: null, period: { from: '2026-09-27', to: '2026-10-25' }, calculation: '按近28天销量折算周销', summary: { products: 2, suggestedUnits: 20, thisWeekProducts: 2, followUpProducts: 0, alreadyIncluded: 0, ignored: 0 },
+      suggestions: [
+        { ...base, productId: '11', productName: '高之源白瓶', currentInventory: 0, recent28DayQty: 8, weeklyVelocity: 2, coverageWeeks: 0, targetInventory: 12, suggestedQuantity: 12, salesBasis: '90_DAYS' },
+        { ...base, productId: '12', productName: '科立纯妇科益生菌', currentInventory: 4, recent28DayQty: 8, weeklyVelocity: 2, coverageWeeks: 2, targetInventory: 12, suggestedQuantity: 8, recentReceivedQty: 4, salesBasis: '28_DAYS', mergedProducts: [{ productId: '12', productName: '科立纯妇科益生菌', barcode: '1', currentInventory: 4, recent28DayQty: 8 }, { productId: '13', productName: '科立纯 妇科益生菌', barcode: '2', currentInventory: 0, recent28DayQty: 0 }] },
+      ], ignoredSuggestions: [] };
+  })(),
+  'purchase-orders/current': { order: null },
+};
+
+const assistantReply = {
+  replyId: '9', reply: '有货哦～日期是28年5月哈～', needsHuman: false,
+  facts: { kind: 'store', intents: ['stock'], store: { name: '护肝片', priceCents: 3500, totalQuantity: 6, batches: [{ expiryDate: '2028-05-31', label: '28年5月', quantity: 2 }, { expiryDate: '2029-03-31', label: '29年3月', quantity: 4 }], recentDiscountCents: null }, mail: null, candidates: [], answers: [], notes: [] },
+};
+
+function setup(options: { failPos?: boolean; limited?: boolean; multipleStores?: boolean } = {}) {
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const assistantPath = String(input).split('/assistant/')[1]?.split('?')[0];
+    if (assistantPath === 'replies') return new Response(JSON.stringify({ data: assistantReply }), { status: 200 });
+    if (assistantPath?.endsWith('/feedback')) return new Response(JSON.stringify({ data: { replyId: '9', outcome: JSON.parse(String(init?.body)).outcome } }), { status: 200 });
+    const path = String(input).split('/management/')[1]?.split('?')[0];
+    if (options.failPos && path?.startsWith('pos-sync/')) return new Response(JSON.stringify({ message: 'POS 状态读取失败' }), { status: 500 });
+    const data = path === 'access' ? { administrator: !options.limited, roleCodes: ['ADMIN'], capabilities: options.limited ? { ...capabilities, posSync: false, posIssues: false, permissionsManage: false } : capabilities, grantedPermissionCodes: [] }
+      : path === 'pos-inventory/review-lines/reapply' ? { lines: 1, completed: 1, stillShort: 0, unitsApplied: 2, skipped: [] }
+      : path === 'pos-sync/run' ? { result: { orders: 2, ordersProcessed: 2, ordersSkipped: 0, items: 2, unmappedItems: 0, reviewItems: 0 } }
+        : path === 'pos-inventory/apply' ? { mode: 'APPLIED', period: { from: '2026-10-12T05:15:22.401Z', toExclusive: '2026-10-17T11:00:00.000Z' }, summary: { ordersScanned: 178, appliedOrders: 105, unitsApplied: 455, blockedOrders: 0, reviewLines: 73, shortfallUnits: 12 }, issues: [] }
+        : path === 'store-comparison' && options.multipleStores ? { ...(fixtures[path] as object), comparisonAvailable: true, storeCount: 2 }
+          : fixtures[path];
+    if (!data) throw new Error(`Unexpected request ${path} ${init?.method || 'GET'}`);
+    return new Response(JSON.stringify({ data }), { status: 200 });
+  });
+  const wrapper = mount(ManagementDashboard, { attachTo: document.body, props: { apiBaseUrl: '/api/v1', token: 'test', storeId: '1', storeName: '测试门店' } });
+  return { wrapper, fetchSpy };
+}
+async function go(wrapper: VueWrapper, label: string) {
+  const button = wrapper.findAll('.management-sidebar button').find(item => item.text().startsWith(label));
+  expect(button).toBeTruthy(); await button!.trigger('click'); await flushPromises();
+}
+async function click(wrapper: VueWrapper, label: string) {
+  const button = wrapper.findAll('button').find(item => item.text() === label);
+  expect(button).toBeTruthy(); await button!.trigger('click'); await flushPromises();
+}
+afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ''; sessionStorage.clear(); });
+
+describe('经营管理页面组织', () => {
+  it('lists purchase suggestions as a table with priority labels and CR-005 notes', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    await go(wrapper, '本周进货');
+
+    expect(wrapper.findAll('.buy-tabs button').map((tab) => tab.text())).toEqual(['全部（2）', '本周优先（2）', '后续跟进（0）', '已忽略（0）']);
+    const rows = wrapper.findAll('.buy-table tbody tr');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].findAll('td').map((cell) => cell.text()).slice(1, 6)).toEqual(['0', '2', '已断货', '12', '高']);
+    expect(rows[0].get('.buy-product em').text()).toBe('断货中，按近 90 天销量估算');
+    expect(rows[1].findAll('td').map((cell) => cell.text()).slice(1, 6)).toEqual(['4', '2', '2 周', '8', '中']);
+    expect(rows[1].get('.buy-product em').text()).toBe('近 7 天已入库 4 件，仍不足');
+    expect(rows[1].get('.buy-btn').text()).toBe('加入进货单');
+    expect(rows[1].get('.buy-merged').text()).toBe('已合并 2 个同名档案（库存 4 + 0）');
+    expect(wrapper.find('.buy-rules').exists()).toBe(false);
+  });
+
+  it('previews the purchase order, adjusts weeks of stock and recalculates the draft (CR-009)', async () => {
+    const line = (id: string, productName: string, currentInventory: number, orderedQuantity: number, extra: Record<string, unknown> = {}) => ({
+      id, productId: id, sku: `S${id}`, barcode: null, productName, brandName: '品牌A', categoryName: '保健品', source: 'WEEKLY_FORECAST',
+      currentInventory, recentSevenDayQty: 5, suggestedQuantity: orderedQuantity, orderedQuantity, receivedQuantity: 0, supplierName: null,
+      unitCostCents: null, caseSize: null, notes: null, coverageWeeks: 2, quantityEdited: false, ...extra,
+    });
+    const order = (items: ReturnType<typeof line>[]) => ({
+      id: '9', orderNo: 'PO-20261028-1', weekStart: '2026-10-28', weekEnd: '2026-11-03', status: 'DRAFT', createdAt: '', updatedAt: '', confirmedAt: null, orderedAt: null,
+      summary: { productCount: items.length, suggestedUnits: 0, orderedUnits: items.reduce((sum, item) => sum + item.orderedQuantity, 0), receivedUnits: 0, totalCostCents: 0 }, items,
+    });
+    const items = [line('1', '高之源白瓶', 3, 7), line('2', 'RedSeal 红印烟民牙膏100g', 10, 24), line('3', '科立纯妇科益生菌', 0, 12, { quantityEdited: true })];
+    fixtures['purchase-orders/current'] = { currency: 'NZD', order: order(items) };
+    fixtures['purchase-orders/items/coverage'] = order([{ ...items[0], coverageWeeks: 3, suggestedQuantity: 12, orderedQuantity: 12 }, items[1], items[2]]);
+    fixtures['purchase-orders/recalculate'] = order(items);
+    try {
+      const { wrapper, fetchSpy } = setup(); await flushPromises();
+      await go(wrapper, '本周进货');
+      await wrapper.findAll('.procurement-tabs button')[1].trigger('click');
+
+      expect(wrapper.get('.purchase-order-card .card-title p').text()).toContain('周期 2026-10-28 至 2026-11-03（周三至下周二）');
+      expect(wrapper.findAll('.purchase-order-table th').map((cell) => cell.text())).toEqual(['商品', '数量与供应商', '进价与整箱', '备货周期', '备注与操作']);
+      expect(wrapper.get('.purchase-order-table tbody tr:nth-child(3)').text()).toContain('已手动调整');
+
+      await wrapper.get('button[aria-label="高之源白瓶 备货周期增加一周"]').trigger('click');
+      await flushPromises();
+      const coverageCall = fetchSpy.mock.calls.find(([url]) => String(url).includes('purchase-orders/items/coverage'));
+      expect(JSON.parse(String(coverageCall?.[1]?.body))).toEqual({ itemId: '1', coverageWeeks: 3 });
+      expect(wrapper.get('.purchase-order-table tbody tr').get('.coverage-cell').text()).toContain('3 周');
+
+      await click(wrapper, '按最新数据重算');
+      expect(fetchSpy.mock.calls.some(([url, init]) => String(url).includes('purchase-orders/recalculate') && init?.method === 'POST')).toBe(true);
+      expect(document.body.querySelector('.purchase-toast')?.textContent).toContain('手动改过的数量保持不变');
+
+      await click(wrapper, '预览');
+      const preview = document.body.querySelector('.po-preview')!;
+      expect(preview).toBeTruthy();
+      // Largest quantity first, in both the fan of lines and the panel.
+      expect([...preview.querySelectorAll('.po-label')].map((label) => label.textContent)).toEqual(['RedSeal 红印烟民牙膏100g', '科立纯妇科益生菌', '高之源白瓶']);
+      expect([...preview.querySelectorAll('.po-table tbody tr')].map((row) => [...row.querySelectorAll('td')].map((cell) => cell.textContent))).toEqual([
+        ['RedSeal 红印烟民牙膏100g', '10', '24'], ['科立纯妇科益生菌', '0', '12'], ['高之源白瓶', '3', '7'],
+      ]);
+      const createObjectURL = vi.fn(() => 'blob:po');
+      Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+      (preview.querySelector('.glass-pill.download') as HTMLButtonElement).click();
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      (preview.querySelector('.glass-pill.back') as HTMLButtonElement).click();
+      await flushPromises();
+      expect(document.body.querySelector('.po-preview')).toBeNull();
+    } finally {
+      fixtures['purchase-orders/current'] = { order: null };
+      delete fixtures['purchase-orders/items/coverage'];
+      delete fixtures['purchase-orders/recalculate'];
+    }
+  });
+
+  it('opens market analysis with module cards and a brief, and lists store findings (REQ-014)', async () => {
+    const fact = { brandName: '品牌A', level1: '保健品', level2: '鱼油与 Omega-3', weeklyUnits: 10, inCurrentOrder: false };
+    let added = false;
+    const insights = () => ({
+      generatedAt: '2026-10-31T00:00:00Z',
+      period: { type: 'WEEK', days: 7, from: '2026-10-24', to: '2026-10-30', previousFrom: '2026-10-17', previousTo: '2026-10-23', baselineWindows: 4, previousComplete: true, historyDays: 157, dataThrough: '2026-10-30', stale: false },
+      overview: { current: { revenue: 1000, orders: 10, units: 40, avgOrderValue: 100, products: 8 }, previous: { revenue: 800, orders: 8, units: 30, avgOrderValue: 100, products: 6 }, history: { revenue: [500, 600, 700, 800, 1000], orders: [5, 6, 7, 8, 10] } },
+      daily: { dates: ['2026-10-24', '2026-10-25'], current: [{ revenue: 400, orders: 4 }, { revenue: 600, orders: 6 }], previous: [{ revenue: 300, orders: 3 }, { revenue: 500, orders: 5 }] },
+      categoryShare: [{ level1: '保健品', share: 70, previousShare: 60, revenue: 700 }, { level1: '护肤品', share: 30, previousShare: 40, revenue: 300 }],
+      categoryMovers: { gains: [{ level1: '保健品', level2: '鱼油与 Omega-3', revenue: 700, previousRevenue: 480, delta: 220, changePercent: 45.8 }], losses: [{ level1: '护肤品', level2: '手部护理', revenue: 300, previousRevenue: 320, delta: -20, changePercent: -6.3 }] },
+      demand: { orders: 10, rows: [{ group: '游客（伴手礼）', orders: 4, share: 40, previousShare: 30, revenue: 400, topCategory: '蜂蜜' }, { group: '中老年', orders: 3, share: 30, previousShare: 30, revenue: 300, topCategory: '鱼油与 Omega-3' }, { group: '家庭通用', orders: 5, share: 50, previousShare: 50, revenue: 300, topCategory: null }] },
+      heatmap: { hours: [10, 11], cells: [[1, 2], [0, 3], [0, 0], [0, 0], [0, 0], [4, 0], [0, 0]], peak: { weekday: 5, hour: 10, orders: 4 } },
+      rankings: { top: [{ ...fact, productId: '7', productName: '鱼油 2000mg', currentInventory: 6, coverageWeeks: 0.6, revenue: 600, units: 30, previousUnits: 10, history: [8, 9, 10, 10, 30], changePercent: 200 }], falling: [] },
+      highlights: [{ tone: 'up', title: '游客（伴手礼）需求上升', text: '相关订单占 40%（上期 30%）', advice: '重视游客产品：增加陈列、备货和礼盒组合', action: 'demand' }],
+      summary: { surgeProducts: 1, newlyRisingProducts: 1, overstockProducts: 1, expiringOverstockProducts: 1, pairs: 1, risingCategories: 1, fallingCategories: 0, categoryCoverage: { identified: 9, total: 10 } },
+      surges: [
+        { ...fact, productId: '7', productName: '鱼油 2000mg', currentInventory: 6, coverageWeeks: 0.6, currentUnits: 30, baselineUnits: 10, ratio: 3, newlyRising: false, inCurrentOrder: added },
+        { ...fact, productId: '8', productName: '新到益生菌', currentInventory: 40, coverageWeeks: 8, currentUnits: 6, baselineUnits: 0, ratio: null, newlyRising: true },
+      ],
+      overstock: [{ ...fact, productId: '9', productName: '木瓜膏', currentInventory: 400, coverageWeeks: 240, reason: 'COVERAGE', daysSinceLastSale: 2, nearestExpiry: '2026-12', expiring: true }],
+      pairs: [{ orders: 12, products: [{ productId: '1', productName: '精华液', share: 67 }, { productId: '2', productName: '修护乳液', share: 86 }] }],
+      categories: [{ level1: '护肤品', level2: '手部护理', currentUnits: 60, previousUnits: 30, changePercent: 100, trend: 'UP' }],
+      rules: { revenue: '实收', demand: '按所购商品', surge: '本期 ≥ 5 件', overstock: '12 周', pairs: '≥ 5 次', category: '±10%' },
+    });
+    fixtures['market-insights'] = insights();
+    fixtures['purchase-orders/items'] = { id: '9', orderNo: 'PO-1', weekStart: '2026-10-28', status: 'DRAFT', createdAt: '', updatedAt: '', confirmedAt: null, orderedAt: null, summary: { productCount: 1, suggestedUnits: 0, orderedUnits: 0, receivedUnits: 0, totalCostCents: 0 }, items: [] };
+    try {
+      const { wrapper, fetchSpy } = setup(); await flushPromises();
+      await go(wrapper, '市场分析');
+
+      const tiles = wrapper.findAll('.glass-card');
+      expect(tiles.map((tile) => tile.get('strong').text())).toEqual(['店铺经营发现', 'AI 销售报告', '行业趋势', '活动策划']);
+      expect(tiles[0].text()).toContain('1 种突然热销 · 1 种超量滞销');
+      expect(tiles[3].text()).toContain('即将上线');
+
+      // The brief on the home page shows what needs attention and opens the matching list.
+      expect(wrapper.get('.market-brief').text()).toContain('鱼油 2000mg');
+      expect(wrapper.get('.market-brief').text()).toContain('精华液');
+      expect(wrapper.get('.market-brief').text()).toContain('游客（伴手礼）');
+      await wrapper.findAll('.brief-card')[1].trigger('click');
+      expect(wrapper.get('.hub-card.active .hub-head b').text()).toBe('商品榜');
+      expect(wrapper.get('.mk-list.overstock').text()).toContain('临期');
+      await wrapper.get('.mk-back').trigger('click');
+
+      // CR-011: a card row on top; the selected card decides the detail below.
+      await wrapper.findAll('.glass-card')[0].trigger('click');
+      expect(wrapper.findAll('.hub-card .hub-head b').map((title) => title.text())).toEqual(['经营画像', '商品榜', '品类与时段', '连带购买']);
+      expect(wrapper.get('.hub-card.active .hub-head b').text()).toBe('经营画像');
+      // Indicators and daily sales live on 经营总览, not here.
+      expect(wrapper.find('.mk-kpi').exists()).toBe(false);
+      expect(wrapper.get('.hub-card.active').text()).toContain('+25%');
+      expect(wrapper.get('.mk-highlights').text()).toContain('重视游客产品');
+      expect(wrapper.get('.mk-demand').text()).toContain('游客（伴手礼）');
+      expect(wrapper.get('.mk-demand').text()).toContain('买得最多：蜂蜜');
+
+      await wrapper.findAll('.hub-card')[1].trigger('click');
+      await wrapper.findAll('.mk-seg button').find((button) => button.text().startsWith('突然热销'))!.trigger('click');
+      expect(wrapper.findAll('.mk-list.surges .mk-row')[1].text()).toContain('新品起量');
+      fixtures['market-insights'] = (added = true, insights());
+      await wrapper.get('.mk-list.surges .mk-row button').trigger('click');
+      await flushPromises();
+      const addCall = fetchSpy.mock.calls.find(([url]) => String(url).includes('purchase-orders/items'));
+      expect(JSON.parse(String(addCall?.[1]?.body))).toMatchObject({ productId: '7', source: 'HOT_SALES' });
+      expect(wrapper.get('.mk-list.surges .mk-row').text()).toContain('已在进货单');
+
+      await wrapper.findAll('.hub-card')[2].trigger('click');
+      expect(wrapper.get('.mk-movers').text()).toContain('鱼油与 Omega-3');
+      await wrapper.findAll('.mk-period button')[1].trigger('click');
+      await flushPromises();
+      expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('market-insights') && String(url).includes('period=MONTH'))).toBe(true);
+      // Market analysis is read only apart from the purchase order the user asked for.
+      expect(fetchSpy.mock.calls.filter(([, init]) => init?.method && init.method !== 'GET').map(([url]) => String(url).split('?')[0].split('/management/')[1])).toEqual(['purchase-orders/items']);
+
+      await wrapper.get('.mk-back').trigger('click');
+      await wrapper.findAll('.glass-card')[3].trigger('click');
+      expect(wrapper.find('.hub').exists()).toBe(false);
+      expect(wrapper.get('.mk-soon').text()).toContain('价格与优惠由决策者填写');
+    } finally {
+      delete fixtures['market-insights'];
+      delete fixtures['purchase-orders/items'];
+    }
+  });
+
+  it('filters products by recognised category and function and lets admins place unclassified products (CR-010)', async () => {
+    const taxonomy = { categories: [{ code: 'A1', level1: '保健品', level2: '鱼油与 Omega-3' }, { code: 'D1', level1: '护肤品', level2: '绵羊油系列' }], functions: [{ group: '器官与系统', label: '护眼' }], audiences: ['儿童'] };
+    const row = { productId: '9', sku: 'S9', barcode: '9400', productName: 'careline', brandName: 'Careline', level1: '其他', level2: '未识别', manualCategory: null, automaticCategory: null, functions: [], unitsLast90Days: 17, currentInventory: 5 };
+    fixtures['product-taxonomy'] = taxonomy;
+    fixtures['product-categories'] = { summary: { products: 3727, unclassified: 854, manual: 0, unclassifiedSelling: 71 }, products: [row] };
+    fixtures['product-categories/assign'] = { productId: '9', level1: '护肤品', level2: '绵羊油系列', manualCategory: '绵羊油系列', functions: ['保湿补水'] };
+    try {
+      const { wrapper, fetchSpy } = setup(); await flushPromises();
+      await go(wrapper, '商品分析');
+      await flushPromises();
+      const selects = wrapper.findAll('.product-filter-panel select');
+      expect(selects[0].findAll('optgroup').map((group) => group.attributes('label'))).toEqual(['保健品', '护肤品']);
+      await selects[0].setValue('绵羊油系列');
+      await selects[1].setValue('护眼');
+      await wrapper.get('.product-filter-panel').trigger('submit');
+      await flushPromises();
+      const query = fetchSpy.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('products-brands')).pop()!;
+      expect(decodeURIComponent(query)).toContain('category=绵羊油系列');
+      expect(query).toContain('functionTag=');
+
+      await go(wrapper, '分类与标签');
+      await click(wrapper, '品类指定');
+      await flushPromises();
+      const panel = wrapper.get('.category-assign');
+      expect(panel.text()).toContain('近 90 天有销售 71 种');
+      expect(panel.get('.category-current').text()).toContain('未识别');
+      await panel.get('.category-edit select').setValue('绵羊油系列');
+      await panel.findAll('.category-edit button').find((button) => button.text() === '保存')!.trigger('click');
+      await flushPromises();
+      const save = fetchSpy.mock.calls.find(([url]) => String(url).includes('product-categories/assign'));
+      expect(JSON.parse(String(save?.[1]?.body))).toEqual({ productId: '9', category: '绵羊油系列' });
+      expect(panel.get('.category-current').text()).toContain('绵羊油系列');
+      expect(panel.get('.category-current em').text()).toBe('人工');
+      expect(panel.findAll('.category-edit button').map((button) => button.text())).toContain('恢复自动');
+    } finally {
+      delete fixtures['product-taxonomy'];
+      delete fixtures['product-categories'];
+      delete fixtures['product-categories/assign'];
+    }
+  });
+
+  it('moves the built-in current-page marker with the selected module', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    expect(wrapper.findAll('.nav-current-marker')).toHaveLength(1);
+    expect(wrapper.get('.nav-current-marker').element.closest('button')?.textContent).toContain('经营总览');
+    await go(wrapper, '本周进货');
+    expect(wrapper.findAll('.nav-current-marker')).toHaveLength(1);
+    expect(wrapper.get('.nav-current-marker').element.closest('button')?.textContent).toContain('本周进货');
+  });
+
+  it('groups navigation, keeps a read-only overview and moves detailed checks to the data center', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises();
+    expect(wrapper.findAll('.navigation-group h3').map(item => item.text())).toEqual(['经营分析', '资料维护', '系统支持']);
+    expect(wrapper.findAll('.management-mobile-nav button').map(item => item.text().replace(/^[^\u4e00-\u9fff]+/, ''))).toEqual(['总览', '销售', '商品', '库存', '更多']);
+    expect(wrapper.findAll('.hot-products-grid article')).toHaveLength(8);
+    expect(wrapper.text()).toContain('热销产品 20');
+    expect(wrapper.find('.foundation-check').exists()).toBe(false);
+    expect(wrapper.text()).toContain('只有 1 个有记录的日期');
+    await click(wrapper, '查看数据检查');
+    expect(wrapper.find('.foundation-check').text()).toContain('正式品牌字段完整率');
+    expect(wrapper.find('.foundation-check').text()).toContain('条码不是库存商品的必填条件');
+    expect(fetchSpy.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+  });
+
+  it('answers in the 阳光小助手 column from the system and keeps the conversation across pages (REQ-015)', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const { wrapper, fetchSpy } = setup(); await flushPromises();
+    expect(wrapper.text()).not.toContain('刷新今日数据');
+    expect(wrapper.find('.data-freshness input[type="date"]').exists()).toBe(true);
+
+    await wrapper.get('.sa-pill').trigger('click');
+    const box = wrapper.get('.sa-float textarea');
+    await box.setValue('护肝片还有货吗？');
+    await box.trigger('keydown', { key: 'Enter' });
+    expect(wrapper.find('.sa-float').exists()).toBe(false);
+    expect(wrapper.get('.sa-ask').text()).toBe('护肝片还有货吗？');
+    await flushPromises();
+    expect(wrapper.get('.sa-answer').text()).toBe('有货哦～日期是28年5月哈～');
+    expect(wrapper.get('.sa-facts').text()).toContain('28年5月（2028-05-31）× 2');
+    expect(wrapper.get('.sa-facts').text()).toContain('库存合计6');
+    const ask = fetchSpy.mock.calls.find(([url]) => String(url).includes('/assistant/replies?storeId=1'));
+    expect(JSON.parse(String(ask?.[1]?.body))).toEqual({ question: '护肝片还有货吗？' });
+    await wrapper.get('.sa-actions button.primary').trigger('click'); await flushPromises();
+    expect(writeText).toHaveBeenCalledWith('有货哦～日期是28年5月哈～');
+    expect(wrapper.get('.sa-outcome').text()).toBe('已复制采用');
+    expect(wrapper.classes()).toContain('assistant-docked');
+
+    await go(wrapper, '商品分析');
+    expect(wrapper.findAll('.sa-pill')).toHaveLength(1);
+    expect(wrapper.get('.sa-ask').text()).toBe('护肝片还有货吗？');
+
+    await wrapper.get('.sa-head button[aria-label="收起问答栏"]').trigger('click');
+    expect(wrapper.find('.sa-panel').exists()).toBe(false);
+    await wrapper.get('.sa-pill').trigger('click');
+    expect(wrapper.find('.sa-float').exists()).toBe(false);
+    expect(wrapper.get('.sa-ask').text()).toBe('护肝片还有货吗？');
+  });
+
+  it('drives the phone top bar, bottom navigation and more sheet', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    expect(wrapper.get('.management-topbar h1').text()).toBe('经营总览');
+    expect(wrapper.get('.management-topbar small').text()).toBe('测试门店');
+    expect(wrapper.get('.management-mobile-nav button[aria-current="page"]').text()).toBe('总览');
+
+    await wrapper.findAll('.management-mobile-nav button').find(item => item.text() === '库存')!.trigger('click'); await flushPromises();
+    expect(wrapper.get('.management-topbar h1').text()).toBe('库存经营');
+    expect(wrapper.get('.management-mobile-nav button[aria-current="page"]').text()).toBe('库存');
+
+    await wrapper.get('.management-topbar button[aria-label="查看本页说明"]').trigger('click');
+    expect(wrapper.find('.page-guide-popover').exists()).toBe(true);
+    await wrapper.find('.page-guide-popover header button').trigger('click');
+
+    const more = () => wrapper.findAll('.management-mobile-nav button').find(item => item.text() === '更多')!;
+    await more().trigger('click');
+    expect(wrapper.findAll('.more-modules strong').map(item => item.text())).toEqual(['本周进货', '市场分析', '分类与标签', '门店对比', '数据中心']);
+    await wrapper.findAll('.more-modules button').find(item => item.text().includes('数据中心'))!.trigger('click'); await flushPromises();
+    expect(wrapper.find('.management-more-sheet').exists()).toBe(false);
+    expect(wrapper.get('.management-topbar h1').text()).toBe('数据中心');
+    expect(more().classes()).toContain('active');
+
+    await more().trigger('click');
+    await wrapper.findAll('.more-account button').find(item => item.text().includes('账户设置'))!.trigger('click');
+    expect(wrapper.emitted('open-account')).toHaveLength(1);
+    expect(wrapper.find('.management-more-sheet').exists()).toBe(false);
+    await more().trigger('click');
+    await wrapper.findAll('.more-account button').find(item => item.text().includes('返回库存系统'))!.trigger('click');
+    expect(wrapper.emitted('exit')).toHaveLength(1);
+  });
+
+  it('labels every list cell with its column so phones can show rows as cards', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    await go(wrapper, '库存经营');
+    const headers = wrapper.findAll('.inventory-scroll-table th').map(item => item.text());
+    const cells = wrapper.findAll('.inventory-scroll-table tbody tr')[0].findAll('td');
+    expect(cells.map(item => item.attributes('data-label'))).toEqual(headers);
+    expect(wrapper.find('.inventory-table-pagination .load-more').exists()).toBe(false);
+  });
+
+  it('introduces the purpose and contents of every management page', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    const expected: Record<string, string> = {
+      '经营总览': '今日销售与昨日比较', '销售分析': '热销商品前 10', '商品分析': '品牌结构',
+      '库存经营': '覆盖天数', '分类与标签': '人工判断依据', '门店对比': '单店销售基线', '数据中心': '异常与同步历史',
+    };
+    for (const [section, content] of Object.entries(expected)) {
+      await go(wrapper, section);
+      await wrapper.find('.page-guide-fab').trigger('click');
+      expect(wrapper.find('.page-guide-popover').text()).toContain('本页包含什么');
+      expect(wrapper.find('.page-guide-popover').text()).toContain(content);
+      await wrapper.find('.page-guide-popover header button').trigger('click');
+    }
+  });
+
+  it('links to existing inventory reports without writing data', async () => {
+    const { wrapper } = setup(); await flushPromises();
+    for (const button of wrapper.findAll('.action-list button')) await button.trigger('click');
+    expect(wrapper.emitted('open-report')).toEqual([['receipts'], ['expiry'], ['movements']]);
+  });
+
+  it('carries the overview date into sales analysis and shows the actual comparison period', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises();
+    await click(wrapper, '销售详情 →');
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('from=2026-09-28&to=2026-09-28'))).toBe(true);
+    expect(wrapper.text()).toContain('2026-08-02 至 2026-08-31');
+    expect(wrapper.text()).not.toContain('暂无上月基数');
+  });
+
+  it('opens sales analysis on the current Auckland business date by default', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises();
+    await go(wrapper, '销售分析');
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes(`from=${today}&to=${today}`))).toBe(true);
+    expect(wrapper.get('.period-shortcuts').text()).toContain('默认显示今天');
+    expect((wrapper.get('.sales-filter-panel input[type="date"]').element as HTMLInputElement).value).toBe(today);
+  });
+
+  it('keeps product analysis read-only with three separate views', async () => {
+    const { wrapper } = setup(); await flushPromises(); await go(wrapper, '商品分析');
+    expect(wrapper.find('.product-table-card').isVisible()).toBe(true);
+    await click(wrapper, '品牌结构');
+    expect(wrapper.find('.product-table-card').isVisible()).toBe(false);
+    expect(wrapper.findAll('.product-ranking')[0].isVisible()).toBe(true);
+    await click(wrapper, '品类结构');
+    expect(wrapper.findAll('.product-ranking')[1].isVisible()).toBe(true);
+    expect(wrapper.findAll('button').some(b => /新增商品|修改售价|维护条码/.test(b.text()))).toBe(false);
+  });
+
+  it('keeps stock status filtering and removes duplicate alert lists', async () => {
+    const { wrapper } = setup(); await flushPromises(); await go(wrapper, '库存经营');
+    expect(wrapper.findAll('.inventory-alert-list')).toHaveLength(0);
+    expect(wrapper.text()).toContain('查询商品范围'); expect(wrapper.text()).toContain('筛选当前结果');
+    await wrapper.get('[aria-label="筛选缺货商品"]').trigger('click');
+    expect(wrapper.findAll('.inventory-scroll-table tbody tr')).toHaveLength(0);
+    expect(wrapper.text()).not.toContain('库存覆盖结构');
+    await click(wrapper, '清除筛选');
+    expect(wrapper.findAll('.inventory-scroll-table tbody tr')).toHaveLength(1);
+  });
+
+  it('separates tag dictionary from assignments and opens editors only on demand', async () => {
+    const { wrapper } = setup(); await flushPromises(); await go(wrapper, '分类与标签');
+    expect(wrapper.text()).toContain('展示全部启用商品');
+    expect(wrapper.find('.tag-definition-editor').exists()).toBe(false);
+    await click(wrapper, '标签字典');
+    expect(wrapper.find('.insight-product-list').isVisible()).toBe(false);
+    await click(wrapper, '新增标签'); expect(wrapper.find('.tag-definition-editor').exists()).toBe(true);
+    await click(wrapper, '关闭编辑'); expect(wrapper.find('.tag-definition-editor').exists()).toBe(false);
+    await wrapper.find('.taxonomy-list button').trigger('click');
+    expect((wrapper.find('.tag-definition-editor input').element as HTMLInputElement).value).toBe('奶粉');
+  });
+
+  it('does not show a one-store ranking, but retains comparison and rankings for multiple stores', async () => {
+    const { wrapper } = setup(); await flushPromises(); await go(wrapper, '门店对比');
+    expect(wrapper.find('.store-ranking-card').exists()).toBe(false);
+    expect(wrapper.find('.store-card-grid').exists()).toBe(true);
+    wrapper.unmount(); vi.restoreAllMocks();
+    const multi = setup({ multipleStores: true }); await flushPromises(); await go(multi.wrapper, '门店对比');
+    expect(multi.wrapper.find('.store-comparison-table').exists()).toBe(true);
+    expect(multi.wrapper.find('.store-ranking-card').exists()).toBe(true);
+  });
+
+  it('does not present zero or idle as a successful result when POS status fails', async () => {
+    const { wrapper } = setup({ failPos: true }); await flushPromises(); await go(wrapper, '数据中心');
+    const cards = wrapper.findAll('.pos-status-grid article strong').map(item => item.text());
+    expect(cards).toEqual(['加载失败', '—', '—', '—', '—']);
+    await click(wrapper, '异常记录'); expect(wrapper.find('.issue-card').text()).toContain('不能判断是否存在异常');
+  });
+
+  it('does not allow restricted accounts to open data center or edit tags', async () => {
+    const { wrapper } = setup({ limited: true }); await flushPromises();
+    const systemButton = wrapper.findAll('.management-sidebar button').find(b => b.text().startsWith('数据中心'))!;
+    expect(systemButton.attributes('disabled')).toBeDefined();
+    await go(wrapper, '分类与标签'); await click(wrapper, '标签字典');
+    expect(wrapper.find('.tag-definition-editor').exists()).toBe(false);
+    expect(wrapper.find('.taxonomy-list button').attributes('disabled')).toBeDefined();
+  });
+
+  it('preserves the explicit manual sync payload and never syncs just by navigating', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises(); await go(wrapper, '数据中心');
+    expect(fetchSpy.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    await wrapper.get('.primary-sync-controls input').setValue('2026-10-01');
+    await click(wrapper, '开始同步');
+    const call = fetchSpy.mock.calls.find(([url]) => String(url).includes('pos-sync/run'));
+    expect(call?.[1]?.method).toBe('POST');
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ date: '2026-10-01', reconcile: false });
+  });
+
+  it('lists stocked products the POS has not listed yet', async () => {
+    const { wrapper } = setup(); await flushPromises(); await go(wrapper, '数据中心');
+    const card = wrapper.find('.pos-unlisted-card');
+    expect(card.text()).toContain('8分钟Pro Xylane玻色因细胞焕活精华液');
+    expect(card.text()).toContain('9421907711157');
+    expect(card.text()).toContain('1 种商品，共 240 件库存');
+    expect(card.text()).toContain('导出 Excel');
+  });
+
+  it('lists review lines and re-applies a short line only when asked', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises(); await go(wrapper, '数据中心');
+    const card = wrapper.find('.pos-review-card');
+    expect(card.text()).toContain('alpine 蜂蜜护手霜');
+    expect(card.text()).toContain('未映射');
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('review-lines/reapply'))).toBe(false);
+    await card.findAll('button').find((button) => button.text() === '重扣')!.trigger('click'); await flushPromises();
+    const call = fetchSpy.mock.calls.find(([url]) => String(url).includes('review-lines/reapply'));
+    expect(call?.[1]?.method).toBe('POST');
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ itemIds: ['501'], confirm: true });
+    expect(wrapper.find('.pos-review-card').text()).toContain('补扣 2 件');
+  });
+
+  it('previews POS inventory deductions before requiring an explicit confirmed write', async () => {
+    const { wrapper, fetchSpy } = setup(); await flushPromises(); await go(wrapper, '数据中心');
+    expect(fetchSpy.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    await click(wrapper, '生成扣库预览');
+    expect(wrapper.find('.pos-inventory-preview-summary').text()).toContain('105 张');
+    expect(wrapper.find('.pos-inventory-preview-summary').text()).toContain('455 件商品');
+    expect(wrapper.find('.pos-inventory-preview-summary').text()).toContain('73 行');
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('pos-inventory/apply'))).toBe(false);
+    await click(wrapper, '确认正式扣库');
+    expect(document.body.querySelector('.pos-inventory-confirm-dialog')?.textContent).toContain('其余商品照常扣减，不会产生负库存');
+    const confirm = document.body.querySelector('.morph-submit') as HTMLButtonElement;
+    confirm.click(); await flushPromises();
+    const call = fetchSpy.mock.calls.find(([url]) => String(url).includes('pos-inventory/apply'));
+    expect(call?.[1]?.method).toBe('POST');
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ from: expect.any(String), to: expect.any(String), confirm: true });
+  });
+});

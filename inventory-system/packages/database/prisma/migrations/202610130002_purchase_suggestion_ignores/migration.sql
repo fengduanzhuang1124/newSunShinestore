@@ -1,0 +1,22 @@
+CREATE TABLE `purchase_suggestion_ignores` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `organization_id` BIGINT UNSIGNED NOT NULL,
+  `store_id` BIGINT UNSIGNED NOT NULL,
+  `product_id` BIGINT UNSIGNED NOT NULL,
+  `reason` VARCHAR(255) NULL,
+  `ignored_by` BIGINT UNSIGNED NOT NULL,
+  `ignored_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `restored_by` BIGINT UNSIGNED NULL,
+  `restored_at` DATETIME(3) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL,
+  UNIQUE INDEX `purchase_ignore_org_store_product_key` (`organization_id`, `store_id`, `product_id`),
+  INDEX `purchase_ignore_store_active_idx` (`store_id`, `restored_at`, `ignored_at`),
+  INDEX `purchase_ignore_product_active_idx` (`product_id`, `restored_at`),
+  CONSTRAINT `purchase_suggestion_ignores_organization_id_fkey` FOREIGN KEY (`organization_id`) REFERENCES `organizations` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `purchase_suggestion_ignores_store_id_fkey` FOREIGN KEY (`store_id`) REFERENCES `stores` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `purchase_suggestion_ignores_product_id_fkey` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `purchase_suggestion_ignores_ignored_by_fkey` FOREIGN KEY (`ignored_by`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `purchase_suggestion_ignores_restored_by_fkey` FOREIGN KEY (`restored_by`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE,
+  PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
