@@ -23,6 +23,7 @@ export type AssistantMessage = {
   question?: string; replyId?: string; needsHuman?: boolean; facts?: AssistantFacts; outcome?: AssistantOutcome; pending?: boolean;
 };
 type AssistantReply = { replyId: string; reply: string; needsHuman: boolean; facts: AssistantFacts };
+export type AssistantPick = { productId: string; name: string };
 export type AssistantRequest = <T>(path: string, init?: RequestInit) => Promise<T>;
 export type AssistantOptions = { request: AssistantRequest; storeId: () => string; administrator: () => boolean };
 export type AssistantMode = 'closed' | 'composer' | 'panel';
@@ -82,12 +83,13 @@ export function createSunshineAssistant(options: AssistantOptions) {
   function storePath(path: string) {
     return `/assistant/${path}?storeId=${encodeURIComponent(options.storeId())}`;
   }
-  async function ask(question: string) {
+  async function ask(question: string, pick: AssistantPick | null) {
     const id = nextId++;
     messages.value.push({ id, role: 'reply', text: '', question, pending: true });
     let next: AssistantMessage;
     try {
-      const result = await options.request<AssistantReply>(storePath('replies'), { method: 'POST', body: JSON.stringify({ question }) });
+      const body = JSON.stringify(pick ? { question, productId: pick.productId } : { question });
+      const result = await options.request<AssistantReply>(storePath('replies'), { method: 'POST', body });
       next = { id, role: 'reply', text: result.reply, question, replyId: result.replyId, needsHuman: result.needsHuman, facts: result.facts };
     } catch (reason) {
       next = { id, role: 'notice', text: reason instanceof Error ? reason.message : '查询失败，请稍后再试' };
@@ -96,15 +98,16 @@ export function createSunshineAssistant(options: AssistantOptions) {
     const index = messages.value.findIndex((message) => message.id === id);
     if (index >= 0) messages.value[index] = next;
   }
-  function send(from: DOMRect | null = null, question = draft.value) {
+  // A picked product answers the same question again about that product only.
+  function send(from: DOMRect | null = null, question = draft.value, pick: AssistantPick | null = null) {
     const text = question.trim();
     if (!text) return;
-    messages.value.push({ id: nextId++, role: 'user', text });
+    messages.value.push({ id: nextId++, role: 'user', text: pick ? `按「${pick.name}」回答：${text}` : text });
     if (question === draft.value) draft.value = '';
     launchRect.value = mode.value === 'composer' ? from : null;
     mode.value = 'panel';
     settingsOpen.value = false;
-    void ask(text);
+    void ask(text, pick);
   }
   async function feedback(message: AssistantMessage, outcome: AssistantOutcome, editedReply?: string) {
     if (!message.replyId) return;

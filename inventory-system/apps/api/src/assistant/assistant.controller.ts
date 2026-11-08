@@ -15,7 +15,7 @@ export class AssistantController {
   @Post('replies')
   async reply(@Req() request: AuthenticatedRequest, @Query('storeId') storeId: string | undefined, @Body() body: AskAssistantDto) {
     const user = request.inventoryUser!;
-    return { code: 200, message: '建议回复已生成', data: await this.assistant.reply(user.organizationId, user.id, this.id(storeId, '门店'), body.question.trim()) };
+    return { code: 200, message: '建议回复已生成', data: await this.assistant.reply(user.organizationId, user.id, this.id(storeId, '门店'), body.question.trim(), body.productId ? BigInt(body.productId) : null) };
   }
 
   @Post('replies/:id/feedback')

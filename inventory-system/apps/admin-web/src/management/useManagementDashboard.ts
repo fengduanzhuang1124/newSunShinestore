@@ -129,7 +129,7 @@ type InventoryOperationRow = {
   replenishmentHidden: boolean; replenishmentHiddenUntil: string | null; directShipExcluded: boolean; directShip?: boolean;
 };
 type PurchaseSource = 'MANUAL' | 'OUT_OF_STOCK' | 'LOW_STOCK' | 'HOT_SALES' | 'WEEKLY_FORECAST';
-export type PurchaseSuggestion = { productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; currentInventory: number; minimumStock: number | null; recent28DayQty: number; weeklyVelocity: number; coverageWeeks: number | null; targetWeeks: number | null; targetInventory: number; suggestedQuantity: number; source: PurchaseSource; priority: 'THIS_WEEK' | 'FOLLOW_UP'; alreadyIncluded: boolean; ignored: boolean; ignoredReason: string | null; ignoredAt: string | null; recentReceivedQty?: number; lastReceivedAt?: string | null; salesBasis?: '28_DAYS' | '90_DAYS'; displayStock?: boolean; brandGroup?: 'PARRS' | 'COCO_BROWNIE' | 'METODAY' | 'HAAB' | null; mergedProducts?: { productId: string; productName: string; barcode: string | null; currentInventory: number; recent28DayQty: number }[] };
+export type PurchaseSuggestion = { productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; currentInventory: number; minimumStock: number | null; recent28DayQty: number; weeklyVelocity: number; coverageWeeks: number | null; targetWeeks: number | null; targetInventory: number; suggestedQuantity: number; source: PurchaseSource; priority: 'THIS_WEEK' | 'FOLLOW_UP'; alreadyIncluded: boolean; ignored: boolean; ignoredReason: string | null; ignoredAt: string | null; hiddenUntil?: string | null; recentReceivedQty?: number; lastReceivedAt?: string | null; salesBasis?: '28_DAYS' | '90_DAYS'; displayStock?: boolean; brandGroup?: 'PARRS' | 'COCO_BROWNIE' | 'METODAY' | 'HAAB' | null; mergedProducts?: { productId: string; productName: string; barcode: string | null; currentInventory: number; recent28DayQty: number }[] };
 type PurchaseSuggestions = { generatedAt: string; inventoryLatestUpdatedAt: string | null; period: { from: string; to: string }; calculation: string; summary: { products: number; suggestedUnits: number; thisWeekProducts: number; followUpProducts: number; alreadyIncluded: number; ignored: number; arrived?: number }; suggestions: PurchaseSuggestion[]; ignoredSuggestions: PurchaseSuggestion[]; arrivedSuggestions?: PurchaseSuggestion[] };
 export type PurchaseOrderItem = { id: string; productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; source: PurchaseSource; currentInventory: number; recentSevenDayQty: number; suggestedQuantity: number; orderedQuantity: number; receivedQuantity: number; supplierName: string | null; unitCostCents: number | null; caseSize: number | null; notes: string | null; coverageWeeks: number; quantityEdited: boolean };
 export type PurchaseOrder = { id: string; orderNo: string; weekStart: string; weekEnd?: string; status: 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'; createdAt: string; updatedAt: string; confirmedAt: string | null; orderedAt: string | null; summary: { productCount: number; suggestedUnits: number; orderedUnits: number; receivedUnits: number; totalCostCents: number }; items: PurchaseOrderItem[] };
@@ -906,6 +906,26 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     finally { purchaseLoading.value = false; }
   }
 
+  // CR-018: skip a product for some purchase weeks (it comes back on the Monday-evening switch); 0 ignores it until restored.
+  async function skipPurchaseSuggestion(item: { productId: string; productName: string }, weeks: number) {
+    if (!props.storeId) return;
+    if (!weeks) { await ignorePurchaseSuggestion(item as PurchaseSuggestion); return; }
+    purchaseLoading.value = true; purchaseMessage.value = ''; error.value = '';
+    try {
+      await managementRequest(`/management/purchase-suggestions/ignore?storeId=${encodeURIComponent(props.storeId)}`, { method: 'POST', body: JSON.stringify({ productId: item.productId, weeks }) });
+      showPurchaseMessage(`${item.productName} ${weeks === 1 ? '本周' : `${weeks} 周内`}不进货`);
+      await loadProcurement();
+    } catch (reasonValue) { error.value = reasonValue instanceof Error ? reasonValue.message : '设置不进货失败'; }
+    finally { purchaseLoading.value = false; }
+  }
+
+  // A line skipped from this week's order leaves the order and stays out of the suggestions for the chosen weeks.
+  async function skipPurchaseItem(item: PurchaseOrderItem, weeks: number) {
+    if (!props.storeId) return;
+    await performRemovePurchaseItem(item);
+    if (!error.value) await skipPurchaseSuggestion(item, weeks);
+  }
+
   async function restorePurchaseSuggestion(item: PurchaseSuggestion) {
     if (!props.storeId) return;
     purchaseLoading.value = true; purchaseMessage.value = ''; error.value = '';
@@ -1168,7 +1188,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     previewPosInventory, openPosInventoryConfirmation, reapplyReviewLines, applyPosInventory, loadSalesAnalysis,
     loadProductsBrands, loadInventoryOperations, configureMinimumStock, saveMinimumStock, setInventoryVisibility,
     loadProcurement, addToPurchaseOrder, performAddToPurchaseOrder, showPurchaseMessage, isProductInCurrentOrder,
-    ignorePurchaseSuggestion, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem, setPurchaseItemCoverage, recalculatePurchaseOrder,
+    ignorePurchaseSuggestion, skipPurchaseSuggestion, skipPurchaseItem, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem, setPurchaseItemCoverage, recalculatePurchaseOrder,
     performRemovePurchaseItem, PURCHASE_STATUS_CONSEQUENCE, changePurchaseStatus, performPurchaseStatusChange,
     confirmPurchaseAction, escapeXml, downloadSpreadsheet, exportPurchaseOrderExcel, exportUnlistedStockExcel,
     openProcurement, purchaseSourceLabel, purchaseStatusLabel, loadStoreComparison, loadProductInsights,

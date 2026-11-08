@@ -115,7 +115,7 @@ describe('App', () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain('本次点货清单');
-    expect(wrapper.text()).toContain('先核对清单，确认后才写入库存');
+    expect(wrapper.text()).toContain('先核对清单，再点“确认整单入库”写入库存');
     expect(wrapper.text()).toContain('1 项 · 1 件');
     await wrapper.get('button.confirm-draft').trigger('click');
     await flushPromises();
@@ -143,7 +143,7 @@ describe('App', () => {
 
     const wrapper = mount(App);
     await wrapper.get('input[aria-label="商品关键词或条码"]').setValue('umf 5+');
-    await wrapper.get('.inventory-search-row .action-secondary').trigger('click');
+    await wrapper.get('.inventory-search-row').trigger('submit');
     await flushPromises();
 
     expect(wrapper.find('.product-search-dropdown').exists()).toBe(true);
@@ -604,6 +604,58 @@ describe('App', () => {
     expect(wrapper.text()).toContain('没有找到匹配的盘点商品');
   });
 
+  it('reads stock again from the stocktake tab and its search key when the list is still empty (CR-016)', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    localStorage.setItem('sunshine_inventory_mode', 'query');
+    const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    let reportReads = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/inventory/locations')) return json({ locations: [] });
+      reportReads += 1;
+      return json(reportReads < 2
+        ? { warehouseName: '主仓库', productCount: 0, totalQuantity: 0, products: [] }
+        : { warehouseName: '主仓库', productCount: 1, totalQuantity: 4, products: [{ productId: '1536', productName: 'sambucol接骨木15泡腾片', barcodes: ['9421037271651'], batches: [{ batchId: '2770', expiryDate: '2027-08-31', expiryPrecision: 'DAY', quantity: 4 }], totalQuantity: 4 }] });
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.findAll('.inventory-section-tabs button').find((button) => button.text() === '库存盘点')!.trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('当前仓库没有可盘点库存');
+
+    await wrapper.get('input[aria-label="筛选盘点商品"]').setValue('sambucol');
+    await wrapper.get('.stocktake-search-row').trigger('submit');
+    await flushPromises();
+
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/inventory/inventory-report'))).toHaveLength(2);
+    expect(wrapper.text()).toContain('sambucol接骨木15泡腾片');
+  });
+
+  it('leaves expiry dates sold down to zero out of inventory search results (CR-017)', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    localStorage.setItem('sunshine_inventory_mode', 'query');
+    const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/inventory/search')) return json({ products: [{ productId: '625', productName: 'gohealthy还原型辅酶 q10', barcodes: ['9421025562150'], totalQuantity: 138, batches: [
+        { batchId: '1', expiryDate: '2029-01', expiryPrecision: 'MONTH', quantity: 0 },
+        { batchId: '2', expiryDate: '2029-05', expiryPrecision: 'MONTH', quantity: 138 },
+        { batchId: '3', expiryDate: '2029-05-31', expiryPrecision: 'DAY', quantity: 0 },
+      ] }] });
+      return json({ warehouseName: '主仓库', productCount: 0, totalQuantity: 0, products: [], locations: [] });
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('input[aria-label="商品关键词或条码"]').setValue('9421025562150');
+    await wrapper.get('.inventory-search-row').trigger('submit');
+    await flushPromises();
+
+    expect(wrapper.findAll('.result-list .batch-row')).toHaveLength(1);
+    expect(wrapper.get('.result-list .batch-row').text()).toContain('138 件');
+  });
+
   it('lets an admin merge another record of the same product from the stocktake list (CR-008 F2)', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     const report = (products: unknown[]) => ({ warehouseName: '主仓库', productCount: products.length, totalQuantity: 36, products });
@@ -780,5 +832,39 @@ describe('App', () => {
     expect(wrapper.text()).toContain('+10');
     expect(wrapper.text()).toContain('撤销');
     expect(wrapper.get('input[aria-label="RCV-1 撤销原因"]')).toBeTruthy();
+  });
+
+  it('completes and exports one chosen receipt when two staff are counting at once (CR-016)', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    localStorage.setItem('sunshine_inventory_mode', 'reports');
+    const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const receipt = (receiptId: string, employeeName: string) => ({
+      receiptId, receiptNo: `RK-${receiptId}`, status: 'OPEN', employeeName, createdAt: '2026-11-03T00:00:00.000Z', completedAt: null, productCount: 1, totalQuantity: 8,
+      items: [{ itemId: `${receiptId}1`, batchId: '1', barcode: '193052100665', productName: 'Zuru La Squish玩具', expiryDate: '2034-11-30', quantity: 8, reversed: false, createdAt: '2026-11-03T00:00:00.000Z' }],
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/inventory/receipts/5/complete')) return json({ receiptId: '5', receiptNo: 'RK-5', status: 'COMPLETED', totalQuantity: 8 });
+      if (url.includes('/inventory/receipts')) return json({ warehouseName: '主仓库', summary: { receiptCount: 2, productCount: 1, totalQuantity: 16 }, receipts: [receipt('4', '员工甲'), receipt('5', '员工乙')] });
+      return json({ warehouseName: '主仓库', productCount: 0, totalQuantity: 0, products: [], thresholds: { urgentMonths: 2, warningMonths: 3, earlyWarningMonths: 6 }, summary: {}, items: [] });
+    });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    URL.createObjectURL = vi.fn(() => 'blob:receipt');
+    URL.revokeObjectURL = vi.fn();
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.findAll('.report-actions button').find((button) => button.text() === '刷新')!.trigger('click');
+    await flushPromises();
+
+    const cards = wrapper.findAll('.receipt-card');
+    expect(cards).toHaveLength(2);
+    await cards[1].findAll('.receipt-card-actions button').find((button) => button.text() === '完成这张入库单')!.trigger('click');
+    await flushPromises();
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes('/inventory/receipts/5/complete') && init?.method === 'POST')).toBe(true);
+    expect(wrapper.text()).toContain('入库单 RK-5 已完成，共 8 件。');
+
+    await wrapper.findAll('.receipt-card')[0].findAll('.receipt-card-actions button').find((button) => button.text() === '导出这张')!.trigger('click');
+    expect(click).toHaveBeenCalledTimes(1);
   });
 });

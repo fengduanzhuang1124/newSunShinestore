@@ -14,6 +14,7 @@ import { PosObservationService } from './application/pos-observation.service.js'
 import { PosInventorySimulationService } from './application/pos-inventory-simulation.service.js';
 import { PosInventoryApplicationService } from './application/pos-inventory-application.service.js';
 import { PosRealtimeSyncService } from './application/pos-realtime-sync.service.js';
+import { PosPriceLevelService } from './application/pos-price-level.service.js';
 import { PosQueryService } from './application/pos-query.service.js';
 import { PosMilkCatalogService } from './application/pos-milk-catalog.service.js';
 import { PosProductCatalogService } from './application/pos-product-catalog.service.js';
@@ -43,6 +44,7 @@ import { PosController } from './pos.controller.js';
     PosInventorySimulationService,
     PosInventoryApplicationService,
     PosRealtimeSyncService,
+    PosPriceLevelService,
     PosQueryService,
     PosMilkCatalogService,
     PosProductCatalogService,

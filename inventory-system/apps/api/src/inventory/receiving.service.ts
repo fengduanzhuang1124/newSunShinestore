@@ -439,10 +439,24 @@ export class ReceivingService {
         include: { items: true },
       });
       if (warehouseReceipts.length > 1) {
-        throw new ConflictException('仓库有多张待处理入库单，请先进入对应入库单后再完成');
+        throw new ConflictException('仓库有多张点货中的入库单，请在对应入库单上点“完成这张入库单”');
       }
       receipt = warehouseReceipts[0] ?? null;
     }
+    return this.complete(userId, receipt);
+  }
+
+  // CR-016 F3: completes one chosen receipt, so several staff counting at once can each close their own.
+  async completeReceipt(organizationId: bigint, userId: bigint, receiptId: bigint) {
+    const permission = await this.permissions.warehousePermission(organizationId, userId, 'canReceive');
+    const receipt = await this.prisma.client.stockReceipt.findFirst({
+      where: { id: receiptId, organizationId, warehouseId: permission.warehouseId, status: 'OPEN' },
+      include: { items: true },
+    });
+    return this.complete(userId, receipt);
+  }
+
+  private async complete(userId: bigint, receipt: { id: bigint; items: { quantity: number }[] } | null) {
     if (!receipt || receipt.items.length === 0) {
       throw new NotFoundException('当前没有可完成的入库单');
     }

@@ -1,10 +1,15 @@
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class AskAssistantDto {
   @IsString()
   @MinLength(1)
   @MaxLength(1000)
   question!: string;
+
+  // Set when staff pick one of the suggested products; the question is then answered about that product.
+  @IsOptional()
+  @Matches(/^\d{1,19}$/)
+  productId?: string;
 }
 
 export class AssistantFeedbackDto {

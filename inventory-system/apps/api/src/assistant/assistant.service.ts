@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import {
-  analyzeQuestion, BUILT_IN_ALIASES, chooseTarget, composeReply, expiryLabel, isMailMilkName, mailReply, matchingAnswers,
-  parseMailMilkName, rankCandidates, storeReply, type Analysis, type MailFacts, type ProductCandidate, type Ranked, type StoreFacts,
+  analyzeQuestion, ASK_STAGE, BUILT_IN_ALIASES, chooseTarget, chosenTarget, closeMatches, composeReply, expiryLabel, isMailMilkName, mailReply, matchingAnswers,
+  parseMailMilkName, rankCandidates, settleByStock, sizeQuestion, storeReply, type MailFacts, type ProductCandidate, type Ranked, type StoreFacts,
 } from './assistant-rules.js';
 import type {
   AssistantAliasDto, AssistantAnswerDto, AssistantFeedbackDto, UpdateAssistantAliasDto, UpdateAssistantAnswerDto, UpdateMailMilkDto,
@@ -17,10 +17,15 @@ type MailProfileRow = {
   transitText: string; shipFrom: string; promoText: string | null; promoDiscountCents: number | null;
   outOfStock: boolean; enabled: boolean;
 };
+type StorePrice = { sellingPriceCents: number | null; level4PriceCents: number | null };
 type CatalogRow = {
   id: bigint; name: string; englishName: string | null; chineseName: string | null;
-  barcodes: { barcode: string }[]; storeProducts: { sellingPriceCents: number | null }[]; mailMilkProfile: MailProfileRow | null;
+  barcodes: { barcode: string }[]; storeProducts: StorePrice[]; mailMilkProfile: MailProfileRow | null;
 };
+
+// The retail price is the POS Level 4 price (CR-014); the POS item price stands in until Level 4 is synced.
+const retailPrice = (price: StorePrice | undefined) => price?.level4PriceCents ?? price?.sellingPriceCents ?? null;
+const PRICE_SELECT = { sellingPriceCents: true, level4PriceCents: true } as const;
 
 // 阳光小助手 (REQ-015 stage 2): suggests a reply from this system's prices, stock and expiry dates and the mail-order
 // milk settings. Reading happens here; deciding what to say happens in assistant-rules.ts.
@@ -28,7 +33,7 @@ type CatalogRow = {
 export class AssistantService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async reply(organizationId: bigint, userId: bigint, storeId: bigint, question: string) {
+  async reply(organizationId: bigint, userId: bigint, storeId: bigint, question: string, productId: bigint | null = null) {
     await this.storeAccess(organizationId, userId, storeId);
     const [catalog, aliases, answers] = await Promise.all([
       this.catalog(organizationId, storeId),
@@ -36,7 +41,20 @@ export class AssistantService {
       this.prisma.client.assistantAnswer.findMany({ where: { organizationId, enabled: true }, select: { topic: true, keywords: true, reply: true, handoff: true } }),
     ]);
     const analysis = analyzeQuestion(question, [...BUILT_IN_ALIASES, ...aliases.map((alias): [string, string] => [alias.term, alias.keyword])]);
-    const target = chooseTarget(analysis, this.rankable(catalog, analysis));
+    const candidates = this.productCandidates(catalog);
+    const chosen = productId === null ? null : candidates.find((candidate) => candidate.id === productId.toString());
+    if (productId !== null && !chosen) throw new NotFoundException('商品不存在或已停用');
+    let target = chosen ? chosenTarget(chosen) : chooseTarget(analysis, rankCandidates(analysis, candidates));
+    const tieNotes: string[] = [];
+    if (target.ambiguous && target.kind === 'store') {
+      const close = closeMatches(target.list);
+      const pick = settleByStock(target.list, await this.stockByProduct(organizationId, storeId, close.map((row) => BigInt(row.candidate.id))));
+      if (pick) {
+        const others = close.filter((row) => row !== pick).map((row) => this.candidateName(row, catalog));
+        tieNotes.push(`相近的商品没有库存，已按有库存的这款回答；没有库存的：${others.join('、')}`);
+        target = chosenTarget(pick.candidate);
+      }
+    }
     const top = target.list[0]?.candidate;
     const settled = top && !target.askStage && !target.ambiguous;
 
@@ -44,7 +62,8 @@ export class AssistantService {
     const mailFacts = settled && target.kind === 'mail' ? this.mailFacts(catalog, top.mail!.displayName) : null;
     const productReply = storeFacts ? storeReply(analysis, storeFacts) : mailFacts?.length ? mailReply(analysis, mailFacts) : null;
     const fixed = matchingAnswers(analysis, answers);
-    const reply = composeReply(analysis, productReply, fixed, target.askStage);
+    const clarify = target.askStage ? ASK_STAGE : target.ambiguous ? sizeQuestion(target.list) : null;
+    const reply = composeReply(analysis, productReply, fixed, clarify);
     const facts = {
       kind: settled ? target.kind : 'none',
       intents: analysis.intents,
@@ -52,7 +71,7 @@ export class AssistantService {
       mail: mailFacts,
       candidates: settled ? [] : this.candidates(target.list, catalog),
       answers: fixed.map((answer) => answer.topic),
-      notes: reply.notes,
+      notes: [...tieNotes, ...this.priceNotes(catalog, storeFacts ? [storeFacts.productId] : mailFacts?.map((row) => row.productId) ?? []), ...reply.notes],
     };
     const log = await this.prisma.client.assistantReplyLog.create({
       data: { organizationId, storeId, userId, question, intents: analysis.intents.join(','), reply: reply.text, facts, needsHuman: reply.needsHuman },
@@ -76,7 +95,7 @@ export class AssistantService {
     const [profiles, products] = await Promise.all([
       this.prisma.client.mailMilkProfile.findMany({
         where: { organizationId },
-        include: { product: { select: { name: true, status: true, storeProducts: { where: { storeId }, select: { sellingPriceCents: true } } } } },
+        include: { product: { select: { name: true, status: true, storeProducts: { where: { storeId }, select: PRICE_SELECT } } } },
         orderBy: [{ displayName: 'asc' }, { line: 'asc' }],
       }),
       this.prisma.client.product.findMany({ where: { organizationId, status: 'ACTIVE', mailMilkProfile: null }, select: { name: true } }),
@@ -84,7 +103,7 @@ export class AssistantService {
     return {
       items: profiles.map((profile) => ({
         ...this.profileSummary(profile), productName: profile.product.name, productActive: profile.product.status === 'ACTIVE',
-        priceCents: profile.product.storeProducts[0]?.sellingPriceCents ?? null,
+        priceCents: retailPrice(profile.product.storeProducts[0]),
       })),
       undetected: products.filter((product) => isMailMilkName(product.name)).length,
     };
@@ -166,7 +185,7 @@ export class AssistantService {
       select: {
         id: true, name: true, englishName: true, chineseName: true,
         barcodes: { where: { status: 'ACTIVE' }, select: { barcode: true } },
-        storeProducts: { where: { storeId }, select: { sellingPriceCents: true } },
+        storeProducts: { where: { storeId }, select: PRICE_SELECT },
         mailMilkProfile: true,
       },
     });
@@ -174,7 +193,7 @@ export class AssistantService {
 
   // Mail-order milk is matched through its settings; until settings exist it is left out rather than answered as an
   // in-store product it is not.
-  private rankable(catalog: CatalogRow[], analysis: Analysis): Ranked[] {
+  private productCandidates(catalog: CatalogRow[]) {
     const candidates: ProductCandidate[] = [];
     for (const row of catalog) {
       const profile = row.mailMilkProfile;
@@ -186,12 +205,20 @@ export class AssistantService {
         mail: profile && { displayName: profile.displayName, line: profile.line, stage: profile.stage },
       });
     }
-    return rankCandidates(analysis, candidates);
+    return candidates;
+  }
+
+  private async stockByProduct(organizationId: bigint, storeId: bigint, productIds: bigint[]) {
+    const rows = await this.prisma.client.inventoryBalance.groupBy({
+      by: ['productId'], _sum: { quantity: true },
+      where: { organizationId, productId: { in: productIds }, quantity: { gt: 0 }, warehouse: { storeId, status: 'ACTIVE' } },
+    });
+    return new Map(rows.map((row) => [row.productId.toString(), row._sum.quantity ?? 0]));
   }
 
   private async storeFacts(organizationId: bigint, storeId: bigint, catalog: CatalogRow[], productId: bigint): Promise<StoreFacts> {
     const row = catalog.find((product) => product.id === productId)!;
-    const priceCents = row.storeProducts[0]?.sellingPriceCents ?? null;
+    const priceCents = retailPrice(row.storeProducts[0]);
     const since = new Date(Date.now() - DISCOUNT_WINDOW_DAYS * 86_400_000);
     const [balances, sold] = await Promise.all([
       this.prisma.client.inventoryBalance.findMany({
@@ -226,8 +253,14 @@ export class AssistantService {
       .filter((row) => row.mailMilkProfile?.enabled && row.mailMilkProfile.displayName === displayName)
       .map((row) => ({
         ...this.profileSummary(row.mailMilkProfile!),
-        priceCents: row.storeProducts[0]?.sellingPriceCents ?? null,
+        priceCents: retailPrice(row.storeProducts[0]),
       }));
+  }
+
+  private priceNotes(catalog: CatalogRow[], productIds: string[]) {
+    const fallback = catalog.some((row) => productIds.includes(row.id.toString())
+      && row.storeProducts[0]?.level4PriceCents == null && row.storeProducts[0]?.sellingPriceCents != null);
+    return fallback ? ['POS 的 Level 4 价格未设置，暂按 POS 商品售价回答，请核对'] : [];
   }
 
   private storeSummary(facts: StoreFacts) {
@@ -243,14 +276,18 @@ export class AssistantService {
     const seen = new Set<string>();
     const rows: { productId: string; name: string; kind: 'mail' | 'store'; score: number }[] = [];
     for (const row of ranked) {
-      const product = catalog.find((item) => item.id.toString() === row.candidate.id);
-      const name = row.candidate.mail?.displayName ?? (product?.chineseName?.trim() || product?.name || row.candidate.names);
+      const name = this.candidateName(row, catalog);
       if (seen.has(name)) continue;
       seen.add(name);
       rows.push({ productId: row.candidate.id, name, kind: row.candidate.mail ? 'mail' : 'store', score: row.score });
       if (rows.length === CANDIDATE_LIMIT) break;
     }
     return rows;
+  }
+
+  private candidateName(row: Ranked, catalog: CatalogRow[]) {
+    const product = catalog.find((item) => item.id.toString() === row.candidate.id);
+    return row.candidate.mail?.displayName ?? (product?.chineseName?.trim() || product?.name || row.candidate.names);
   }
 
   private profileSummary(profile: MailProfileRow) {

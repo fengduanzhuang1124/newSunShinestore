@@ -130,7 +130,7 @@ describe('ManagementService.purchaseSuggestions', () => {
         // 90-day sales: product 3 sold 45 before it ran out.
         groupBy: jest.fn().mockResolvedValue([{ productId: 3n, _sum: { quantity: '45' } }] as never),
       },
-      purchaseOrder: { findUnique: jest.fn().mockResolvedValue(null as never) },
+      purchaseOrder: { findFirst: jest.fn().mockResolvedValue(null as never) },
       purchaseSuggestionIgnore: {
         findMany: jest.fn().mockResolvedValue([
           { productId: 4n, reason: '当前库存足够', ignoredAt: fortyDaysAgo, restoredAt: null },
@@ -184,7 +184,7 @@ describe('ManagementService.purchaseSuggestions same-name records', () => {
         ] as never),
         groupBy: jest.fn().mockResolvedValue([] as never),
       },
-      purchaseOrder: { findUnique: jest.fn().mockResolvedValue(null as never) },
+      purchaseOrder: { findFirst: jest.fn().mockResolvedValue(null as never) },
       purchaseSuggestionIgnore: { findMany: jest.fn().mockResolvedValue([] as never) },
       stockMovement: { groupBy: jest.fn().mockResolvedValue([] as never) },
     };
@@ -222,7 +222,7 @@ describe('ManagementService.purchaseSuggestions CR-006 rules', () => {
         findMany: jest.fn().mockResolvedValue([{ productId: 30n, quantity: '1', isMinus: false }, { productId: 32n, quantity: '24', isMinus: false }] as never),
         groupBy: jest.fn().mockResolvedValue([{ productId: 30n, _sum: { quantity: '3' } }, { productId: 31n, _sum: { quantity: '2' } }, { productId: 32n, _sum: { quantity: '70' } }] as never),
       },
-      purchaseOrder: { findUnique: jest.fn().mockResolvedValue(null as never) },
+      purchaseOrder: { findFirst: jest.fn().mockResolvedValue(null as never) },
       purchaseSuggestionIgnore: { findMany: jest.fn().mockResolvedValue([] as never) },
       stockMovement: { groupBy: jest.fn().mockResolvedValue([] as never) },
     };
@@ -240,16 +240,15 @@ describe('ManagementService.purchaseSuggestions CR-006 rules', () => {
 });
 
 describe('ManagementService purchase cycle and coverage (CR-009)', () => {
-  const weekStartOf = (service: ManagementService, now: string) => (service as unknown as { purchaseWeekStart(timezone: string, now: Date): Date })
-    .purchaseWeekStart('Pacific/Auckland', new Date(now)).toISOString();
-
-  it('runs purchase cycles from Wednesday to Tuesday in the store time zone', () => {
-    const service = new ManagementService({ client: {} } as never, {} as never, {} as never, {} as never);
-    const wednesday = '2026-10-27T11:00:00.000Z'; // Wednesday 28 Oct 00:00 in Auckland
-    expect(weekStartOf(service, '2026-10-28T00:30:00+13:00')).toBe(wednesday);
-    expect(weekStartOf(service, '2026-10-31T15:00:00+13:00')).toBe(wednesday); // Saturday: order written
-    expect(weekStartOf(service, '2026-11-03T18:00:00+13:00')).toBe(wednesday); // Tuesday: goods arrive
-    expect(weekStartOf(service, '2026-11-04T00:10:00+13:00')).toBe('2026-11-03T11:00:00.000Z'); // next Wednesday
+  it('finds this week\'s order within the Tuesday-to-Monday cycle, so an order begun on the old Wednesday still counts (CR-018)', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-11-09T12:30:00+13:00'));
+    const findFirst = jest.fn().mockResolvedValue(null as never);
+    const service = new ManagementService({ client: { purchaseOrder: { findFirst } } } as never, {} as never, {} as never, {} as never);
+    await (service as unknown as { findCurrentPurchaseOrder(organizationId: bigint, storeId: bigint, timezone: string): Promise<unknown> }).findCurrentPurchaseOrder(2n, 1n, 'Pacific/Auckland');
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organizationId: 2n, storeId: 1n, weekStart: { gte: new Date('2026-11-03T00:00:00+13:00'), lt: new Date('2026-11-09T18:00:00+13:00') } },
+    }));
+    jest.useRealTimers();
   });
 
   function purchaseClient(items: { id: bigint; productId: bigint; orderedQuantity: number; quantityEdited: boolean; coverageWeeks: number; suggestedQuantity: number }[], status = 'DRAFT') {
@@ -266,7 +265,7 @@ describe('ManagementService purchase cycle and coverage (CR-009)', () => {
       inventoryBalance: { findMany: jest.fn().mockResolvedValue([{ quantity: 6 }] as never) },
       posOrderItem: { findMany: jest.fn().mockResolvedValue([{ quantity: '40', isMinus: false }] as never) },
       purchaseOrder: {
-        findUnique: jest.fn(async () => ({ ...order, items: items.map(withProduct) })),
+        findFirst: jest.fn(async () => ({ ...order, items: items.map(withProduct) })),
         findUniqueOrThrow: jest.fn(async () => ({ ...order, items: items.map(withProduct) })),
       },
       purchaseOrderItem,
