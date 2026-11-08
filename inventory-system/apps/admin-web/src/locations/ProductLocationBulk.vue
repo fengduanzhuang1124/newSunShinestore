@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // Place products by brand (CR-008 F5): pick a brand, a keyword or a current location, tick the products (all by
 // default), choose a location and save once. Moving a shelf's goods elsewhere is the same flow filtered by location.
+// Shown before any location exists, so a brand's shelf can be created from here (CR-017 F2).
 import { computed, onMounted, ref, watch } from 'vue';
 import type { ProductLocation } from './ProductLocationChip.vue';
 
@@ -11,8 +12,10 @@ const props = defineProps<{
   locations: ProductLocation[];
   request: (path: string, init?: RequestInit) => Promise<any>;
   focusLocationId?: string;
+  canCreate?: boolean;
+  createdLocationId?: string;
 }>();
-const emit = defineEmits<{ changed: [] }>();
+const emit = defineEmits<{ changed: []; create: [brand: string] }>();
 
 const brands = ref<BrandRow[]>([]);
 const brandFilter = ref('');
@@ -118,6 +121,8 @@ watch(() => props.focusLocationId, (locationId) => {
   locationFilter.value = locationId;
   void loadProducts();
 });
+// CR-017 F2: a location just created for the chosen brand is picked as the target right away.
+watch(() => props.createdLocationId, (locationId) => { if (locationId) target.value = locationId; });
 onMounted(loadBrands);
 </script>
 
@@ -172,6 +177,7 @@ onMounted(loadBrands);
               <option value="">选择要放到的仓位</option>
               <option v-for="location in locations" :key="location.locationId" :value="location.locationId">{{ location.code }} · {{ location.name }}</option>
             </select>
+            <button v-if="canCreate && brand" class="bulk-secondary" type="button" @click="emit('create', brand)">为该品牌新建仓位</button>
             <button class="bulk-primary" type="button" :disabled="saving || !selected.length" @click="askSave()">放到这个仓位（{{ selected.length }}）</button>
             <button class="bulk-secondary" type="button" :disabled="saving || !selected.length" @click="askSave(true)">清除仓位</button>
           </div>

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { jest } from '@jest/globals';
 import { MovementService } from './movement.service.js';
 import { InventoryQueryService } from './inventory-query.service.js';
@@ -262,6 +262,20 @@ describe('ReceivingService', () => {
       expect.objectContaining({ quantity: 12, entryCount: 2, reversed: false }),
       expect.objectContaining({ quantity: 4, entryCount: 1, reversed: true }),
     ]);
+  });
+
+  it('completes a chosen open receipt in the warehouse and refuses one that is closed or elsewhere (CR-016)', async () => {
+    const findFirst = jest.fn()
+      .mockResolvedValueOnce({ id: 30n, items: [{ quantity: 4 }, { quantity: 6 }] } as never)
+      .mockResolvedValueOnce(null as never);
+    const update = jest.fn().mockResolvedValue({ id: 30n, receiptNo: 'RK-TEST-030', status: 'COMPLETED' } as never);
+    const permissions = { warehousePermission: jest.fn().mockResolvedValue({ warehouseId: 1n } as never) };
+    const service = new ReceivingService({ client: { stockReceipt: { findFirst, update } } } as never, permissions as never);
+
+    await expect(service.completeReceipt(1n, 9n, 30n)).resolves.toEqual({ receiptId: '30', receiptNo: 'RK-TEST-030', status: 'COMPLETED', totalQuantity: 10 });
+    expect(findFirst).toHaveBeenCalledWith({ where: { id: 30n, organizationId: 1n, warehouseId: 1n, status: 'OPEN' }, include: { items: true } });
+    expect(update).toHaveBeenCalledWith({ where: { id: 30n }, data: { status: 'COMPLETED', completedById: 9n, completedAt: expect.any(Date) } });
+    await expect(service.completeReceipt(1n, 9n, 31n)).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 

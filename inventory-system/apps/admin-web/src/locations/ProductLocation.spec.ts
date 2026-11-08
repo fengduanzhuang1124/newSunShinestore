@@ -37,6 +37,25 @@ describe('ProductLocationBulk (CR-008)', () => {
   });
 });
 
+describe('ProductLocationBulk (CR-017)', () => {
+  it('works before any location exists and targets the shelf just created for the chosen brand', async () => {
+    const request = vi.fn(async (path: string) => {
+      if (path.startsWith('/inventory/locations/brands')) return [{ brand: 'Swisse', productCount: 1, placedCount: 0, stock: 25 }];
+      if (path.startsWith('/inventory/locations/products?')) return { total: 1, products: [{ productId: '1609', name: 'swisse 200粒护肝1', brand: 'Swisse', barcodes: [], stock: 25, location: null }] };
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(ProductLocationBulk, { props: { locations: [], request, canCreate: true } });
+    await flushPromises();
+    await wrapper.findAll('.bulk-brands button').find((button) => button.text().includes('Swisse'))!.trigger('click');
+    await flushPromises();
+
+    await wrapper.findAll('button').find((button) => button.text() === '为该品牌新建仓位')!.trigger('click');
+    expect(wrapper.emitted('create')).toEqual([['Swisse']]);
+    await wrapper.setProps({ locations: [{ locationId: '12', code: 'SW-01', name: 'Swisse 货架' }], createdLocationId: '12' });
+    expect((wrapper.get('select[aria-label="放到仓位"]').element as HTMLSelectElement).value).toBe('12');
+  });
+});
+
 describe('ProductLocationChip (CR-008)', () => {
   it('shows where a product is kept and lets staff change it', async () => {
     const request = vi.fn(async () => ({ updated: 1, location: locations[1] }));

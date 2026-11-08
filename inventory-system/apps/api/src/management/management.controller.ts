@@ -332,13 +332,19 @@ export class ManagementController {
   async ignorePurchaseSuggestion(
     @Req() request: AuthenticatedRequest,
     @Query('storeId') storeIdValue: string | undefined,
-    @Body() input: { productId?: string; reason?: string },
+    @Body() input: { productId?: string; reason?: string; weeks?: number },
   ) {
     const storeId = this.storeId(storeIdValue);
     if (!input.productId || !/^\d+$/.test(input.productId)) throw new BadRequestException('商品参数无效');
     if (input.reason && input.reason.trim().length > 255) throw new BadRequestException('忽略原因不能超过255个字符');
+    // CR-018: with weeks the product is skipped for that many purchase cycles; without, it is ignored until restored.
+    if (input.weeks !== undefined && !(Number.isInteger(input.weeks) && input.weeks >= 1 && input.weeks <= 8)) throw new BadRequestException('不进货周数应为 1 到 8 周');
     const user = request.inventoryUser!;
-    return { code: 200, message: '进货建议已忽略', data: await this.management.setPurchaseSuggestionIgnored(user.organizationId, user.id, storeId, BigInt(input.productId), true, input.reason) };
+    return {
+      code: 200,
+      message: input.weeks ? `${input.weeks} 周内不进货` : '进货建议已忽略',
+      data: await this.management.skipPurchaseSuggestion(user.organizationId, user.id, storeId, BigInt(input.productId), input.weeks, input.reason),
+    };
   }
 
   @Post('purchase-suggestions/restore')

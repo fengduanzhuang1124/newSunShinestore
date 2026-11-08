@@ -7,6 +7,7 @@ import { PosInventoryApplicationService } from '../pos/application/pos-inventory
 import { PosRealtimeSyncService } from '../pos/application/pos-realtime-sync.service.js';
 import { isCoreReplenishmentProduct } from './core-replenishment.js';
 import { DEFAULT_COVERAGE_WEEKS, MAX_COVERAGE_WEEKS, MIN_COVERAGE_WEEKS, purchaseCoverage } from './purchase-coverage.js';
+import { purchaseCycle, skipUntil } from './purchase-cycle.js';
 import { baselineWindows, categoryTrends, findPairs, findSurges, NO_SALE_DAYS, overstockReason, PERIOD_DAYS, WINDOW_COUNT, windowBoundaries, windowCovered, windowIndex, type MarketPeriod } from './market-insights.js';
 import { buildHighlights, categoryMovers, categoryShares, centsToAmount, changePercent, dataThroughDate, demandGroups, demandRows, heatmapSummary, periodTotals } from './store-analysis.js';
 import { AUDIENCE_OPTIONS, CATEGORY_OPTIONS, FUNCTION_OPTIONS, isCategoryOption, matchesCategory, productAudiences, productCategory, productFunctions, UNCLASSIFIED } from '../shared/product-taxonomy.js';
@@ -1204,6 +1205,7 @@ export class ManagementService {
         suggestedQuantity, displayStock, source, priority, alreadyIncluded: members.some((member) => included.has(member.id.toString())),
         ignored: Boolean(ignoredRow), ignoredReason: ignoredRow?.reason ?? null,
         ignoredAt: ignoredRow?.ignoredAt.toISOString() ?? null,
+        hiddenUntil: ignoredRow?.restoredAt?.toISOString() ?? null,
         recentReceivedQty: receivedRows.reduce((total, row) => total + (row!._sum.quantityDelta ?? 0), 0),
         lastReceivedAt: receivedRows.map((row) => row!._max.createdAt).filter(Boolean).sort((a, b) => b!.getTime() - a!.getTime())[0]?.toISOString() ?? null,
         mergedProducts: members.length > 1 ? ranked.map((member) => ({
@@ -1254,6 +1256,12 @@ export class ManagementService {
       return updated;
     });
     return { scope: 'STORE', updated: result.count, minimumStock: input.minimumStock };
+  }
+
+  async skipPurchaseSuggestion(organizationId: bigint, userId: bigint, storeId: bigint, productId: bigint, weeks?: number, reason?: string) {
+    if (!weeks) return this.setPurchaseSuggestionIgnored(organizationId, userId, storeId, productId, true, reason);
+    const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
+    return this.setPurchaseSuggestionIgnored(organizationId, userId, storeId, productId, true, reason?.trim() || `${weeks} 周内不进货`, skipUntil(organization.timezone, weeks));
   }
 
   async setPurchaseSuggestionIgnored(organizationId: bigint, userId: bigint, storeId: bigint, productId: bigint, ignored: boolean, reason?: string, hiddenUntil?: Date) {
@@ -1311,7 +1319,8 @@ export class ManagementService {
     const organization = await this.prisma.client.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
     const product = await this.prisma.client.product.findFirst({ where: { id: input.productId, organizationId, status: 'ACTIVE', storeProducts: { some: { storeId, enabled: true } } }, select: { id: true } });
     if (!product) throw new NotFoundException('商品不存在或未在当前门店启用');
-    const weekStart = this.purchaseWeekStart(organization.timezone);
+    // An order already open in this cycle keeps its own week start (orders made under the old Wednesday cycle).
+    const weekStart = (await this.findCurrentPurchaseOrder(organizationId, storeId, organization.timezone))?.weekStart ?? purchaseCycle(organization.timezone).start;
     const existingItem = await this.prisma.client.purchaseOrderItem.findFirst({
       where: { productId: input.productId, purchaseOrder: { organizationId, storeId, weekStart } }, select: { coverageWeeks: true },
     });
@@ -2083,20 +2092,14 @@ export class ManagementService {
     };
   }
 
+  // The order of the current purchase cycle (CR-018). Looked up by range, so an order started under the earlier
+  // Wednesday-to-Tuesday cycle still counts as this week's.
   private async findCurrentPurchaseOrder(organizationId: bigint, storeId: bigint, timezone: string) {
-    const weekStart = this.purchaseWeekStart(timezone);
-    return this.prisma.client.purchaseOrder.findUnique({
-      where: { organizationId_storeId_weekStart: { organizationId, storeId, weekStart } }, include: this.purchaseOrderInclude(),
+    const cycle = purchaseCycle(timezone);
+    return this.prisma.client.purchaseOrder.findFirst({
+      where: { organizationId, storeId, weekStart: { gte: cycle.start, lt: cycle.nextStart } },
+      orderBy: { weekStart: 'desc' }, include: this.purchaseOrderInclude(),
     });
-  }
-
-  // Purchase cycles run Wednesday to Tuesday (CR-009 P1): orders are written at the weekend and the goods arrive on
-  // Tuesday, so writing, ordering and receiving all fall in one cycle.
-  private purchaseWeekStart(timezone: string, now = new Date()) {
-    const today = calendarDateInZone(now, timezone);
-    const noon = new Date(`${today}T12:00:00Z`);
-    noon.setUTCDate(noon.getUTCDate() - ((noon.getUTCDay() + 4) % 7));
-    return calendarDateStart(noon.toISOString().slice(0, 10), timezone);
   }
 
   // Fresh stock, sales and suggestion for a purchase line. A quantity set by hand is kept; otherwise it follows the suggestion.

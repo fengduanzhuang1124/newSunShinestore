@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -242,6 +243,17 @@ export class InventoryController {
       code: 200,
       message: '入库单已完成',
       data: await this.receiving.completeCurrentReceipt(user.organizationId, user.id),
+    };
+  }
+
+  @Post('receipts/:id/complete')
+  async completeReceiptById(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
+    if (!/^\d{1,19}$/.test(id)) throw new BadRequestException('入库单参数无效');
+    const user = request.inventoryUser!;
+    return {
+      code: 200,
+      message: '入库单已完成',
+      data: await this.receiving.completeReceipt(user.organizationId, user.id, BigInt(id)),
     };
   }
 

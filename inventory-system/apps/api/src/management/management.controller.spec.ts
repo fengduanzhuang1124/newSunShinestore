@@ -114,13 +114,19 @@ describe('ManagementController POS sync', () => {
     await expect(controller.addPurchaseOrderItem(request as never, '3', { productId: '9', quantity: 0, source: 'LOW_STOCK' })).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('ignores and restores a purchase suggestion with an audit-ready reason', async () => {
-    const management = { setPurchaseSuggestionIgnored: jest.fn().mockResolvedValue({ productId: '9', ignored: true } as never) };
+  it('ignores, skips for some weeks and restores a purchase suggestion (CR-018)', async () => {
+    const management = {
+      skipPurchaseSuggestion: jest.fn().mockResolvedValue({ productId: '9', ignored: true } as never),
+      setPurchaseSuggestionIgnored: jest.fn().mockResolvedValue({ productId: '9', ignored: false } as never),
+    };
     const controller = new ManagementController(management as never);
     await expect(controller.ignorePurchaseSuggestion(request as never, '3', { productId: '9', reason: '现有库存足够' })).resolves.toEqual({
       code: 200, message: '进货建议已忽略', data: { productId: '9', ignored: true },
     });
-    expect(management.setPurchaseSuggestionIgnored).toHaveBeenCalledWith(2n, 1n, 3n, 9n, true, '现有库存足够');
+    expect(management.skipPurchaseSuggestion).toHaveBeenCalledWith(2n, 1n, 3n, 9n, undefined, '现有库存足够');
+    await expect(controller.ignorePurchaseSuggestion(request as never, '3', { productId: '9', weeks: 2 })).resolves.toMatchObject({ message: '2 周内不进货' });
+    expect(management.skipPurchaseSuggestion).toHaveBeenLastCalledWith(2n, 1n, 3n, 9n, 2, undefined);
+    await expect(controller.ignorePurchaseSuggestion(request as never, '3', { productId: '9', weeks: 9 })).rejects.toBeInstanceOf(BadRequestException);
     await controller.restorePurchaseSuggestion(request as never, '3', { productId: '9' });
     expect(management.setPurchaseSuggestionIgnored).toHaveBeenLastCalledWith(2n, 1n, 3n, 9n, false);
   });

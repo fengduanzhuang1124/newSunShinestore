@@ -46,10 +46,18 @@ const assistantReply = {
   facts: { kind: 'store', intents: ['stock'], store: { name: '护肝片', priceCents: 3500, totalQuantity: 6, batches: [{ expiryDate: '2028-05-31', label: '28年5月', quantity: 2 }, { expiryDate: '2029-03-31', label: '29年3月', quantity: 4 }], recentDiscountCents: null }, mail: null, candidates: [], answers: [], notes: [] },
 };
 
-function setup(options: { failPos?: boolean; limited?: boolean; multipleStores?: boolean } = {}) {
+const ambiguousReply = {
+  replyId: '8', reply: '亲～您问的是哪一款呀？可以发一下图片或者完整的名字吗～', needsHuman: false,
+  facts: { kind: 'none', intents: ['stock'], store: null, mail: null, candidates: [{ productId: '1608', name: 'swisse 120粒护肝', kind: 'store' }, { productId: '1609', name: 'swisse 200粒护肝1', kind: 'store' }], answers: [], notes: [] },
+};
+
+function setup(options: { failPos?: boolean; limited?: boolean; multipleStores?: boolean; ambiguous?: boolean } = {}) {
   const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const assistantPath = String(input).split('/assistant/')[1]?.split('?')[0];
-    if (assistantPath === 'replies') return new Response(JSON.stringify({ data: assistantReply }), { status: 200 });
+    if (assistantPath === 'replies') {
+      const picked = Boolean(JSON.parse(String(init?.body)).productId);
+      return new Response(JSON.stringify({ data: options.ambiguous && !picked ? ambiguousReply : assistantReply }), { status: 200 });
+    }
     if (assistantPath?.endsWith('/feedback')) return new Response(JSON.stringify({ data: { replyId: '9', outcome: JSON.parse(String(init?.body)).outcome } }), { status: 200 });
     const path = String(input).split('/management/')[1]?.split('?')[0];
     if (options.failPos && path?.startsWith('pos-sync/')) return new Response(JSON.stringify({ message: 'POS 状态读取失败' }), { status: 500 });
@@ -111,7 +119,7 @@ describe('经营管理页面组织', () => {
       await go(wrapper, '本周进货');
       await wrapper.findAll('.procurement-tabs button')[1].trigger('click');
 
-      expect(wrapper.get('.purchase-order-card .card-title p').text()).toContain('周期 2026-10-28 至 2026-11-03（周三至下周二）');
+      expect(wrapper.get('.purchase-order-card .card-title p').text()).toContain('周期 2026-10-28 至 2026-11-03（周二至下周一，每周一 18:00 切换到新一周）');
       expect(wrapper.findAll('.purchase-order-table th').map((cell) => cell.text())).toEqual(['商品', '数量与供应商', '进价与整箱', '备货周期', '备注与操作']);
       expect(wrapper.get('.purchase-order-table tbody tr:nth-child(3)').text()).toContain('已手动调整');
 
@@ -144,6 +152,33 @@ describe('经营管理页面组织', () => {
       fixtures['purchase-orders/current'] = { order: null };
       delete fixtures['purchase-orders/items/coverage'];
       delete fixtures['purchase-orders/recalculate'];
+    }
+  });
+
+  it('skips a suggested product for the chosen weeks and hides preview of a cancelled order (CR-018)', async () => {
+    fixtures['purchase-suggestions/ignore'] = { productId: '1', ignored: true };
+    fixtures['purchase-orders/current'] = { currency: 'NZD', order: {
+      id: '9', orderNo: 'PO-20261102-1', weekStart: '2026-11-04', weekEnd: '2026-11-10', status: 'CANCELLED', createdAt: '', updatedAt: '', confirmedAt: null, orderedAt: null,
+      summary: { productCount: 1, suggestedUnits: 15, orderedUnits: 15, receivedUnits: 0, totalCostCents: 0 },
+      items: [{ id: '5', productId: '1885', sku: 'S', barcode: null, productName: 'A2成人奶粉高钙全脂奶粉', brandName: 'a2', categoryName: '奶粉', source: 'WEEKLY_FORECAST', currentInventory: 1, recentSevenDayQty: 9, suggestedQuantity: 15, orderedQuantity: 15, receivedQuantity: 0, supplierName: null, unitCostCents: null, caseSize: null, notes: null, coverageWeeks: 2, quantityEdited: false }],
+    } };
+    try {
+      const { wrapper, fetchSpy } = setup(); await flushPromises();
+      await go(wrapper, '本周进货');
+      const row = wrapper.findAll('.buy-table tbody tr')[0];
+      await row.get('.buy-skip select').setValue('4');
+      await row.findAll('.buy-skip button').find((button) => button.text() === '不进货')!.trigger('click');
+      await flushPromises();
+      const call = fetchSpy.mock.calls.find(([url]) => String(url).includes('purchase-suggestions/ignore'));
+      expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ weeks: 4 });
+
+      await wrapper.findAll('.procurement-tabs button')[1].trigger('click');
+      expect(wrapper.text()).toContain('本周进货单已取消');
+      expect(wrapper.findAll('.purchase-order-actions button').map((button) => button.text())).not.toContain('预览');
+      expect(wrapper.findAll('.purchase-order-actions button').map((button) => button.text())).not.toContain('导出 Excel');
+    } finally {
+      fixtures['purchase-orders/current'] = { order: null };
+      delete fixtures['purchase-suggestions/ignore'];
     }
   });
 
@@ -327,6 +362,20 @@ describe('经营管理页面组织', () => {
     await wrapper.get('.sa-pill').trigger('click');
     expect(wrapper.find('.sa-float').exists()).toBe(false);
     expect(wrapper.get('.sa-ask').text()).toBe('护肝片还有货吗？');
+  });
+
+  it('answers the same question about a product staff pick from the candidates (REQ-015)', async () => {
+    const { wrapper, fetchSpy } = setup({ ambiguous: true }); await flushPromises();
+    await wrapper.get('.sa-pill').trigger('click');
+    const box = wrapper.get('.sa-float textarea');
+    await box.setValue('swisse护肝有货吗');
+    await box.trigger('keydown', { key: 'Enter' }); await flushPromises();
+    await wrapper.findAll('.sa-candidates button').find((button) => button.text().includes('200粒'))!.trigger('click'); await flushPromises();
+
+    const asks = fetchSpy.mock.calls.filter(([url]) => String(url).includes('/assistant/replies?')).map(([, init]) => JSON.parse(String(init?.body)));
+    expect(asks).toEqual([{ question: 'swisse护肝有货吗' }, { question: 'swisse护肝有货吗', productId: '1609' }]);
+    expect(wrapper.findAll('.sa-ask').map((item) => item.text())).toEqual(['swisse护肝有货吗', '按「swisse 200粒护肝1」回答：swisse护肝有货吗']);
+    expect(wrapper.findAll('.sa-answer').at(-1)!.text()).toBe('有货哦～日期是28年5月哈～');
   });
 
   it('drives the phone top bar, bottom navigation and more sheet', async () => {
