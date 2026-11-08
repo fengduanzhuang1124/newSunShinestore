@@ -26,8 +26,9 @@ function setup({ running = 0, baselineAt = baseline as Date | null } = {}) {
     }),
     reapplyNewlyMapped: jest.fn(async () => { calls.push('reapply'); return {}; }),
   };
-  const service = new PosRealtimeSyncService({ client } as never, observation as never, application as never);
-  return { service, client, observation, application, calls };
+  const priceLevels = { importRetailPrices: jest.fn(async () => { calls.push('prices'); return {}; }) };
+  const service = new PosRealtimeSyncService({ client } as never, observation as never, application as never, priceLevels as never);
+  return { service, client, observation, application, priceLevels, calls };
 }
 
 describe('PosRealtimeSyncService', () => {
@@ -44,13 +45,23 @@ describe('PosRealtimeSyncService', () => {
 
     await service.tick(now);
 
-    expect(calls).toEqual(['mappings', 'orders:2026-10-21', 'apply', 'reapply']);
+    expect(calls).toEqual(['mappings', 'prices', 'orders:2026-10-21', 'apply', 'reapply']);
     expect(application.applyRange).toHaveBeenCalledWith(9n, 2n, 1n, baseline, now);
     expect(service.status()).toMatchObject({
       lastError: null,
       lastSuccessAt: now.toISOString(),
       lastApplied: { storeId: '1', appliedOrders: 3, unitsApplied: 5, reviewLines: 1, shortfallUnits: 1 },
     });
+  });
+
+  it('still deducts sales when the Level 4 price book cannot be read', async () => {
+    const { service, priceLevels, calls } = setup();
+    priceLevels.importRetailPrices.mockRejectedValueOnce(new Error('price book down') as never);
+
+    await service.tick(new Date('2026-10-21T02:00:00.000Z'));
+
+    expect(calls).toEqual(['mappings', 'orders:2026-10-21', 'apply', 'reapply']);
+    expect(service.status().lastError).toBeNull();
   });
 
   it('refreshes the product catalogue at most hourly', async () => {
@@ -68,7 +79,7 @@ describe('PosRealtimeSyncService', () => {
 
     await service.tick(new Date('2026-10-21T11:20:00.000Z')); // 00:20 on 22 Oct in Auckland
 
-    expect(calls).toEqual(['mappings', 'orders:2026-10-21', 'orders:2026-10-22', 'apply', 'reapply']);
+    expect(calls).toEqual(['mappings', 'prices', 'orders:2026-10-21', 'orders:2026-10-22', 'apply', 'reapply']);
   });
 
   it('skips a store while a manual sync is running and does not deduct without a baseline', async () => {
@@ -78,7 +89,7 @@ describe('PosRealtimeSyncService', () => {
 
     const noBaseline = setup({ baselineAt: null });
     await noBaseline.service.tick(new Date('2026-10-21T02:00:00.000Z'));
-    expect(noBaseline.calls).toEqual(['mappings', 'orders:2026-10-21']);
+    expect(noBaseline.calls).toEqual(['mappings', 'prices', 'orders:2026-10-21']);
     expect(noBaseline.application.applyRange).not.toHaveBeenCalled();
   });
 

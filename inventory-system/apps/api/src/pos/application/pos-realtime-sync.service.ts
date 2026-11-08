@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { PrismaService } from '../../database/prisma.service.js';
 import { PosInventoryApplicationService } from './pos-inventory-application.service.js';
 import { PosObservationService } from './pos-observation.service.js';
+import { PosPriceLevelService } from './pos-price-level.service.js';
 import { calendarDateInZone, hourInZone } from '../../shared/calendar-date.js';
 
 const MAPPING_REFRESH_MS = 60 * 60 * 1000;
@@ -19,7 +20,7 @@ export interface PosRealtimeSyncStatus {
   lastApplied: { storeId: string; appliedOrders: number; unitsApplied: number; reviewLines: number; shortfallUnits: number } | null;
 }
 
-// Keeps stock in step with POS sales: on a timer it refreshes product mappings (hourly), reads today's orders
+// Keeps stock in step with POS sales: on a timer it refreshes product mappings and Level 4 prices (hourly), reads today's orders
 // from the read-only POS API and deducts every paid order after the store's inventory baseline.
 // Disabled unless POS_REALTIME_SYNC_MINUTES > 0; only one API instance should enable it.
 @Injectable()
@@ -38,6 +39,7 @@ export class PosRealtimeSyncService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly observation: PosObservationService,
     private readonly application: PosInventoryApplicationService,
+    private readonly priceLevels: PosPriceLevelService,
   ) {}
 
   async onModuleInit() {
@@ -101,6 +103,10 @@ export class PosRealtimeSyncService implements OnModuleInit, OnModuleDestroy {
     this.mappingRefreshing.add(key);
     try {
       await this.observation.importProductMappings(organizationId, storeId);
+      // Retail prices only feed replies and displays, so a price-book failure must not hold back stock deductions.
+      await this.priceLevels.importRetailPrices(storeId).catch((error: unknown) => {
+        this.logger.error(`POS Level 4 price refresh failed for store ${storeId}: ${error instanceof Error ? error.message : String(error)}`);
+      });
       this.mappingRefreshedAt.set(key, now.getTime());
       return true;
     } finally {

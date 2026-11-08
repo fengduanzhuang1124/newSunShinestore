@@ -15,6 +15,8 @@ export type Analysis = {
   handoff: boolean;
   barcode: string | null;
   keywords: string[];
+  numbers: string[];
+  sizes: string[];
 };
 
 export type ProductCandidate = {
@@ -90,6 +92,8 @@ const PACK_PATTERN = /\d+\s*tins?\b|\d+\s*bags?\b|\*\s*\d+|\bsf\b/i;
 const ANCHOR_BAG_PROMOTION = { promoText: '买一箱立减5纽币', promoDiscountCents: 500 };
 // Shipped from Australia according to the price list.
 const AUSTRALIAN_STOCK = /beilami|bellamy|abbott|maxigenes|\(au\)|（au）/i;
+const COUNT_SIZE = /(\d{2,4})\s*(?:粒|片|颗|caps?\b|capsules?|tabs?\b|tablets?|softgels?|ta\b|s\b)/gi;
+const SIZE_LABEL = /(\d{2,4})\s*(粒|片|颗|caps?\b|capsules?|tabs?\b|tablets?|softgels?|s\b)/i;
 const STAGE_IN_NAME = /(?<![\w.*])([1-4])(?:st|nd|rd|th)?(?![\w.]|\s*(?:tins?|bags?|kg|g|ml)\b)/i;
 const MAIL_SERIES: [RegExp, string][] = [
   [/karicare\s+goat/i, '可瑞康山羊奶粉'], [/karicare\s+sheep/i, '可瑞康绵羊奶粉'], [/karicare\s+gold/i, '可瑞康金装'],
@@ -121,6 +125,7 @@ export function detectLine(text: string): MailLine | null {
 export function analyzeQuestion(question: string, aliases: [string, string][]): Analysis {
   const text = normalizeText(question);
   const intents = INTENT_PATTERNS.filter(([, pattern]) => pattern.test(text)).map(([intent]) => intent);
+  const barcode = text.match(/\b\d{8,14}\b/)?.[0] ?? null;
   const keywords = aliases.filter(([term]) => term && text.includes(normalizeText(term))).flatMap(([, keyword]) => normalizeText(keyword).split(' '));
   return {
     text,
@@ -130,8 +135,10 @@ export function analyzeQuestion(question: string, aliases: [string, string][]): 
     packUnit: /袋/.test(text) ? '袋' : /罐/.test(text) ? '罐' : null,
     mailCue: MAIL_CUE.test(text),
     handoff: HANDOFF_CUE.test(text),
-    barcode: text.match(/\b\d{8,14}\b/)?.[0] ?? null,
+    barcode,
     keywords: [...new Set(keywords.filter(Boolean))],
+    numbers: [...new Set(text.match(/(?<![\d.])\d{2,6}(?![\d.])/g) ?? [])],
+    sizes: countSizes(text),
   };
 }
 
@@ -169,8 +176,14 @@ function chineseBigrams(text: string) {
   return [...grams];
 }
 
+// Pack sizes such as "200粒", "120tabs", "200s": asking for one size rules out products that only come in others.
+export function countSizes(text: string) {
+  return [...new Set([...text.matchAll(COUNT_SIZE)].map((match) => match[1]))];
+}
+
+// Letters and digits are split ("swiss200" is "swiss" and 200) so a brand typed against a size still matches.
 function latinWords(text: string) {
-  const words = text.replace(QUESTION_WORDS, ' ').match(/[a-z][a-z0-9+-]+|\b[a-z]\d\b/g) ?? [];
+  const words = text.replace(QUESTION_WORDS, ' ').match(/[a-z]{2,}\+?|\b[a-z]\d\b/g) ?? [];
   return [...new Set(words.filter((word) => word !== 'sf'))];
 }
 
@@ -184,9 +197,12 @@ export function scoreCandidate(analysis: Analysis, candidate: ProductCandidate) 
   const stage = candidateStage(candidate);
   if (analysis.stage && stage && stage !== analysis.stage) return 0;
   const haystack = normalizeText(`${candidate.names} ${candidate.mail?.displayName ?? ''}`);
+  const sizes = analysis.sizes.length ? countSizes(haystack) : [];
+  if (sizes.length && !analysis.sizes.some((size) => sizes.includes(size))) return 0;
   const words = [...new Set([...latinWords(analysis.text), ...analysis.keywords])];
   let score = 0;
   for (const word of words) if (haystack.includes(word)) score += 2;
+  for (const number of analysis.numbers) if (number !== analysis.barcode && new RegExp(`(?<!\\d)${number}(?!\\d)`).test(haystack)) score += 3;
   for (const gram of chineseBigrams(analysis.text)) if (haystack.includes(gram)) score += 1;
   if (score && analysis.stage && stage) score += 2;
   return score;
@@ -205,6 +221,23 @@ export function needsStage(analysis: Analysis, ranked: Ranked[]) {
   const stage = first ? candidateStage(first.candidate) : null;
   if (analysis.stage || !first || stage === null || first.score >= 100) return false;
   return ranked.some((row) => row.score >= first.score * AMBIGUOUS_RATIO && ![null, stage].includes(candidateStage(row.candidate)));
+}
+
+// Close matches staff may mean; used for candidates and for settling a tie by stock.
+export function closeMatches(ranked: Ranked[]) {
+  const [first] = ranked;
+  return first ? ranked.filter((row) => row.score >= first.score * AMBIGUOUS_RATIO) : [];
+}
+
+// Duplicate records of one product often tie; when only one of them has stock, that is the one to answer about.
+export function settleByStock(ranked: Ranked[], stockById: Map<string, number>) {
+  const inStock = closeMatches(ranked).filter((row) => (stockById.get(row.candidate.id) ?? 0) > 0);
+  return inStock.length === 1 ? inStock[0] : null;
+}
+
+// Staff picked a product from the candidates, so there is nothing left to guess.
+export function chosenTarget(candidate: ProductCandidate) {
+  return { kind: candidate.mail ? 'mail' as const : 'store' as const, list: [{ candidate, score: 100 }], askStage: false, ambiguous: false };
 }
 
 export function isAmbiguous(ranked: Ranked[]) {
@@ -295,7 +328,18 @@ export function matchingAnswers(analysis: Analysis, answers: FixedAnswer[]) {
 }
 
 // Puts the product reply, fixed answers and the hand-off together; a hand-off question never gets a product claim alone.
-export function composeReply(analysis: Analysis, product: Reply | null, answers: FixedAnswer[], askStage: boolean): Reply {
+export const ASK_STAGE = '亲要几段的呢～告诉我帮您查哈～';
+
+// Close matches that differ only in pack size ("120粒" / "200粒") are settled by asking for the size.
+export function sizeQuestion(ranked: Ranked[]) {
+  const labels = closeMatches(ranked).map((row) => row.candidate.names.match(SIZE_LABEL));
+  if (labels.length < 2 || labels.length > 4 || labels.some((label) => !label)) return null;
+  const sizes = [...new Set(labels.map((label) => `${label![1]}${/[粒片颗]/.test(label![2]) ? label![2] : '粒'}`))];
+  return sizes.length === labels.length ? `亲要${sizes.join('还是')}的呢～告诉我帮您查哈～` : null;
+}
+
+// clarify is a question back to the customer (stage or size) when the product is not settled yet.
+export function composeReply(analysis: Analysis, product: Reply | null, answers: FixedAnswer[], clarify: string | null): Reply {
   const notes = product ? [...product.notes] : [];
   const texts: string[] = [];
   let needsHuman = product?.needsHuman ?? false;
@@ -303,7 +347,7 @@ export function composeReply(analysis: Analysis, product: Reply | null, answers:
     texts.push(HANDOFF_REPLY);
     needsHuman = true;
     notes.push('涉及健康、用药或售后，请人工回复；下方商品信息仅供参考');
-  } else if (askStage) texts.push('亲要几段的呢～告诉我帮您查哈～');
+  } else if (clarify) texts.push(clarify);
   else if (product) texts.push(product.text);
   for (const answer of answers) {
     texts.push(answer.reply);

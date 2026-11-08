@@ -3,7 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AssistantComposer from './AssistantComposer.vue';
 import AssistantFacts from './AssistantFacts.vue';
 import AssistantSettings from './AssistantSettings.vue';
-import { DOCK_QUERY, INPUT_HEIGHT, PANEL_WIDTH, QUICK_QUESTIONS, useSunshineAssistant, type AssistantMessage, type AssistantOutcome } from './useSunshineAssistant';
+import { DOCK_QUERY, INPUT_HEIGHT, PANEL_WIDTH, QUICK_QUESTIONS, useSunshineAssistant, type AssistantMessage, type AssistantOutcome, type AssistantPick } from './useSunshineAssistant';
 
 // The full-height question column on the right. Wide screens give it its own grid column so the page narrows
 // beside it; narrower screens show it as a drawer over a backdrop.
@@ -103,8 +103,8 @@ async function handOff(message: AssistantMessage) {
   actionError.value = '';
   try { await assistant.feedback(message, 'HANDOFF'); } catch (reason) { actionError.value = reason instanceof Error ? reason.message : '操作失败'; }
 }
-function askAgain(message: AssistantMessage, prefix = '') {
-  if (message.question) assistant.send(null, `${prefix}${message.question}`);
+function askAgain(message: AssistantMessage, pick: AssistantPick | null = null) {
+  if (message.question) assistant.send(null, message.question, pick);
 }
 function onPanelKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && !event.defaultPrevented) close();

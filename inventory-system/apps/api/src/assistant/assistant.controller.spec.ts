@@ -11,7 +11,9 @@ describe('AssistantController (REQ-015)', () => {
     await expect(controller.reply(request as never, '3', { question: '  有货吗 ' })).resolves.toEqual({
       code: 200, message: '建议回复已生成', data: { replyId: '9', reply: '有货哦～' },
     });
-    expect(assistant.reply).toHaveBeenCalledWith(2n, 1n, 3n, '有货吗');
+    expect(assistant.reply).toHaveBeenCalledWith(2n, 1n, 3n, '有货吗', null);
+    await controller.reply(request as never, '3', { question: '有货吗', productId: '1609' });
+    expect(assistant.reply).toHaveBeenLastCalledWith(2n, 1n, 3n, '有货吗', 1609n);
   });
 
   it('rejects a missing store or a malformed id before reaching the service', async () => {

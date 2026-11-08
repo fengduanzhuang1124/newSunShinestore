@@ -1,6 +1,6 @@
 import {
-  analyzeQuestion, BUILT_IN_ALIASES, composeReply, expiryLabel, isAmbiguous, isMailMilkName, mailReply, matchingAnswers,
-  needsStage, parseMailMilkName, rankCandidates, storeReply, type MailFacts, type ProductCandidate, type StoreFacts,
+  analyzeQuestion, ASK_STAGE, BUILT_IN_ALIASES, composeReply, expiryLabel, isAmbiguous, isMailMilkName, mailReply, matchingAnswers,
+  needsStage, parseMailMilkName, rankCandidates, settleByStock, sizeQuestion, storeReply, type MailFacts, type ProductCandidate, type StoreFacts,
 } from './assistant-rules.js';
 
 const mail = (id: string, name: string): ProductCandidate => {
@@ -74,6 +74,33 @@ describe('question analysis and matching', () => {
   });
 });
 
+describe('sizes and duplicate records', () => {
+  const liver = [
+    store('1608', 'swisse 120粒护肝 swisse liver detox 120tabs'), store('1609', 'swisse 200粒护肝1 swisse liver detox 200s'),
+    store('1700', 'swisse 月见草200粒 swisse EPO 200s'), store('1701', 'swisse 200粒护肝 swisse liver 200ta'),
+  ];
+
+  it('splits a brand typed against its size and rules out other sizes', () => {
+    const ranked = rankCandidates(analyzeQuestion('swiss200粒护肝有货吗', []), liver);
+    expect(ranked.map((row) => row.candidate.id)).not.toContain('1608');
+    expect(ranked[0].candidate.id).toMatch(/^(1609|1701)$/);
+    expect(ranked[0].score).toBeGreaterThan(ranked.find((row) => row.candidate.id === '1700')!.score);
+  });
+
+  it('answers about the only in-stock record when duplicates tie', () => {
+    const ranked = rankCandidates(analyzeQuestion('swisse 200粒护肝有货吗', []), liver);
+    expect(isAmbiguous(ranked)).toBe(true);
+    expect(settleByStock(ranked, new Map([['1609', 25], ['1701', 0]]))?.candidate.id).toBe('1609');
+    expect(settleByStock(ranked, new Map([['1609', 25], ['1701', 3]]))).toBeNull();
+  });
+
+  it('asks for the size when close matches differ only in size', () => {
+    const ranked = rankCandidates(analyzeQuestion('swiss 护肝有货吗', []), liver.slice(0, 2));
+    expect(sizeQuestion(ranked)).toBe('亲要120粒还是200粒的呢～告诉我帮您查哈～');
+    expect(sizeQuestion(rankCandidates(analyzeQuestion('swisse 200粒护肝', []), liver))).toBeNull();
+  });
+});
+
 describe('replies', () => {
   const facts: StoreFacts = {
     productId: '5', name: '可瑞康山羊奶粉1段', priceCents: 4999, recentDiscountCents: null,
@@ -124,13 +151,13 @@ describe('replies', () => {
   it('adds fixed answers, hands health questions to a person and asks for the stage when unclear', () => {
     const analysis = analyzeQuestion('寄新疆运费多少，孕妇能喝吗', []);
     const answers = matchingAnswers(analysis, [{ topic: '偏远运费', keywords: '新疆，甘肃、青海', reply: '新疆3罐需另加10纽币运费哦～', handoff: false }]);
-    const reply = composeReply(analysis, null, answers, false);
+    const reply = composeReply(analysis, null, answers, null);
     expect(reply.text).toContain('转给专业的同事');
     expect(reply.text).toContain('新疆3罐需另加10纽币');
     expect(reply.needsHuman).toBe(true);
-    expect(composeReply(analyzeQuestion('可瑞康羊奶多少钱', []), null, [], true).text).toContain('几段');
-    expect(composeReply(analyzeQuestion('孕妇能喝可瑞康羊奶吗', []), null, [], true).text).not.toContain('几段');
-    expect(composeReply(analyzeQuestion('那个白色的', []), null, [], false).text).toContain('哪一款');
+    expect(composeReply(analyzeQuestion('可瑞康羊奶多少钱', []), null, [], ASK_STAGE).text).toContain('几段');
+    expect(composeReply(analyzeQuestion('孕妇能喝可瑞康羊奶吗', []), null, [], ASK_STAGE).text).not.toContain('几段');
+    expect(composeReply(analyzeQuestion('那个白色的', []), null, [], null).text).toContain('哪一款');
   });
 
   it('labels expiry by year and month', () => {

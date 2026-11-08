@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import type { AssistantFacts } from './useSunshineAssistant';
+import type { AssistantFacts, AssistantPick } from './useSunshineAssistant';
 
 // What the suggested reply is based on, for staff only: every expiry date with its quantity, prices and notes.
 // Customers are only ever told "有货" and the oldest date.
 defineProps<{ facts: AssistantFacts }>();
-defineEmits<{ pick: [name: string] }>();
+defineEmits<{ pick: [candidate: AssistantPick] }>();
 
 const LINE = { NORMAL: '普通线', EXPRESS: '顺丰线' } as const;
 const money = (cents: number | null) => (cents === null ? '未设置' : `${(cents / 100).toFixed(2).replace(/\.?0+$/, '')} 纽币`);
@@ -36,7 +36,7 @@ const money = (cents: number | null) => (cents === null ? '未设置' : `${(cent
     </table>
     <div v-if="facts.candidates.length" class="sa-candidates">
       <span>可能是：</span>
-      <button v-for="candidate in facts.candidates" :key="candidate.productId" type="button" @click="$emit('pick', candidate.name)">
+      <button v-for="candidate in facts.candidates" :key="candidate.productId" type="button" @click="$emit('pick', { productId: candidate.productId, name: candidate.name })">
         {{ candidate.name }}<small>{{ candidate.kind === 'mail' ? '邮寄' : '店内' }}</small>
       </button>
     </div>
