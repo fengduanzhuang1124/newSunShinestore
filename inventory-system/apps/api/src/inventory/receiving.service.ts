@@ -6,6 +6,7 @@ import { ScanReceiveDto } from './scan-receive.dto.js';
 import { parseExpiryInput } from './expiry-date.js';
 import { AmbiguousBarcodeError, resolveStoredBarcode } from './barcode-lookup.js';
 import { calendarDateInZone } from '../shared/calendar-date.js';
+import { restoreIfDiscontinued } from './product-status.service.js';
 
 @Injectable()
 export class ReceivingService {
@@ -197,6 +198,10 @@ export class ReceivingService {
         })
         : null;
       let createdProduct = false;
+      // CR-020 F6: a discontinued product that is received again goes back on sale.
+      const restoredProduct = productBarcode?.product.status === 'INACTIVE' && await restoreIfDiscontinued(transaction, {
+        organizationId, userId, storeId: permission.warehouse.storeId, warehouseId: permission.warehouseId,
+      }, productBarcode.productId);
 
       if (!productBarcode) {
         const requestedProductId = input.productId ? BigInt(input.productId) : null;
@@ -346,6 +351,7 @@ export class ReceivingService {
         barcode: productBarcode.barcode,
         generatedInternalBarcode: !requestedBarcode,
         createdProduct,
+        restoredProduct,
         productId: productBarcode.productId.toString(),
         productName: productBarcode.product.name,
         expiryDate: expiryDisplay,

@@ -104,16 +104,9 @@ async function save() {
   </Teleport>
 </template>
 
+<style scoped src="./sheet-base.css"></style>
 <style scoped>
-.mgmt-sheet-overlay { --s-bg: #fff; --s-ink: #24314d; --s-muted: #718096; --s-line: #e2e8f0; --s-field: #f7f9fc; --s-accent: #167f8e; --s-red: #d64545; --s-green: #1f9d6b;
-  position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgb(15 23 42 / 45%); }
-:root[data-theme="dark"] .mgmt-sheet-overlay { --s-bg: #111b2a; --s-ink: #e8eef8; --s-muted: #93a1b5; --s-line: #26364d; --s-field: #0c1624; --s-accent: #3cc4cc; --s-red: #ff8a8a; --s-green: #5fd3a0; }
-.mgmt-sheet { display: grid; gap: 14px; width: min(560px, 100%); max-height: calc(100dvh - 32px); overflow: auto; padding: 18px; color: var(--s-ink); border: 1px solid var(--s-line); border-radius: 14px; background: var(--s-bg); box-shadow: 0 20px 50px rgb(0 0 0 / 25%); }
-.mgmt-sheet header { display: flex; flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 0; padding: 0; border: 0; background: none; position: static; }
-.mgmt-sheet header > div { min-width: 0; }
-.mgmt-sheet h3 { margin: 0; color: var(--s-ink); font-size: 17px; }
-.mgmt-sheet header p, .mgmt-sheet-muted { margin: 4px 0 0; color: var(--s-muted); font-size: 13px; }
-.mgmt-sheet-close { flex: none; width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 0; color: var(--s-muted); border: 0; background: none; box-shadow: none; font-size: 22px; line-height: 1; cursor: pointer; }
+.mgmt-sheet { gap: 14px; }
 .recount-rows { display: grid; gap: 8px; }
 .recount-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.9fr) minmax(0, 0.8fr) auto; gap: 8px; align-items: center; }
 .recount-row :is(input, select) { min-width: 0; min-height: 40px; padding: 0 10px; color: var(--s-ink); border: 1px solid var(--s-line); border-radius: 9px; background: var(--s-field); font-size: 14px; }
@@ -123,17 +116,8 @@ async function save() {
 .mgmt-sheet-link { min-height: 32px; padding: 0 6px; color: var(--s-accent); border: 0; background: none; box-shadow: none; font-size: 13px; font-weight: 600; cursor: pointer; justify-self: start; }
 .recount-total { margin: 0; font-size: 14px; }
 .recount-total b.up { color: var(--s-green); } .recount-total b.down { color: var(--s-red); }
-.mgmt-sheet-error { margin: 0; padding: 8px 10px; color: var(--s-red); border: 1px solid var(--s-red); border-radius: 9px; font-size: 13px; }
-.mgmt-sheet footer { display: flex; justify-content: flex-end; gap: 8px; }
-.mgmt-sheet-primary, .mgmt-sheet-secondary { min-height: 40px; padding: 0 18px; border-radius: 9px; font-size: 14px; font-weight: 600; box-shadow: none; cursor: pointer; }
-.mgmt-sheet-primary { color: #fff; border: 0; background: var(--s-accent); }
-.mgmt-sheet-primary:disabled { opacity: 0.5; cursor: default; }
-.mgmt-sheet-secondary { color: var(--s-ink); border: 1px solid var(--s-line); background: transparent; }
 @media (max-width: 720px) {
-  .mgmt-sheet-overlay { align-items: flex-end; padding: 0; }
-  .mgmt-sheet { width: 100%; max-height: 90dvh; border-radius: 16px 16px 0 0; padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
   .recount-row { grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr); }
   .recount-qty { grid-column: 1; } .recount-row .mgmt-sheet-link { grid-column: 2; justify-self: end; }
-  .mgmt-sheet footer button { flex: 1; min-height: 44px; }
 }
 </style>

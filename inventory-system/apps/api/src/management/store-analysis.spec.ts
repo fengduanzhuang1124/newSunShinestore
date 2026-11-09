@@ -1,4 +1,4 @@
-import { buildHighlights, categoryMovers, categoryShares, dataThroughDate, demandGroups, demandRows, GENERAL, heatmapSummary, periodTotals, TOURIST } from './store-analysis.js';
+import { buildHighlights, buildSankey, categoryMovers, categoryShares, dataThroughDate, demandGroups, demandRows, GENERAL, heatmapSummary, NO_FUNCTION, periodTotals, TOURIST } from './store-analysis.js';
 import { productAudiences, productCategory, productFunctions } from '../shared/product-taxonomy.js';
 
 const groupsOf = (name: string) => {
@@ -19,7 +19,9 @@ describe('store analysis (CR-011)', () => {
     expect(groupsOf('Manuka Health 麦卢卡蜂蜜 UMF10+ 500g')).toEqual([TOURIST]);
     expect(groupsOf('Lanocreme 绵羊油 100g')).toEqual([TOURIST]);
     expect(groupsOf('Elevit 爱乐维女性综合叶酸100片')).toEqual(expect.arrayContaining(['孕产', '女性']));
-    expect(groupsOf('维骨力 Glucosamine 1500mg')).toEqual(['中老年']);
+    // CR-021 F1: a joint product is for whoever buys it unless the name says who it is for.
+    expect(groupsOf('维骨力 Glucosamine 1500mg')).toEqual([GENERAL]);
+    expect(groupsOf('Blackmores 中老年 关节灵 50+')).toEqual(['中老年']);
     expect(groupsOf('Aptamil 爱他美 3段 900g')).toEqual(['婴幼儿']);
     expect(groupsOf('Ostelin 儿童维生素D')).toEqual(['儿童']);
     expect(groupsOf('Swisse 维生素C 泡腾片')).toEqual([GENERAL]);
@@ -99,5 +101,43 @@ describe('store analysis (CR-011)', () => {
   it('uses paid amounts for window totals', () => {
     expect(periodTotals({ cents: 10050, orders: 3 }, 7.4, 5)).toEqual({ revenue: 100.5, orders: 3, units: 7, avgOrderValue: 33.5, products: 5 });
     expect(periodTotals({ cents: 0, orders: 0 }, 0, 0).avgOrderValue).toBe(0);
+  });
+});
+
+describe('people → function flow (CR-021)', () => {
+  const entries = [
+    // Fish oil for heart and brain, bought for the whole family: split across two functions.
+    { productId: '1', cents: 10_000, groups: [], functions: [{ group: '心脑血管', label: '鱼油与 Omega-3' }, { group: '脑与情绪', label: '健脑益智' }], fallback: '保健品' },
+    // A product named for women and the elderly: split across two groups.
+    { productId: '2', cents: 6_000, groups: ['女性', '中老年'], functions: [{ group: '骨骼关节', label: '补钙与维 D' }], fallback: '保健品' },
+    { productId: '3', cents: 3_000, groups: ['游客（伴手礼）'], functions: [], fallback: '食品' },
+    { productId: '4', cents: 0, groups: [], functions: [], fallback: '食品' },
+  ];
+
+  it('splits revenue evenly so every layer adds up to the total', () => {
+    const flow = buildSankey(entries);
+    expect(flow.total).toBe(190);
+    for (const layer of [0, 1, 2]) {
+      const sum = flow.nodes.filter((node) => node.layer === layer).reduce((total, node) => total + node.value, 0);
+      expect(sum).toBeCloseTo(190, 1);
+    }
+    const node = (id: string) => flow.nodes.find((row) => row.id === id);
+    expect(node('p:家庭通用')?.value).toBe(100);
+    expect(node('g:心脑血管')?.value).toBe(50);
+    expect(node('p:女性')?.value).toBe(30);
+    expect(node('f:骨骼关节/补钙与维 D')).toMatchObject({ value: 60, group: '骨骼关节', layer: 2 });
+    expect(node(`g:${NO_FUNCTION}`)?.value).toBe(30);
+    expect(node(`f:${NO_FUNCTION}/食品`)?.value).toBe(30);
+    expect(flow.links).toContainEqual({ source: 'p:中老年', target: 'g:骨骼关节', value: 30 });
+    expect(flow.links).toContainEqual({ source: 'g:心脑血管', target: 'f:心脑血管/鱼油与 Omega-3', value: 50 });
+    expect(flow.flows).toContainEqual({ people: '女性', group: '骨骼关节', label: '补钙与维 D', value: 30 });
+  });
+
+  it('orders nodes by layer and value and lists the products behind each node', () => {
+    const flow = buildSankey(entries);
+    expect(flow.nodes.map((node) => node.layer)).toEqual([...flow.nodes.map((node) => node.layer)].sort());
+    expect(flow.nodes.filter((node) => node.layer === 0)[0].name).toBe('家庭通用');
+    expect(flow.products['g:骨骼关节']).toEqual([{ productId: '2', revenue: 60 }]);
+    expect(flow.products['p:家庭通用']).toEqual([{ productId: '1', revenue: 100 }]);
   });
 });
