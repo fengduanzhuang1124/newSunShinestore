@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { jest } from '@jest/globals';
 import { WarehouseLocationService } from './warehouse-location.service.js';
 
@@ -88,5 +88,15 @@ describe('WarehouseLocationService product locations (CR-008)', () => {
 
     tx.warehouseLocation.findFirst.mockResolvedValueOnce(null as never);
     await expect(service.setProductLocations(1n, 7n, { productIds: ['11'], locationId: '99' })).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('WarehouseLocationService location codes (CR-019)', () => {
+  it('explains a duplicate code instead of failing with a generic error', async () => {
+    const create = jest.fn().mockRejectedValue(Object.assign(new Error('Unique constraint failed'), { code: 'P2002' }) as never);
+    const service = new WarehouseLocationService({ client: { warehouseLocation: { create } } } as never, { warehousePermission: jest.fn().mockResolvedValue(permission as never) } as never);
+    const saving = service.create(1n, 7n, { code: ' 地柜 ', name: 'Trilogy 货架' });
+    await expect(saving).rejects.toBeInstanceOf(ConflictException);
+    await expect(saving).rejects.toThrow('仓位编码 地柜 已被使用，请换一个编码');
   });
 });

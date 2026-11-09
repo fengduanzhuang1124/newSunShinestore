@@ -147,6 +147,12 @@ const canManageLocations = ref(false);
 const editingLocation = ref<WarehouseLocation | null>(null);
 const showLocationEditor = ref(false);
 const locationDraft = ref({ code: '', name: '', zone: '', aisle: '', shelf: '', level: '' });
+// CR-019: codes are unique per warehouse, so a clash is shown in the dialog before saving.
+const locationError = ref('');
+const locationCodeClash = computed(() => {
+  const code = locationDraft.value.code.trim().toUpperCase();
+  return code ? warehouseLocations.value.find((location) => location.code.toUpperCase() === code && location.locationId !== editingLocation.value?.locationId) ?? null : null;
+});
 // CR-017: a location created for a brand becomes the brand panel's target once saved.
 const creatingForBrand = ref(false);
 const createdLocationId = ref('');
@@ -455,7 +461,7 @@ function openLocationEditor(location?: WarehouseLocation) {
   creatingForBrand.value = false;
   editingLocation.value = location ?? null;
   locationDraft.value = location ? { code: location.code, name: location.name, zone: location.zone ?? '', aisle: location.aisle ?? '', shelf: location.shelf ?? '', level: location.level ?? '' } : { code: '', name: '', zone: '', aisle: '', shelf: '', level: '' };
-  locationSaveState.value = 'idle'; showLocationEditor.value = true;
+  locationSaveState.value = 'idle'; locationError.value = ''; showLocationEditor.value = true;
 }
 
 function openChildLocation(parent: WarehouseLocation) {
@@ -469,15 +475,28 @@ function openBrandLocation(brand: string) {
   creatingForBrand.value = true;
 }
 
+// CR-019: one location can hold several brands, so a clashing code offers to reuse that location or a free child code.
+function useExistingLocation(location: WarehouseLocation) {
+  createdLocationId.value = location.locationId; showLocationEditor.value = false;
+}
+
+function freeChildCode(code: string) {
+  const taken = new Set(warehouseLocations.value.map((location) => location.code.toUpperCase()));
+  let suffix = 2;
+  while (taken.has(`${code}-${suffix}`.toUpperCase())) suffix += 1;
+  return `${code}-${suffix}`;
+}
+
 async function saveWarehouseLocation() {
-  if (!locationDraft.value.code.trim() || !locationDraft.value.name.trim()) { error.value = '请填写仓位编码和名称'; return; }
-  locationSaveState.value = 'loading'; clearStatus();
+  if (!locationDraft.value.code.trim() || !locationDraft.value.name.trim()) { locationError.value = '请填写仓位编码和名称'; return; }
+  if (locationCodeClash.value) return;
+  locationSaveState.value = 'loading'; locationError.value = ''; clearStatus();
   try {
     const saved = await apiRequest(editingLocation.value ? `/inventory/locations/${editingLocation.value.locationId}` : '/inventory/locations', { method: editingLocation.value ? 'PATCH' : 'POST', body: JSON.stringify(locationDraft.value) });
     locationSaveState.value = 'success'; await loadWarehouseLocations();
     if (creatingForBrand.value && saved?.locationId) createdLocationId.value = saved.locationId;
     window.setTimeout(() => { locationSaveState.value = 'idle'; showLocationEditor.value = false; }, 1000);
-  } catch (reason) { locationSaveState.value = 'idle'; error.value = reason instanceof Error ? reason.message : '仓位保存失败'; }
+  } catch (reason) { locationSaveState.value = 'idle'; locationError.value = reason instanceof Error ? reason.message : '仓位保存失败'; }
 }
 
 function toggleTheme() {
@@ -2037,7 +2056,15 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <button class="account-close" type="button" aria-label="关闭仓位编辑" @click="showLocationEditor = false">×</button>
           <p class="account-eyebrow">WAREHOUSE LOCATION</p><h2>{{ editingLocation ? '修改仓位' : '新增仓位' }}</h2><p>编码用于员工快速识别，名称用于说明这个位置存放什么。</p>
           <div class="location-form-grid"><label>仓位编码<input v-model="locationDraft.code" required maxlength="40" placeholder="例如 A-01-02" /></label><label>仓位名称<input v-model="locationDraft.name" required maxlength="120" placeholder="例如 保健品 A 架二层" /></label><label>区域<input v-model="locationDraft.zone" maxlength="40" placeholder="A 区" /></label><label>通道<input v-model="locationDraft.aisle" maxlength="40" placeholder="01 通道" /></label><label>货架<input v-model="locationDraft.shelf" maxlength="40" placeholder="02 号架" /></label><label>层级<input v-model="locationDraft.level" maxlength="40" placeholder="第 3 层" /></label></div>
-          <button class="submit-morph" :class="locationSaveState" type="submit" :disabled="locationSaveState !== 'idle'"><span class="submit-label">{{ editingLocation ? '保存仓位修改' : '创建仓位' }}</span><i class="submit-spinner"></i><i class="submit-check">✓</i></button>
+          <div v-if="locationCodeClash" class="location-editor-error" role="alert">
+            <p>编码“{{ locationCodeClash.code }}”已经是“{{ locationCodeClash.name }}”。一个仓位可以放多个品牌，不需要重复新建。</p>
+            <div class="location-clash-actions">
+              <button v-if="creatingForBrand" type="button" @click="useExistingLocation(locationCodeClash)">放到“{{ locationCodeClash.code }}”，和现有品牌同一位置</button>
+              <button type="button" @click="locationDraft.code = freeChildCode(locationCodeClash.code)">单独建一格：改用 {{ freeChildCode(locationCodeClash.code) }}</button>
+            </div>
+          </div>
+          <p v-else-if="locationError" class="location-editor-error" role="alert">{{ locationError }}</p>
+          <button class="submit-morph" :class="locationSaveState" type="submit" :disabled="locationSaveState !== 'idle' || Boolean(locationCodeClash)"><span class="submit-label">{{ editingLocation ? '保存仓位修改' : '创建仓位' }}</span><i class="submit-spinner"></i><i class="submit-check">✓</i></button>
         </form>
       </div>
 

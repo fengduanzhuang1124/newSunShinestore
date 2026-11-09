@@ -1,9 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { InventoryPermissionService } from './inventory-permission.service.js';
 import { productBrand } from '../shared/product-brand.js';
 import { AssignWarehouseLocationDto, ProductLocationQueryDto, SaveWarehouseLocationDto, SetProductLocationsDto } from './warehouse-location.dto.js';
+
+// CR-019: location codes are unique per warehouse; tell staff which code clashed instead of a generic failure.
+function duplicateCode(error: unknown, code: string): never {
+  if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') throw new ConflictException(`仓位编码 ${code} 已被使用，请换一个编码`);
+  throw error;
+}
 
 @Injectable()
 export class WarehouseLocationService {
@@ -53,11 +59,12 @@ export class WarehouseLocationService {
 
   async create(organizationId: bigint, userId: bigint, input: SaveWarehouseLocationDto) {
     const permission = await this.permissions.warehousePermission(organizationId, userId, 'canView');
+    const code = input.code.trim().toUpperCase();
     const location = await this.prisma.client.warehouseLocation.create({ data: {
-      warehouseId: permission.warehouseId, code: input.code.trim().toUpperCase(), name: input.name.trim(),
+      warehouseId: permission.warehouseId, code, name: input.name.trim(),
       zone: input.zone?.trim() || null, aisle: input.aisle?.trim() || null, shelf: input.shelf?.trim() || null, level: input.level?.trim() || null,
       createdById: userId, updatedById: userId,
-    }});
+    }}).catch(error => duplicateCode(error, code));
     await this.audit(organizationId, userId, permission.warehouse.storeId, permission.warehouseId, 'CREATE_WAREHOUSE_LOCATION', location.id.toString(), null, input);
     return { locationId: location.id.toString() };
   }
@@ -67,10 +74,11 @@ export class WarehouseLocationService {
     const id = BigInt(locationId);
     const before = await this.prisma.client.warehouseLocation.findFirst({ where: { id, warehouseId: permission.warehouseId } });
     if (!before) throw new NotFoundException('没有找到这个仓位');
+    const code = input.code.trim().toUpperCase();
     await this.prisma.client.warehouseLocation.update({ where: { id }, data: {
-      code: input.code.trim().toUpperCase(), name: input.name.trim(), zone: input.zone?.trim() || null,
+      code, name: input.name.trim(), zone: input.zone?.trim() || null,
       aisle: input.aisle?.trim() || null, shelf: input.shelf?.trim() || null, level: input.level?.trim() || null, updatedById: userId,
-    }});
+    }}).catch(error => duplicateCode(error, code));
     await this.audit(organizationId, userId, permission.warehouse.storeId, permission.warehouseId, 'UPDATE_WAREHOUSE_LOCATION', locationId, before, input);
     return { locationId };
   }

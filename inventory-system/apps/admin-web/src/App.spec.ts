@@ -580,6 +580,37 @@ describe('App', () => {
     expect(wrapper.text()).toContain('没有负库存');
   });
 
+  it('offers a free child code when a location code is already used (CR-019)', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/inventory/locations/brands')) return json([]);
+      if (url.includes('/inventory/locations')) return json({ warehouseName: '主仓库', canManage: true, locations: [{ locationId: '10', code: '地柜', name: 'Manuka Doctor 货架', zone: null, aisle: null, shelf: null, level: null, homeProductCount: 3 }] });
+      return json({ warehouseName: '主仓库', productCount: 0, totalQuantity: 0, products: [] });
+    });
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.inventory-section-tabs button').find((button) => button.text() === '仓位管理')!.trigger('click');
+    await flushPromises();
+    await wrapper.findAll('button').find((button) => button.text().includes('新增仓位'))!.trigger('click');
+    const inputs = wrapper.findAll('form[aria-label="仓位编辑"] input');
+    await inputs[0].setValue('地柜');
+    await inputs[1].setValue('Trilogy 货架');
+
+    expect(wrapper.get('.location-editor-error').text()).toContain('已经是“Manuka Doctor 货架”');
+    expect(wrapper.get('form[aria-label="仓位编辑"] button[type="submit"]').attributes('disabled')).toBeDefined();
+    await wrapper.get('form[aria-label="仓位编辑"]').trigger('submit');
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+
+    await wrapper.findAll('.location-clash-actions button').find((button) => button.text().includes('地柜-2'))!.trigger('click');
+    expect((inputs[0].element as HTMLInputElement).value).toBe('地柜-2');
+    expect(wrapper.find('.location-editor-error').exists()).toBe(false);
+    expect(wrapper.get('form[aria-label="仓位编辑"] button[type="submit"]').attributes('disabled')).toBeUndefined();
+  });
+
   it('keeps stocktake with the inventory ledger', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
