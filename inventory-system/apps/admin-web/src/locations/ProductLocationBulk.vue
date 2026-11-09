@@ -129,7 +129,7 @@ onMounted(loadBrands);
 <template>
   <section class="bulk-place" aria-label="按品牌放置仓位">
     <header class="bulk-place-head">
-      <div><h3>按品牌放置</h3><p>选品牌或输入关键词，勾选商品，选仓位后一次保存。挪货架时按“当前仓位”筛出商品再换位置。</p></div>
+      <div><h3>按品牌放置</h3><p>① 选品牌或输入关键词 → ② 勾选商品 → ③ 选仓位，点“放到这个仓位”。挪货架时按“当前仓位”筛出商品再换位置。</p></div>
       <label class="bulk-place-toggle"><input v-model="inStock" type="checkbox" />只看有库存</label>
     </header>
     <div class="bulk-place-body">
@@ -195,9 +195,9 @@ onMounted(loadBrands);
 </template>
 
 <style scoped>
-.bulk-place { --b-ink: #24314d; --b-muted: #718096; --b-line: #e2e8f0; --b-field: #f7f9fc; --b-accent: #167f8e; --b-warn: #b26a00; --b-red: #d64545;
+.bulk-place { --b-ink: #24314d; --b-muted: #718096; --b-line: #e2e8f0; --b-field: #f7f9fc; --b-accent: #167f8e; --b-warn: #b26a00; --b-red: #d64545; --b-bar: #fff;
   display: grid; gap: 14px; margin-top: 18px; padding: 18px; color: var(--b-ink); border: 1px solid var(--b-line); border-radius: 16px; background: var(--surface, #fff); }
-:root[data-theme="dark"] .bulk-place { --b-ink: #e8eef8; --b-muted: #93a1b5; --b-line: #26364d; --b-field: #0c1624; --b-accent: #3cc4cc; --b-warn: #f3b25b; --b-red: #ff8a8a; background: #111b2a; }
+:root[data-theme="dark"] .bulk-place { --b-ink: #e8eef8; --b-muted: #93a1b5; --b-line: #26364d; --b-field: #0c1624; --b-accent: #3cc4cc; --b-warn: #f3b25b; --b-red: #ff8a8a; --b-bar: #111b2a; background: #111b2a; }
 .bulk-place-head { display: flex; flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 0; padding: 0; border: 0; background: none; position: static; }
 .bulk-place-head h3 { margin: 0; font-size: 17px; }
 .bulk-place-head p { margin: 4px 0 0; color: var(--b-muted); font-size: 13px; }
@@ -244,7 +244,7 @@ onMounted(loadBrands);
   .bulk-place-body { grid-template-columns: 1fr; }
   .bulk-brands { max-height: 220px; }
   .bulk-filters { grid-template-columns: 1fr; }
-  .bulk-actions { grid-template-columns: 1fr 1fr; }
+  .bulk-actions { position: sticky; z-index: 3; bottom: calc(68px + env(safe-area-inset-bottom)); grid-template-columns: 1fr 1fr; padding: 10px; border: 1px solid var(--b-line); border-radius: 12px; background: var(--b-bar); box-shadow: 0 -6px 18px rgb(15 35 63 / 12%); }
   .bulk-actions select { grid-column: 1 / -1; }
   .bulk-actions button { min-height: 44px; }
 }

@@ -39,7 +39,7 @@ describe('product categories (CR-010)', () => {
 
     const all = await run({});
     expect(all.products.find((row) => row.productId === '4')).toMatchObject({ categoryName: '绵羊油系列', categoryGroup: '护肤品', categoryManual: true });
-    expect(all.products.find((row) => row.productId === '1')).toMatchObject({ categoryName: '鱼油与 Omega-3', categoryManual: false, functions: expect.arrayContaining(['心脑血管']) });
+    expect(all.products.find((row) => row.productId === '1')).toMatchObject({ categoryName: '鱼油与 Omega-3', categoryManual: false, functions: expect.arrayContaining(['鱼油与 Omega-3']) });
     expect(all.categories.map((row) => row.name).sort()).toEqual(['绵羊油系列', '辅酶与抗氧化营养素', '鱼油与 Omega-3'].sort());
     expect(all.catalogQuality).toMatchObject({ withCategory: 4, manualCategory: 1 });
     // The category filter is applied after recognition, not as a database condition.

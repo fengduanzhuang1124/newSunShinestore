@@ -20,10 +20,8 @@ export const DEMAND_GROUPS = [TOURIST, '婴幼儿', '儿童', '青少年', '孕�
 const TOURIST_CATEGORIES = new Set(['蜂蜜', '绵羊油系列', '蜂胶与蜂产品保健', '香皂', '喉糖与蜂蜜糖果']);
 const GIFT_NAME = /礼盒|伴手礼|\bgift/i;
 const IMPLIED_BY_CATEGORY: Record<string, string> = { 婴幼儿与儿童奶粉: '婴幼儿', 母婴用品: '婴幼儿' };
-const IMPLIED_BY_FUNCTION: Record<string, string> = {
-  儿童成长: '儿童', 孕产: '孕产', 女性健康: '女性', 男性健康: '男性',
-  关节: '中老年', 心脑血管: '中老年', 护心: '中老年', 血糖平衡: '中老年', 血压: '中老年', 尿酸与痛风: '中老年',
-};
+// CR-021 F1: only the people-specific functions imply a group; 中老年 is no longer guessed from joint or heart products.
+const IMPLIED_BY_FUNCTION: Record<string, string> = { 儿童成长: '儿童', 孕产: '孕产', 女性健康: '女性', 男性健康: '男性' };
 
 // Who a product is bought for. A product can serve several groups; one that names none is for the whole family.
 export function demandGroups(names: (string | null | undefined)[], category: ProductCategory, functions: string[], audiences: string[]) {
@@ -105,6 +103,60 @@ export function demandRows(input: {
       topCategory: top?.[0] ?? null,
     };
   });
+}
+
+// CR-021 F3: people → function group → function, weighted by list-price revenue. A product serving several groups or
+// functions has its revenue split evenly, so every layer adds up to the products' revenue. A product with no recognised
+// function goes to "无明确功能" with its first-level category as the function.
+export const NO_FUNCTION = '无明确功能';
+export const SANKEY_PRODUCT_LIMIT = 10;
+export type SankeyEntry = { productId: string; cents: number; groups: string[]; functions: { group: string; label: string }[]; fallback: string };
+export type SankeyNode = { id: string; layer: 0 | 1 | 2; name: string; group: string | null; value: number };
+
+export function buildSankey(entries: SankeyEntry[]) {
+  const nodes = new Map<string, { layer: 0 | 1 | 2; name: string; group: string | null; cents: number; products: Map<string, number> }>();
+  const links = new Map<string, number>();
+  // people / group / function triples, so a phone can drill people → group → function exactly.
+  const flows = new Map<string, number>();
+  let total = 0;
+  const add = (id: string, layer: 0 | 1 | 2, name: string, group: string | null, productId: string, cents: number) => {
+    const node = nodes.get(id) ?? { layer, name, group, cents: 0, products: new Map<string, number>() };
+    node.cents += cents;
+    node.products.set(productId, (node.products.get(productId) ?? 0) + cents);
+    nodes.set(id, node);
+  };
+  const addTo = (map: Map<string, number>, parts: string[], cents: number) => {
+    const key = parts.join('\u0000');
+    map.set(key, (map.get(key) ?? 0) + cents);
+  };
+  for (const entry of entries) {
+    if (entry.cents <= 0) continue;
+    total += entry.cents;
+    const groups = entry.groups.length ? entry.groups : [GENERAL];
+    const functions = entry.functions.length ? entry.functions : [{ group: NO_FUNCTION, label: entry.fallback }];
+    const piece = entry.cents / (groups.length * functions.length);
+    for (const people of groups) {
+      for (const { group, label } of functions) {
+        const ids = [`p:${people}`, `g:${group}`, `f:${group}/${label}`];
+        add(ids[0], 0, people, null, entry.productId, piece);
+        add(ids[1], 1, group, null, entry.productId, piece);
+        add(ids[2], 2, label, group, entry.productId, piece);
+        addTo(links, [ids[0], ids[1]], piece);
+        addTo(links, [ids[1], ids[2]], piece);
+        addTo(flows, [people, group, label], piece);
+      }
+    }
+  }
+  const amount = (cents: number) => Math.round(cents) / 100;
+  const sorted = [...nodes].sort((a, b) => a[1].layer - b[1].layer || b[1].cents - a[1].cents);
+  return {
+    total: amount(total),
+    nodes: sorted.map(([id, node]): SankeyNode => ({ id, layer: node.layer, name: node.name, group: node.group, value: amount(node.cents) })),
+    links: [...links].map(([key, cents]) => { const [source, target] = key.split('\u0000'); return { source, target, value: amount(cents) }; }),
+    flows: [...flows].map(([key, cents]) => { const [people, group, label] = key.split('\u0000'); return { people, group, label, value: amount(cents) }; }),
+    products: Object.fromEntries(sorted.map(([id, node]) => [id, [...node.products].sort((a, b) => b[1] - a[1]).slice(0, SANKEY_PRODUCT_LIMIT)
+      .map(([productId, cents]) => ({ productId, revenue: amount(cents) }))])),
+  };
 }
 
 // Weekday × hour order counts trimmed to the hours the store had orders, plus the busiest cell.

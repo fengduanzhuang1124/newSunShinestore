@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import DonutChart, { type DonutRow } from './charts/DonutChart.vue';
 import HeatmapChart from './charts/HeatmapChart.vue';
 import Sparkline from './charts/Sparkline.vue';
+import SankeyChart from './charts/SankeyChart.vue';
 import { LEVEL1_SLOT, marketMoney as money, WEEKDAYS, type Highlight, type InsightTab, type MarketInsights, type ProductList } from './market-types';
 
 // CR-011: the detail area under the card wall. The selected card decides what is shown; content fades in piece by
@@ -68,29 +69,27 @@ const busiest = computed(() => {
     <Transition v-else-if="data" name="mk-stage" mode="out-in">
       <!-- 经营画像: how the period went, what was bought and for whom, and what to do about it. -->
       <div v-if="tab === 'overview'" key="overview" class="mk-stage">
-        <div class="mk-two">
-          <div class="mk-col">
-            <section class="mk-panel mk-structure mk-reveal" style="--d: 0">
-              <header class="mk-panel-head"><h4>买了什么</h4><button type="button" class="mk-link" @click="tab = 'mix'">看品类与时段 →</button></header>
-              <div class="mk-stack" role="img" :aria-label="donutRows.map((row) => `${row.label} ${row.share}%`).join('，')">
-                <i v-for="row in donutRows" :key="row.key" :style="{ flexGrow: row.share, background: row.color }" :title="`${row.label} ${row.share}%`"></i>
-              </div>
-              <ul class="mk-stack-legend"><li v-for="row in donutRows.slice(0, 6)" :key="row.key"><i :style="{ background: row.color }"></i>{{ row.label }} <b>{{ row.share }}%</b></li></ul>
-            </section>
-            <section id="mk-demand" class="mk-panel mk-demand mk-reveal" style="--d: 1">
-              <header class="mk-panel-head"><h4>为谁买</h4><span>共 {{ count.format(data.demand.orders) }} 单</span></header>
-              <ul>
-                <li v-for="(row, index) in demandRows" :key="row.group" :class="{ general: row.group === '家庭通用' }" :style="{ '--i': index }">
-                  <span class="name">{{ row.group }}</span>
-                  <span class="bar"><i :style="{ width: `${Math.min(100, row.share)}%` }"></i></span>
-                  <b>{{ row.share }}%</b>
-                  <em v-if="points(row.share, row.previousShare) !== null" :class="points(row.share, row.previousShare)! >= 3 ? 'up' : points(row.share, row.previousShare)! <= -3 ? 'down' : ''">{{ signed(points(row.share, row.previousShare)!, '') }}</em>
-                  <small>{{ count.format(row.orders) }} 单 · {{ money(row.revenue) }}<template v-if="row.topCategory"> · 买得最多：{{ row.topCategory }}</template></small>
-                </li>
-              </ul>
-              <p class="mk-rule">人群按所购商品判定，代表购买需求，不是顾客本人的年龄或性别；一单可计入多个人群，比例合计可超过 100%。右侧数字为比上期增减的百分点。</p>
-            </section>
+        <section class="mk-panel mk-structure mk-reveal" style="--d: 0">
+          <header class="mk-panel-head"><h4>买了什么</h4><button type="button" class="mk-link" @click="tab = 'mix'">看品类与时段 →</button></header>
+          <div class="mk-stack" role="img" :aria-label="donutRows.map((row) => `${row.label} ${row.share}%`).join('，')">
+            <i v-for="row in donutRows" :key="row.key" :style="{ flexGrow: row.share, background: row.color }" :title="`${row.label} ${row.share}%`"></i>
           </div>
+          <ul class="mk-stack-legend"><li v-for="row in donutRows.slice(0, 6)" :key="row.key"><i :style="{ background: row.color }"></i>{{ row.label }} <b>{{ row.share }}%</b></li></ul>
+        </section>
+        <div class="mk-two">
+          <section id="mk-demand" class="mk-panel mk-demand mk-reveal" style="--d: 1">
+            <header class="mk-panel-head"><h4>为谁买</h4><span>共 {{ count.format(data.demand.orders) }} 单</span></header>
+            <ul>
+              <li v-for="(row, index) in demandRows" :key="row.group" :class="{ general: row.group === '家庭通用' }" :style="{ '--i': index }">
+                <span class="name">{{ row.group }}</span>
+                <span class="bar"><i :style="{ width: `${Math.min(100, row.share)}%` }"></i></span>
+                <b>{{ row.share }}%</b>
+                <em v-if="points(row.share, row.previousShare) !== null" :class="points(row.share, row.previousShare)! >= 3 ? 'up' : points(row.share, row.previousShare)! <= -3 ? 'down' : ''">{{ signed(points(row.share, row.previousShare)!, '') }}</em>
+                <small>{{ count.format(row.orders) }} 单 · {{ money(row.revenue) }}<template v-if="row.topCategory"> · 买得最多：{{ row.topCategory }}</template></small>
+              </li>
+            </ul>
+            <p class="mk-rule">人群按所购商品判定，代表购买需求，不是顾客本人的年龄或性别；一单可计入多个人群，比例合计可超过 100%。右侧数字为比上期增减的百分点。</p>
+          </section>
           <section class="mk-panel mk-highlights mk-reveal" style="--d: 1">
             <header class="mk-panel-head"><h4>经营重点</h4><span>按规则生成，不建议价格</span></header>
             <ul v-if="data.highlights.length">
@@ -104,6 +103,11 @@ const busiest = computed(() => {
             <p v-else class="mk-empty small">本期各项平稳，没有需要特别注意的。</p>
           </section>
         </div>
+        <section v-if="data.sankey && data.sankey.total > 0" id="mk-flow" class="mk-panel mk-flow mk-reveal" style="--d: 1">
+          <header class="mk-panel-head"><h4>人群与功能需求</h4><span>商品销售额 {{ money(data.sankey.total) }}</span></header>
+          <SankeyChart :data="data.sankey" :adding="adding" @add-to-order="emit('add-to-order', $event)" />
+          <p class="mk-rule">{{ data.rules.sankey }}。线越粗代表销售额越多；点击节点查看对应商品。电脑上只显示前 7 个功能大类和前 10 个功能细分，其余合并为“其他”。</p>
+        </section>
       </div>
 
       <!-- 商品榜: best sellers, risers, fallers, and what needs dealing with now. -->
@@ -165,7 +169,7 @@ const busiest = computed(() => {
 
       <!-- 品类与时段: what sells and when. -->
       <div v-else-if="tab === 'mix'" key="mix" class="mk-stage">
-        <div class="mk-two even">
+        <div class="mk-two">
           <div class="mk-col">
             <section class="mk-panel mk-reveal" style="--d: 0">
               <header class="mk-panel-head"><h4>销售额占比</h4><span>一级品类</span></header>
@@ -225,11 +229,10 @@ const busiest = computed(() => {
 <style scoped>
 .mk-insights { display: grid; gap: 14px; min-width: 0; }
 
-.mk-two { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+.mk-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
 /* Columns end level: a side-by-side pair stretches to the same height and the last panel of a column fills it. */
 .mk-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .mk-col > :last-child { flex: 1; }
-.mk-two.even, .mk-two:has(> .mk-col) { align-items: stretch; }
 .mk-link { padding: 0; color: var(--mk-accent); border: 0; background: none; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
 .mk-stack { display: flex; gap: 2px; height: 14px; overflow: hidden; border-radius: 4px; }
 .mk-stack i { min-width: 2px; }
@@ -237,7 +240,6 @@ const busiest = computed(() => {
 .mk-stack-legend li { display: inline-flex; align-items: center; gap: 6px; }
 .mk-stack-legend i { width: 10px; height: 10px; border-radius: 3px; }
 .mk-stack-legend b { color: var(--mk-ink); font-variant-numeric: tabular-nums; }
-.mk-two.even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .mk-heat-panel :deep(.cell) { aspect-ratio: auto; height: 30px; }
 .mk-panel { display: grid; align-content: start; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--mk-line); border-radius: 18px; background: var(--mk-panel); }
 .mk-panel-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
@@ -343,13 +345,16 @@ const busiest = computed(() => {
 .mk-stage-leave-to { opacity: 0; }
 .mk-reveal { animation: mk-rise .8s cubic-bezier(.22, 1, .36, 1) both; animation-delay: calc(var(--d, 0) * 220ms); }
 .mk-highlights li, .mk-list .mk-row { animation: mk-rise .6s ease both; animation-delay: calc(500ms + var(--i, 0) * 90ms); }
-.mk-demand .bar i, .mk-movers li i { transform-origin: left; animation: mk-grow 1.4s cubic-bezier(.22, 1, .36, 1) both; animation-delay: calc(700ms + var(--i, 0) * 110ms); }
+.mk-movers li i { transform-origin: left; animation: mk-grow 1.4s cubic-bezier(.22, 1, .36, 1) both; animation-delay: calc(700ms + var(--i, 0) * 110ms); }
+/* 为谁买: rows fade in one after another over about two seconds, then each bar grows slowly from the left. */
+.mk-demand li { animation: mk-rise .6s ease both; animation-delay: calc(var(--i, 0) * 200ms); }
+.mk-demand .bar i { transform-origin: left; animation: mk-grow 2s cubic-bezier(.22, 1, .36, 1) both; animation-delay: calc(200ms + var(--i, 0) * 200ms); }
 .mk-seg small { margin-left: 5px; font-size: 11px; font-weight: 600; opacity: .75; }
 @keyframes mk-rise { from { opacity: 0; transform: translateY(14px); } }
 @keyframes mk-grow { from { transform: scaleX(0); } }
 
 @media (max-width: 1100px) {
-    .mk-two, .mk-two.even { grid-template-columns: minmax(0, 1fr); }
+    .mk-two { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 720px) {
   .mk-skeleton { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -367,7 +372,7 @@ const busiest = computed(() => {
   .mk-seg { justify-self: stretch; } .mk-seg button { flex: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .mk-skeleton i, .mk-reveal, .mk-highlights li, .mk-list .mk-row, .mk-demand .bar i, .mk-movers li i { animation: none; }
+  .mk-skeleton i, .mk-reveal, .mk-highlights li, .mk-list .mk-row, .mk-demand li, .mk-demand .bar i, .mk-movers li i { animation: none; }
   .mk-stage-enter-active, .mk-stage-leave-active { transition: none; }
 }
 </style>

@@ -7,6 +7,7 @@ import LoginPage from './login/LoginPage.vue';
 import StockCountTasks from './stockcount/StockCountTasks.vue';
 import ProductMergeSheet from './management/components/ProductMergeSheet.vue';
 import ProductLocationBulk from './locations/ProductLocationBulk.vue';
+import ProductStatusSheet, { type ProductStatusMode } from './products/ProductStatusSheet.vue';
 import ProductLocationChip from './locations/ProductLocationChip.vue';
 import type { ProductLocation } from './locations/ProductLocationChip.vue';
 import { storeToday } from './store-date';
@@ -155,15 +156,18 @@ const locationCodeClash = computed(() => {
 });
 // CR-017: a location created for a brand becomes the brand panel's target once saved.
 const creatingForBrand = ref(false);
+// CR-020 F4: placing products is the everyday task, so it opens first; the location list is the second tab.
+const locationTab = ref<'place' | 'list'>('place');
 const createdLocationId = ref('');
 // Sub-locations carry their parent's code as a prefix (SW-01 → SW-01-2), so sorting by code keeps them together.
-const sortedLocations = computed(() => [...warehouseLocations.value].sort((a, b) => a.code.localeCompare(b.code, 'zh-CN', { numeric: true })));
-function parentLocation(location: WarehouseLocation) {
-  return warehouseLocations.value.filter((other) => location.code.startsWith(`${other.code}-`)).sort((a, b) => b.code.length - a.code.length)[0] ?? null;
-}
-function locationDepth(location: WarehouseLocation) {
-  return warehouseLocations.value.filter((other) => location.code.startsWith(`${other.code}-`)).length;
-}
+// A location's ancestors are the locations whose code prefixes its own ("A-01" → "A-01-2"); the longest is the parent.
+const locationRows = computed(() => [...warehouseLocations.value]
+  .sort((a, b) => a.code.localeCompare(b.code, 'zh-CN', { numeric: true }))
+  .map((location) => {
+    const ancestors = warehouseLocations.value.filter((other) => location.code.startsWith(`${other.code}-`));
+    const parent = ancestors.reduce<WarehouseLocation | null>((longest, other) => (!longest || other.code.length > longest.code.length ? other : longest), null);
+    return { ...location, depth: ancestors.length, parentCode: parent?.code ?? null };
+  }));
 const locationSaveState = ref<'idle' | 'loading' | 'success'>('idle');
 const focusLocationId = ref('');
 const commandOpen = ref(false);
@@ -195,8 +199,12 @@ const movements = ref<Movement[]>([]);
 const stocktakeActual = ref<Record<string, number>>({});
 const stocktakeReasons = ref<Record<string, string>>({});
 const stocktakeQuery = ref('');
+// CR-020 F2: '' = every location, 'NONE' = not placed yet, otherwise a location id.
+const stocktakeLocation = ref('');
 // CR-008 F2: the same product often exists under several names; admins merge them from the count list.
 const mergeProduct = ref<ProductResult | null>(null);
+// CR-020 F5–F7: the admin rename / discontinue sheet, or the list of discontinued products.
+const statusSheet = ref<{ mode: ProductStatusMode; product: ProductResult | null } | null>(null);
 const increaseProduct = ref<ProductResult | null>(null);
 const stockChangeMode = ref<'increase' | 'decrease'>('increase');
 const increaseBatchChoice = ref('new');
@@ -232,16 +240,21 @@ function stocktakeActualTotal(product: ProductResult) {
   const values = product.batches.map((batch) => stocktakeActual.value[batch.batchId]).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
   return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
 }
+// Counting goes shelf by shelf, so the list is sorted by location code with unplaced products last.
 const filteredStocktakeProducts = computed(() => {
   const keyword = stocktakeQuery.value.trim().toLocaleLowerCase();
-  if (!keyword) return inventorySummary.value.products;
-  return inventorySummary.value.products.filter((product) => [
-    product.productName,
-    product.chineseName,
-    product.englishName,
-    product.sku,
-    ...product.barcodes,
-  ].some((value) => value?.toLocaleLowerCase().includes(keyword)));
+  const location = stocktakeLocation.value;
+  return inventorySummary.value.products
+    .filter((product) => !location || (location === 'NONE' ? !product.location : product.location?.locationId === location))
+    .filter((product) => !keyword || [
+      product.productName,
+      product.chineseName,
+      product.englishName,
+      product.sku,
+      ...product.barcodes,
+    ].some((value) => value?.toLocaleLowerCase().includes(keyword)))
+    .sort((a, b) => (a.location ? 0 : 1) - (b.location ? 0 : 1)
+      || (a.location?.code ?? '').localeCompare(b.location?.code ?? '', 'zh-Hans-CN', { numeric: true }));
 });
 const selectedIncreaseBatch = computed(() => increaseProduct.value?.batches.find(
   (batch) => batch.batchId === increaseBatchChoice.value,
@@ -433,6 +446,7 @@ function applyProductLocation(productId: string, location: ProductLocation | nul
 }
 
 function showLocationProducts(locationId: string) {
+  locationTab.value = 'place';
   focusLocationId.value = '';
   void nextTick(() => { focusLocationId.value = locationId; });
 }
@@ -480,12 +494,14 @@ function useExistingLocation(location: WarehouseLocation) {
   createdLocationId.value = location.locationId; showLocationEditor.value = false;
 }
 
-function freeChildCode(code: string) {
+const freeChildCode = computed(() => {
+  const code = locationCodeClash.value?.code;
+  if (!code) return '';
   const taken = new Set(warehouseLocations.value.map((location) => location.code.toUpperCase()));
   let suffix = 2;
   while (taken.has(`${code}-${suffix}`.toUpperCase())) suffix += 1;
   return `${code}-${suffix}`;
-}
+});
 
 async function saveWarehouseLocation() {
   if (!locationDraft.value.code.trim() || !locationDraft.value.name.trim()) { locationError.value = '请填写仓位编码和名称'; return; }
@@ -1043,12 +1059,30 @@ function removeReceiveDraft(draftId: string) {
   receiveDraft.value = receiveDraft.value.filter((item) => item.draftId !== draftId);
 }
 
+function afterProductRenamed(productId: string, name: string) {
+  for (const product of [...results.value, ...inventorySummary.value.products]) {
+    if (product.productId === productId) Object.assign(product, { productName: name, chineseName: name });
+  }
+  statusSheet.value = null;
+  message.value = `商品名称已改为 ${name}。`;
+}
+
+function afterProductDiscontinued(productId: string) {
+  const name = statusSheet.value?.product?.productName ?? '';
+  results.value = results.value.filter((product) => product.productId !== productId);
+  inventorySummary.value.products = inventorySummary.value.products.filter((product) => product.productId !== productId);
+  inventorySummary.value.productCount = inventorySummary.value.products.length;
+  statusSheet.value = null;
+  message.value = `${name} 已停售，可在“已停售”中恢复。`;
+}
+
 async function confirmReceiveDraft() {
   if (!receiveDraft.value.length || loading.value) return;
   loading.value = true;
   clearStatus();
   let completed = 0;
   let receiptNo = '';
+  const restored: string[] = [];
   try {
     for (const item of [...receiveDraft.value]) {
       if (item.countMode === 'RECOUNT' && item.existingBatchId) {
@@ -1071,10 +1105,12 @@ async function confirmReceiveDraft() {
       });
       completed += 1;
       receiptNo = data.receiptNo;
+      if (data.restoredProduct) restored.push(data.productName);
       lastReceivedBarcode.value = data.barcode || item.barcode;
       removeReceiveDraft(item.draftId);
     }
-    message.value = receiptNo ? `入库单 ${receiptNo} 已写入：${completed} 项。` : `已按重新点货更新 ${completed} 项库存。`;
+    message.value = (receiptNo ? `入库单 ${receiptNo} 已写入：${completed} 项。` : `已按重新点货更新 ${completed} 项库存。`)
+      + (restored.length ? `以下停售商品已恢复销售：${restored.join('、')}。` : '');
   } catch (reason) {
     const detail = reason instanceof Error ? reason.message : '入库失败';
     error.value = `已成功 ${completed} 项，剩余 ${receiveDraft.value.length} 项未写入：${detail}`;
@@ -1929,7 +1965,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         </section>
         <section v-if="activeMode === 'issue' || inventoryView === 'ledger'" class="section-heading inventory-page-heading" :class="{ 'inventory-summary-heading': activeMode === 'query' }">
           <div><h2 v-if="activeMode === 'issue'">查找要出库的商品</h2><p v-if="activeMode === 'query'">共 {{ inventorySummary.productCount }} 种商品 · {{ inventorySummary.totalQuantity }} 件库存</p></div>
-          <button v-if="activeMode === 'query'" class="inventory-refresh secondary" :disabled="loading" @click="loadInventoryReport">刷新</button>
+          <div v-if="activeMode === 'query'" class="inventory-heading-actions"><button v-if="isAdmin" class="secondary" type="button" @click="statusSheet = { mode: 'discontinued', product: null }">已停售</button><button class="inventory-refresh secondary" :disabled="loading" @click="loadInventoryReport">刷新</button></div>
         </section>
         <div v-if="activeMode === 'issue' || inventoryView === 'ledger'" class="product-search-shell">
           <form class="search-row inventory-search-row has-camera-button" role="search" @submit.prevent="searchProducts()">
@@ -1951,49 +1987,53 @@ async function issueBatch(product: ProductResult, batch: Batch) {
               <div class="inventory-stock-main"><div><h3>{{ product.chineseName || product.productName }}</h3><p v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</p><small>{{ product.barcodes.join('、') || product.sku || '无条码' }}</small><ProductLocationChip :product-id="product.productId" :location="product.location" :locations="locationOptions" :request="apiRequest" editable @changed="applyProductLocation(product.productId, $event)" /></div><strong>{{ product.totalQuantity }}<small>件</small></strong></div>
               <div class="inventory-batches"><div v-for="batch in product.batches" :key="batch.batchId" class="ledger-batch"><span><em>{{ expiryLabel(batch.expiryDate) }}</em>{{ batch.quantity }} 件<button class="text-action" type="button" @click="openBatchExpiryCorrection(batch.batchId, product.productName, batch.expiryDate)">修正</button></span></div></div>
               <div class="inventory-stock-actions"><button class="secondary" type="button" @click="openStockIncrease(product)">库存增加</button><button class="secondary stock-decrease-action" type="button" :disabled="product.totalQuantity < 1" @click="openStockDecrease(product)">库存减少</button></div>
+              <div v-if="isAdmin" class="product-admin-actions"><button class="text-action" type="button" @click="statusSheet = { mode: 'rename', product }">改名</button><button class="text-action danger-text" type="button" @click="statusSheet = { mode: 'discontinue', product }">停售</button></div>
             </article>
           </div>
           <p v-else class="empty-state compact">当前仓库还没有库存。</p>
         </section>
         <section v-if="activeMode === 'query' && inventoryView === 'stocktake'" class="stocktake-workspace">
-          <div class="expiry-note stocktake-note">填写现场实际数量和盘点原因，系统只记录盘盈或盘亏，不会修改 POS。</div>
+          <div class="expiry-note stocktake-note">按货架逐个清点：选仓位筛出这个货架的商品，填现场实际数量，系统自动计算盘盈或盘亏，不会修改 POS。查某个商品在哪、有多少，请用库存台账。</div>
           <form class="search-row inventory-search-row stocktake-search-row" role="search" @submit.prevent="searchStocktake">
             <input ref="stocktakeInput" v-model="stocktakeQuery" type="search" enterkeyhint="search" aria-label="筛选盘点商品" placeholder="输入商品名称或扫描条码筛选" autocomplete="off" />
             <button class="action-secondary" type="submit" :disabled="loading">搜索</button>
             <button class="secondary" type="button" :disabled="!stocktakeQuery" @click="stocktakeQuery = ''">清除</button>
             <button class="camera-scan-button" type="button" aria-label="打开手机相机扫码筛选盘点商品" @click="startCameraScanner('stocktake')"><span aria-hidden="true">▣</span> 相机扫码</button>
+            <select v-model="stocktakeLocation" class="stocktake-location-filter" aria-label="按仓位盘点"><option value="">全部仓位</option><option value="NONE">未放仓位</option><option v-for="location in locationOptions" :key="location.locationId" :value="location.locationId">{{ location.code }} · {{ location.name }}</option></select>
           </form>
           <div v-if="filteredStocktakeProducts.length" class="stocktake-desktop-table stocktake-table table-wrap inventory-table">
             <table><thead><tr><th>商品</th><th>到期日期</th><th>系统数量</th><th>实际数量</th><th>原因</th><th>操作</th></tr></thead>
-              <tbody v-for="product in filteredStocktakeProducts" :key="product.productId" :class="{ 'stocktake-group': product.batches.length > 1 }"><tr v-if="product.batches.length > 1" class="stocktake-group-row"><td>{{ product.productName }}<button v-if="isAdmin" class="text-action stocktake-merge" type="button" @click="mergeProduct = product">合并同款</button></td><td>共 {{ product.batches.length }} 个日期</td><td><b>合计 {{ product.totalQuantity }} 件</b></td><td colspan="3"><span v-if="stocktakeActualTotal(product) !== null" class="stocktake-actual-total">已填实际合计 {{ stocktakeActualTotal(product) }} 件</span><span v-else class="stocktake-group-hint">按到期日期分别填写实际数量</span></td></tr><tr v-for="batch in product.batches" :key="batch.batchId" :class="{ 'stocktake-batch-row': product.batches.length > 1 }"><td><template v-if="product.batches.length === 1">{{ product.productName }}<button v-if="isAdmin" class="text-action stocktake-merge" type="button" @click="mergeProduct = product">合并同款</button></template></td><td>{{ batch.expiryDate }}<button class="text-action" type="button" @click="openBatchExpiryCorrection(batch.batchId, product.productName, batch.expiryDate)">修正</button></td><td>{{ batch.quantity }} 件</td><td><input v-model.number="stocktakeActual[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 实际数量`" class="table-input quantity-input" type="number" min="0" step="1" placeholder="实际数量" /></td><td><input v-model="stocktakeReasons[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 盘点原因`" class="table-input" maxlength="255" placeholder="如：现场盘点" /></td><td><button class="action-primary compact-action" :disabled="loading" @click="adjustStocktake(product, batch)">确认调整</button></td></tr></tbody>
+              <tbody v-for="product in filteredStocktakeProducts" :key="product.productId" :class="{ 'stocktake-group': product.batches.length > 1 }"><tr v-if="product.batches.length > 1" class="stocktake-group-row"><td>{{ product.productName }}<button v-if="isAdmin" class="text-action stocktake-merge" type="button" @click="mergeProduct = product">合并同款</button><ProductLocationChip class="cell-subline" :product-id="product.productId" :location="product.location" :locations="locationOptions" :request="apiRequest" editable @changed="applyProductLocation(product.productId, $event)" /></td><td>共 {{ product.batches.length }} 个日期</td><td><b>合计 {{ product.totalQuantity }} 件</b></td><td colspan="3"><span v-if="stocktakeActualTotal(product) !== null" class="stocktake-actual-total">已填实际合计 {{ stocktakeActualTotal(product) }} 件</span><span v-else class="stocktake-group-hint">按到期日期分别填写实际数量</span></td></tr><tr v-for="batch in product.batches" :key="batch.batchId" :class="{ 'stocktake-batch-row': product.batches.length > 1 }"><td><template v-if="product.batches.length === 1">{{ product.productName }}<button v-if="isAdmin" class="text-action stocktake-merge" type="button" @click="mergeProduct = product">合并同款</button><ProductLocationChip class="cell-subline" :product-id="product.productId" :location="product.location" :locations="locationOptions" :request="apiRequest" editable @changed="applyProductLocation(product.productId, $event)" /></template></td><td>{{ batch.expiryDate }}<button class="text-action" type="button" @click="openBatchExpiryCorrection(batch.batchId, product.productName, batch.expiryDate)">修正</button></td><td>{{ batch.quantity }} 件</td><td><input v-model.number="stocktakeActual[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 实际数量`" class="table-input quantity-input" type="number" min="0" step="1" placeholder="实际数量" /></td><td><input v-model="stocktakeReasons[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 盘点原因`" class="table-input" maxlength="255" placeholder="如：现场盘点" /></td><td><button class="action-primary compact-action" :disabled="loading" @click="adjustStocktake(product, batch)">确认调整</button></td></tr></tbody>
             </table>
           </div>
           <div v-if="filteredStocktakeProducts.length" class="stocktake-mobile-list">
-            <article v-for="product in filteredStocktakeProducts" :key="product.productId" class="stocktake-mobile-card"><div class="stocktake-card-heading"><div><h3>{{ product.chineseName || product.productName }}</h3><p>{{ product.barcodes.join('、') || product.sku || '无条码' }}</p><button v-if="isAdmin" class="text-action stocktake-merge" type="button" @click="mergeProduct = product">合并同款</button></div><strong>{{ product.totalQuantity }}<small>{{ product.batches.length > 1 ? `系统合计 · ${product.batches.length} 个日期` : '系统件数' }}</small></strong></div><p v-if="product.batches.length > 1 && stocktakeActualTotal(product) !== null" class="stocktake-actual-total">已填实际合计 {{ stocktakeActualTotal(product) }} 件</p><section v-for="batch in product.batches" :key="batch.batchId" class="stocktake-batch"><div class="stocktake-card-meta"><span>到期日期</span><b>{{ batch.expiryDate }}</b><button class="text-action" type="button" @click="openBatchExpiryCorrection(batch.batchId, product.productName, batch.expiryDate)">修正</button><span class="stocktake-batch-quantity">系统 <b>{{ batch.quantity }}</b> 件</span></div><label>现场实际数量<input v-model.number="stocktakeActual[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 实际数量`" type="number" min="0" step="1" placeholder="请输入实际数量" /></label><label>盘点原因<input v-model="stocktakeReasons[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 盘点原因`" maxlength="255" placeholder="如：现场盘点、破损、同步差异" /></label><button class="action-primary" :disabled="loading" @click="adjustStocktake(product, batch)">确认盘点</button></section></article>
+            <article v-for="product in filteredStocktakeProducts" :key="product.productId" class="stocktake-mobile-card"><div class="stocktake-card-heading"><div><h3>{{ product.chineseName || product.productName }}</h3><p>{{ product.barcodes.join('、') || product.sku || '无条码' }}</p><ProductLocationChip class="cell-subline" :product-id="product.productId" :location="product.location" :locations="locationOptions" :request="apiRequest" editable @changed="applyProductLocation(product.productId, $event)" /><button v-if="isAdmin" class="text-action stocktake-merge" type="button" @click="mergeProduct = product">合并同款</button></div><strong>{{ product.totalQuantity }}<small>{{ product.batches.length > 1 ? `系统合计 · ${product.batches.length} 个日期` : '系统件数' }}</small></strong></div><p v-if="product.batches.length > 1 && stocktakeActualTotal(product) !== null" class="stocktake-actual-total">已填实际合计 {{ stocktakeActualTotal(product) }} 件</p><section v-for="batch in product.batches" :key="batch.batchId" class="stocktake-batch"><div class="stocktake-card-meta"><span>到期日期</span><b>{{ batch.expiryDate }}</b><button class="text-action" type="button" @click="openBatchExpiryCorrection(batch.batchId, product.productName, batch.expiryDate)">修正</button><span class="stocktake-batch-quantity">系统 <b>{{ batch.quantity }}</b> 件</span></div><label>现场实际数量<input v-model.number="stocktakeActual[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 实际数量`" type="number" min="0" step="1" placeholder="请输入实际数量" /></label><label>盘点原因<input v-model="stocktakeReasons[batch.batchId]" :aria-label="`${product.productName} ${batch.expiryDate} 盘点原因`" maxlength="255" placeholder="如：现场盘点、破损、同步差异" /></label><button class="action-primary" :disabled="loading" @click="adjustStocktake(product, batch)">确认盘点</button></section></article>
           </div>
-          <p v-if="!filteredStocktakeProducts.length" class="empty-state">{{ loading ? '正在读取库存…' : stocktakeQuery ? '没有找到匹配的盘点商品。' : '当前仓库没有可盘点库存。' }}</p>
+          <p v-if="!filteredStocktakeProducts.length" class="empty-state">{{ loading ? '正在读取库存…' : stocktakeQuery || stocktakeLocation ? '没有找到匹配的盘点商品。' : '当前仓库没有可盘点库存。' }}</p>
           <ProductMergeSheet v-if="mergeProduct" :product-id="mergeProduct.productId" :product-name="mergeProduct.productName" :current-inventory="mergeProduct.totalQuantity" :request="apiRequest" @close="mergeProduct = null" @merged="afterProductMerge" />
         </section>
         <section v-if="activeMode === 'query' && inventoryView === 'locations'" class="location-workspace has-bulk">
-          <div class="location-overview jelly-location-card"><div><small>WAREHOUSE LOCATION</small><h3>仓位管理</h3><p>可按品牌先建一个货架仓位，把整个品牌一次放上去，之后在仓位上“添加下级”细分到层、格。扫码入库、库存查询、临期查询都会显示商品仓位，也可以随时修改。</p></div><div class="location-overview-metrics"><span><b>{{ warehouseLocations.length }}</b> 个仓位</span><span><b>{{ warehouseLocations.reduce((sum, location) => sum + (location.homeProductCount ?? 0), 0) }}</b> 种商品已放</span></div><button v-if="canManageLocations" class="action-primary" type="button" @click="openLocationEditor()">＋ 新增仓位</button></div>
-          <div v-if="warehouseLocations.length" class="location-grid">
-            <article v-for="location in sortedLocations" :key="location.locationId" class="location-card">
-              <header><span>{{ location.code }}</span><div class="location-card-actions"><button v-if="canManageLocations && locationDepth(location) < 2" type="button" class="location-edit" @click="openChildLocation(location)">添加下级</button><button v-if="canManageLocations" type="button" class="location-edit" @click="openLocationEditor(location)">编辑</button></div></header>
-              <small v-if="parentLocation(location)" class="location-parent">{{ locationDepth(location) + 1 }} 级 · 属于 {{ parentLocation(location)!.code }} {{ parentLocation(location)!.name }}</small>
-              <h3>{{ location.name }}</h3><p>{{ [location.zone, location.aisle, location.shelf, location.level].filter(Boolean).join(' · ') || '尚未补充区域层级' }}</p>
-              <div><strong>{{ location.homeProductCount ?? 0 }}<small>种商品</small></strong></div>
-              <button type="button" class="location-edit" @click="showLocationProducts(location.locationId)">查看 / 换位置</button>
-            </article>
-          </div>
-          <p v-else class="empty-state">还没有仓位。可以在下方选品牌后直接“为该品牌新建仓位”，也可以按“区域-货架-层级”创建，例如 A-01-02。</p>
-          <ProductLocationBulk :locations="locationOptions" :request="apiRequest" :focus-location-id="focusLocationId" :can-create="canManageLocations" :created-location-id="createdLocationId" @create="openBrandLocation" @changed="loadWarehouseLocations" />
+          <div class="location-overview jelly-location-card"><div><small>WAREHOUSE LOCATION</small><h3>仓位管理</h3><p>先在“放置商品”按品牌把商品放上货架；货架要细分时，在“仓位列表”点“添加下级”。</p></div><div class="location-overview-metrics"><span><b>{{ warehouseLocations.length }}</b> 个仓位</span><span><b>{{ warehouseLocations.reduce((sum, location) => sum + (location.homeProductCount ?? 0), 0) }}</b> 种商品已放</span></div><button v-if="canManageLocations" class="action-primary" type="button" @click="openLocationEditor()">＋ 新增仓位</button></div>
+          <div class="location-tabs" role="tablist" aria-label="仓位管理"><button type="button" role="tab" :aria-selected="locationTab === 'place'" :class="{ active: locationTab === 'place' }" @click="locationTab = 'place'">放置商品</button><button type="button" role="tab" :aria-selected="locationTab === 'list'" :class="{ active: locationTab === 'list' }" @click="locationTab = 'list'">仓位列表（{{ warehouseLocations.length }}）</button></div>
+          <ProductLocationBulk v-show="locationTab === 'place'" :locations="locationOptions" :request="apiRequest" :focus-location-id="focusLocationId" :can-create="canManageLocations" :created-location-id="createdLocationId" @create="openBrandLocation" @changed="loadWarehouseLocations" />
+          <template v-if="locationTab === 'list'">
+            <ul v-if="warehouseLocations.length" class="location-rows">
+              <li v-for="location in locationRows" :key="location.locationId" :style="{ '--depth': location.depth }">
+                <span class="location-code">{{ location.code }}</span>
+                <div class="location-row-name"><b>{{ location.name }}</b><small>{{ [location.parentCode ? `属于 ${location.parentCode}` : '', location.zone, location.aisle, location.shelf, location.level].filter(Boolean).join(' · ') || '未填区域层级' }}</small></div>
+                <span class="location-count"><b>{{ location.homeProductCount ?? 0 }}</b> 种</span>
+                <div class="location-row-actions"><button type="button" @click="showLocationProducts(location.locationId)">查看商品</button><button v-if="canManageLocations && location.depth < 2" type="button" @click="openChildLocation(location)">添加下级</button><button v-if="canManageLocations" type="button" @click="openLocationEditor(location)">编辑</button></div>
+              </li>
+            </ul>
+            <p v-else class="empty-state">还没有仓位。可以在“放置商品”选品牌后点“为该品牌新建仓位”，也可以点右上角“新增仓位”，例如 A-01-02。</p>
+          </template>
         </section>
       </template>
 
       <section v-if="results.length && !showSearchDropdown" class="result-list">
         <article v-for="product in results" :key="product.productId" class="product-card">
           <div class="product-summary">
-            <div><h3>{{ product.chineseName || product.productName }}</h3><p v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</p><p>SKU：{{ product.sku || '—' }} · 条码：{{ product.barcodes.join('、') || '无' }}</p><ProductLocationChip :product-id="product.productId" :location="product.location" :locations="locationOptions" :request="apiRequest" editable @changed="applyProductLocation(product.productId, $event)" /></div>
+            <div><h3>{{ product.chineseName || product.productName }}</h3><p v-if="product.englishName && product.englishName !== product.chineseName">{{ product.englishName }}</p><p>SKU：{{ product.sku || '—' }} · 条码：{{ product.barcodes.join('、') || '无' }}</p><ProductLocationChip :product-id="product.productId" :location="product.location" :locations="locationOptions" :request="apiRequest" editable @changed="applyProductLocation(product.productId, $event)" /><div v-if="isAdmin && activeMode === 'query'" class="product-admin-actions"><button class="text-action" type="button" @click="statusSheet = { mode: 'rename', product }">改名</button><button class="text-action danger-text" type="button" @click="statusSheet = { mode: 'discontinue', product }">停售</button></div></div>
             <strong>总库存 {{ product.totalQuantity }} 件</strong>
           </div>
           <div v-if="activeMode === 'receive'" class="bind-action">
@@ -2051,6 +2091,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
         </section>
       </div>
 
+      <ProductStatusSheet v-if="statusSheet" :mode="statusSheet.mode" :product="statusSheet.product" :request="apiRequest" @close="statusSheet = null" @renamed="afterProductRenamed" @discontinued="afterProductDiscontinued" @restored="loadInventoryReport" />
       <div v-if="showLocationEditor" class="account-overlay location-editor-overlay" role="presentation" @click.self="showLocationEditor = false">
         <form class="location-editor" role="dialog" aria-modal="true" aria-label="仓位编辑" @submit.prevent="saveWarehouseLocation">
           <button class="account-close" type="button" aria-label="关闭仓位编辑" @click="showLocationEditor = false">×</button>
@@ -2060,7 +2101,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
             <p>编码“{{ locationCodeClash.code }}”已经是“{{ locationCodeClash.name }}”。一个仓位可以放多个品牌，不需要重复新建。</p>
             <div class="location-clash-actions">
               <button v-if="creatingForBrand" type="button" @click="useExistingLocation(locationCodeClash)">放到“{{ locationCodeClash.code }}”，和现有品牌同一位置</button>
-              <button type="button" @click="locationDraft.code = freeChildCode(locationCodeClash.code)">单独建一格：改用 {{ freeChildCode(locationCodeClash.code) }}</button>
+              <button type="button" @click="locationDraft.code = freeChildCode">单独建一格：改用 {{ freeChildCode }}</button>
             </div>
           </div>
           <p v-else-if="locationError" class="location-editor-error" role="alert">{{ locationError }}</p>

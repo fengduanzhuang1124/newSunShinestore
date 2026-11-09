@@ -10,6 +10,7 @@ import { StocktakeService } from './stocktake.service.js';
 import { InventoryMaintenanceService } from './inventory-maintenance.service.js';
 import { WarehouseLocationService } from './warehouse-location.service.js';
 import { StockCountService } from './stock-count.service.js';
+import { ProductStatusService } from './product-status.service.js';
 
 @Module({
   imports: [AuthModule],
@@ -24,6 +25,7 @@ import { StockCountService } from './stock-count.service.js';
     InventoryMaintenanceService,
     WarehouseLocationService,
     StockCountService,
+    ProductStatusService,
   ],
 })
 export class InventoryModule {}

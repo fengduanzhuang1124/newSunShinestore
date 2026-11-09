@@ -19,6 +19,13 @@ type Totals = { revenue: number; orders: number; units: number; avgOrderValue: n
 type ShareRow = { share: number; previousShare: number | null };
 export type Highlight = { tone: 'urgent' | 'warn' | 'up' | 'down' | 'info'; title: string; text: string; advice: string; action: 'procurement' | 'inventory' | 'demand' | 'categories' | null };
 export type CategoryMover = { level1: string; level2: string; revenue: number; previousRevenue: number; delta: number; changePercent: number | null };
+// CR-021: people → function group → function. Node ids are p:/g:/f: prefixed; values are list-price revenue.
+export type SankeyNode = { id: string; layer: 0 | 1 | 2; name: string; group: string | null; value: number };
+export type SankeyProduct = ProductFact & { revenue: number; units: number };
+export type SankeyData = {
+  total: number; nodes: SankeyNode[]; links: { source: string; target: string; value: number }[];
+  flows: { people: string; group: string; label: string; value: number }[]; products: Record<string, SankeyProduct[]>;
+};
 export type CategoryRow = { level1: string; level2: string; currentUnits: number; previousUnits: number; changePercent: number | null; trend: 'UP' | 'DOWN' | 'FLAT' };
 
 export type MarketInsights = {
@@ -29,6 +36,7 @@ export type MarketInsights = {
   categoryShare: (ShareRow & { level1: string; revenue: number })[];
   categoryMovers: { gains: CategoryMover[]; losses: CategoryMover[] };
   demand: { orders: number; rows: (ShareRow & { group: string; orders: number; revenue: number; topCategory: string | null })[] };
+  sankey?: SankeyData;
   heatmap: { hours: number[]; cells: number[][]; peak: { weekday: number; hour: number; orders: number } | null };
   rankings: { top: RankedRow[]; falling: RankedRow[] };
   highlights: Highlight[];
@@ -37,7 +45,7 @@ export type MarketInsights = {
     pairs: number; risingCategories: number; fallingCategories: number; categoryCoverage: { identified: number; total: number };
   };
   surges: SurgeRow[]; overstock: OverstockRow[]; pairs: PairRow[]; categories: CategoryRow[];
-  rules: { revenue: string; demand: string; surge: string; overstock: string; pairs: string; category: string };
+  rules: { revenue: string; demand: string; sankey?: string; surge: string; overstock: string; pairs: string; category: string };
 };
 
 export type MarketModule = {

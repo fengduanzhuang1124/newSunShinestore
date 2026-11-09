@@ -29,6 +29,8 @@ import { WarehouseLocationService } from './warehouse-location.service.js';
 import { AssignWarehouseLocationDto, ProductLocationQueryDto, SaveWarehouseLocationDto, SetProductLocationsDto } from './warehouse-location.dto.js';
 import { StockCountService } from './stock-count.service.js';
 import { AddStockCountItemDto, ConfirmStockCountDto, IgnoreStockCountItemDto, LinkPosStockCountItemDto, MergeProductsDto } from './stock-count.dto.js';
+import { ProductStatusService } from './product-status.service.js';
+import { DiscontinueProductDto, RenameProductDto } from './product-status.dto.js';
 
 @Controller('inventory')
 @UseGuards(JwtAuthGuard)
@@ -42,6 +44,7 @@ export class InventoryController {
     private readonly maintenance: InventoryMaintenanceService,
     private readonly locations: WarehouseLocationService,
     private readonly stockCounts: StockCountService,
+    private readonly productStatus: ProductStatusService,
   ) {}
 
   @Get('count-tasks/current/summary')
@@ -84,6 +87,37 @@ export class InventoryController {
   async mergeProducts(@Req() request: AuthenticatedRequest, @Body() input: MergeProductsDto) {
     const user = request.inventoryUser!;
     return { code: 200, message: '已合并', data: await this.stockCounts.mergeProducts(user.organizationId, user.id, input) };
+  }
+
+  // CR-020: fixed paths stay ahead of products/:productId.
+  @Get('products/discontinued')
+  async discontinuedProducts(@Req() request: AuthenticatedRequest) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '查询成功', data: await this.productStatus.listDiscontinued(user.organizationId, user.id) };
+  }
+
+  @Post('products/:productId/discontinue')
+  async discontinueProduct(@Req() request: AuthenticatedRequest, @Param('productId') productId: string, @Body() input: DiscontinueProductDto) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '商品已停售', data: await this.productStatus.discontinue(user.organizationId, user.id, productId, input.reason.trim()) };
+  }
+
+  @Post('products/:productId/restore')
+  async restoreProduct(@Req() request: AuthenticatedRequest, @Param('productId') productId: string) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '商品已恢复销售', data: await this.productStatus.restore(user.organizationId, user.id, productId) };
+  }
+
+  @Get('products/:productId/names')
+  async productNames(@Req() request: AuthenticatedRequest, @Param('productId') productId: string) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '查询成功', data: await this.productStatus.names(user.organizationId, user.id, productId) };
+  }
+
+  @Patch('products/:productId/name')
+  async renameProduct(@Req() request: AuthenticatedRequest, @Param('productId') productId: string, @Body() input: RenameProductDto) {
+    const user = request.inventoryUser!;
+    return { code: 200, message: '商品名称已修改', data: await this.productStatus.rename(user.organizationId, user.id, productId, input.name) };
   }
 
   @Get('products/:productId/stock')

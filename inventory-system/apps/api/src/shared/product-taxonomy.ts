@@ -62,45 +62,52 @@ const SKIN = ["护肤品", "洗护用品"] as const;
 const ORAL = ["日用品"] as const;
 const HEALTH_AND_HAIR = ["保健品", "奶粉与乳制品", "洗护用品", "食品"] as const;
 
+// CR-021: two levels, a function group (大类) and the function itself (细分). A product can match several functions.
 const FUNCTION_RULES: FunctionRule[] = [
-  { group: "器官与系统", label: "护肝", scope: HEALTH, pattern: rule("护肝|清肝|(?<!鱼)肝(?!油)|(?<!cod )liver|奶蓟|thistle|42000|liver guard") },
-  { group: "器官与系统", label: "护心", scope: HEALTH, pattern: rule("护心|心脏|heart|辅酶|\\bq10|coq10|mitoq(?!.*(肝|liver|血糖|姜黄|麦角|鱼油))") },
-  { group: "器官与系统", label: "心脑血管", scope: HEALTH, pattern: rule("鱼油|fish ?oil|omega|磷虾|krill|胆固醇|cholesterol|红曲|纳豆|卵磷脂|lecithin|银杏|ginkgo|血管|角鲨烯|squalene|海豹油|salmon|大蒜|garlic|kyolic|水蛭|静脉|venotrex|omg ?3") },
-  { group: "器官与系统", label: "健脑益智", scope: HEALTH, pattern: rule("dha|健脑|brain|银杏|ginkgo|磷脂酰丝氨酸|益智") },
-  { group: "器官与系统", label: "护眼", scope: HEALTH, pattern: rule("护眼|叶黄素|lutein|越橘|bilberry|蓝莓|blueberry|虾青素|astaxanthin|鱼肝油|cod liver|kids eye|macu|vision|眼(?!霜|膜)") },
-  { group: "器官与系统", label: "骨骼与补钙", scope: HEALTH, pattern: rule("钙|calcium|bone|骨骼|\\bv ?d3?\\b|d3|维 ?d|vitamin ?ad|维生素d|vit(amin)? ?d|\\bk2\\b|镁|magnesium") },
-  { group: "器官与系统", label: "关节", scope: HEALTH, pattern: rule("维骨力|氨糖|glucosamine|软骨素|chondroitin|关节|joint|青口|mussel|\\bmsm\\b|姜黄|turmeric|curcumin|骨胶原|鹿筋|flexi") },
-  { group: "器官与系统", label: "肠胃消化", scope: HEALTH, pattern: rule("益生菌|probiotic|biotic|pro-?b|养胃|消化|digest|西梅|prune|通便|纤维|fib(re|er)|益生元|苹果醋|vinegar|牛初乳|colostrum|b420|酶|enzyme|gut|肠道|phloe|detox|排毒") },
-  { group: "器官与系统", label: "呼吸与咽喉", scope: HEALTH, pattern: rule("喉|lozenge|清肺|lung|oral|喷雾|百里香|thyme|harker|throat|接骨木|elderberry") },
-  { group: "器官与系统", label: "泌尿健康", scope: HEALTH, pattern: rule("蔓越莓|cranberry|泌尿") },
-  { group: "代谢", label: "血糖平衡", scope: HEALTH, pattern: rule("血糖|glucose|sugar balance|糖尿病|diabet|肉桂|cinnamon|苦瓜|isowhey") },
-  { group: "代谢", label: "血压", scope: HEALTH, pattern: rule("血压|blood pressure") },
-  { group: "代谢", label: "尿酸与痛风", scope: HEALTH, pattern: rule("芹菜|celery|尿酸|痛风") },
-  { group: "代谢", label: "体重管理", scope: HEALTH, pattern: rule("瘦|减肥|shape|b420|苹果醋|vinegar|代餐|燃脂|体重|weight|代谢|metabolism|纤体|calibrate|greens") },
-  { group: "全身", label: "免疫力", scope: HEALTH, pattern: rule("免疫|immun|vc|维 ?c|vitamin ?c|维生素c|维生suc|bio c|澳佳宝c|锌|zinc|蜂胶|propolis|pfl|硒|selenium|生物栖|紫雏菊|大蒜|garlic|zin[ce]|灵芝|林芝|mushroom|牛初乳|colostrum|乳铁蛋白|lactoferrin|接骨木|elderberry|耳牛球|紫锥菊|echinacea|neurio|蜂蜜|honey") },
-  { group: "全身", label: "抗氧化与抗衰", scope: HEALTH, pattern: rule("葡萄籽|grape ?seed|麦角硫因|ergothioneine|槲皮素|querce|硒|selenium|生物栖|\\bv ?e\\b|维 ?e|natural e|vitamin ?e|螺旋藻|spirulina|虾青素|astaxanthin|角鲨烯|squalene|\\bnmn\\b|pqq|白藜芦醇|抗氧化|antioxid|抗衰|age protect|月光宝盒|anthogenol|mitoq|羊胎|placenta") },
-  { group: "全身", label: "睡眠与情绪", scope: HEALTH, pattern: rule("睡眠|sleep|助眠|褪黑|樱桃|cherry|安神|情绪|mood|stress|压力|圣约翰") },
-  { group: "全身", label: "能量与抗疲劳", scope: HEALTH, pattern: rule("b族|维b|b12|executive b|b complex|能量|energy|疲劳|人参|ginseng|鹿茸|鹿血|red power|蜂花粉|bee pollen|cyclopower") },
-  { group: "全身", label: "补铁补血", scope: HEALTH, pattern: rule("铁|iron|floradix|b12|甲钴胺|补血") },
-  { group: "全身", label: "综合营养", scope: HEALTH, pattern: rule("多维|multi|综合维|多种维生素|女维|男维|女士维生素|营养粉|ensure|安素|蔬菜软糖|蛋白粉|whey|protein") },
-  { group: "全身", label: "解酒", scope: HEALTH, pattern: rule("解酒|hangover") },
-  { group: "美容", label: "美容养颜", scope: HEALTH, pattern: rule("胶原|collagen|vida ?glow|hair,? ?skin|skin ?nails|焕颜|焕肤|雪肌|美颜|luminous|beauty|regeneration|brightskin|提亮|鹿胎|inner glow|玫瑰|rose|羊胎|placenta|蜂王浆|royal jelly|美白|烟酰胺|nicotinamide|玻尿酸|hyaluronic") },
-  { group: "美容", label: "头发", scope: HEALTH_AND_HAIR, pattern: rule("生物素|biotin|生发|防脱|hair,? ?skin|头发") },
+  { group: "心脑血管", label: "护心", scope: HEALTH, pattern: rule("护心|心脏|heart|辅酶|\\bq10|coq10|mitoq(?!.*(肝|liver|血糖|姜黄|麦角|鱼油))") },
+  { group: "心脑血管", label: "鱼油与 Omega-3", scope: HEALTH, pattern: rule("鱼油|fish ?oil|omega|磷虾|krill|角鲨烯|squalene|海豹油|salmon|omg ?3") },
+  { group: "心脑血管", label: "血脂胆固醇", scope: HEALTH, pattern: rule("胆固醇|cholesterol|红曲|卵磷脂|lecithin|血脂") },
+  { group: "心脑血管", label: "血管循环", scope: HEALTH, pattern: rule("纳豆|银杏|ginkgo|血管|大蒜|garlic|kyolic|水蛭|静脉|venotrex|心脑") },
+  { group: "骨骼关节", label: "关节", scope: HEALTH, pattern: rule("维骨力|氨糖|glucosamine|软骨素|chondroitin|关节|joint|青口|mussel|\\bmsm\\b|姜黄|turmeric|curcumin|骨胶原|鹿筋|flexi") },
+  { group: "骨骼关节", label: "补钙与维 D", scope: HEALTH, pattern: rule("钙|calcium|bone|骨骼|\\bv ?d3?\\b|d3|维 ?d|vitamin ?ad|维生素d|vit(amin)? ?d|\\bk2\\b") },
+  { group: "骨骼关节", label: "补镁", scope: HEALTH, pattern: rule("镁|magnesium") },
+  { group: "代谢管理", label: "血糖", scope: HEALTH, pattern: rule("血糖|glucose|sugar balance|糖尿病|diabet|肉桂|cinnamon|苦瓜|isowhey") },
+  { group: "代谢管理", label: "血压", scope: HEALTH, pattern: rule("血压|blood pressure") },
+  { group: "代谢管理", label: "尿酸与痛风", scope: HEALTH, pattern: rule("芹菜|celery|尿酸|痛风") },
+  { group: "代谢管理", label: "体重管理", scope: HEALTH, pattern: rule("瘦|减肥|shape|b420|苹果醋|vinegar|代餐|燃脂|体重|weight|代谢|metabolism|纤体|calibrate|greens") },
+  { group: "器官养护", label: "护肝", scope: HEALTH, pattern: rule("护肝|清肝|(?<!鱼)肝(?!油)|(?<!cod )liver|奶蓟|thistle|42000|liver guard") },
+  { group: "器官养护", label: "护眼", scope: HEALTH, pattern: rule("护眼|叶黄素|lutein|越橘|bilberry|蓝莓|blueberry|虾青素|astaxanthin|鱼肝油|cod liver|kids eye|macu|vision|眼(?!霜|膜)") },
+  { group: "器官养护", label: "益生菌", scope: HEALTH, pattern: rule("益生菌|probiotic|biotic|pro-?b|益生元|b420|gut|肠道") },
+  { group: "器官养护", label: "消化通便", scope: HEALTH, pattern: rule("养胃|消化|digest|西梅|prune|通便|纤维|fib(re|er)|苹果醋|vinegar|牛初乳|colostrum|酶|enzyme|phloe|detox|排毒") },
+  { group: "器官养护", label: "呼吸与咽喉", scope: HEALTH, pattern: rule("喉|lozenge|清肺|lung|oral|喷雾|百里香|thyme|harker|throat|接骨木|elderberry") },
+  { group: "器官养护", label: "泌尿健康", scope: HEALTH, pattern: rule("蔓越莓|cranberry|泌尿") },
+  { group: "免疫与精力", label: "免疫力", scope: HEALTH, pattern: rule("免疫|immun|vc|维 ?c|vitamin ?c|维生素c|维生suc|bio c|澳佳宝c|锌|zinc|蜂胶|propolis|pfl|硒|selenium|生物栖|紫雏菊|大蒜|garlic|zin[ce]|灵芝|林芝|mushroom|牛初乳|colostrum|乳铁蛋白|lactoferrin|接骨木|elderberry|耳牛球|紫锥菊|echinacea|neurio|蜂蜜|honey") },
+  { group: "免疫与精力", label: "能量与抗疲劳", scope: HEALTH, pattern: rule("b族|维b|b12|executive b|b complex|能量|energy|疲劳|人参|ginseng|鹿茸|鹿血|red power|蜂花粉|bee pollen|cyclopower") },
+  { group: "免疫与精力", label: "补铁补血", scope: HEALTH, pattern: rule("铁|iron|floradix|b12|甲钴胺|补血") },
+  { group: "免疫与精力", label: "综合营养", scope: HEALTH, pattern: rule("多维|multi|综合维|多种维生素|女维|男维|女士维生素|营养粉|ensure|安素|蔬菜软糖|蛋白粉|whey|protein") },
+  { group: "免疫与精力", label: "解酒", scope: HEALTH, pattern: rule("解酒|hangover") },
+  { group: "脑与情绪", label: "睡眠", scope: HEALTH, pattern: rule("睡眠|sleep|助眠|褪黑|樱桃|cherry|安神") },
+  { group: "脑与情绪", label: "情绪压力", scope: HEALTH, pattern: rule("情绪|mood|stress|压力|圣约翰|焦虑") },
+  { group: "脑与情绪", label: "健脑益智", scope: HEALTH, pattern: rule("dha|健脑|brain|银杏|ginkgo|磷脂酰丝氨酸|益智") },
+  { group: "美容抗衰", label: "胶原蛋白", scope: HEALTH, pattern: rule("胶原|collagen") },
+  { group: "美容抗衰", label: "美容养颜", scope: HEALTH, pattern: rule("vida ?glow|hair,? ?skin|skin ?nails|焕颜|焕肤|雪肌|美颜|luminous|beauty|regeneration|brightskin|提亮|鹿胎|inner glow|玫瑰|rose|羊胎|placenta|蜂王浆|royal jelly|美白|烟酰胺|nicotinamide|玻尿酸|hyaluronic") },
+  { group: "美容抗衰", label: "抗氧化与抗衰", scope: HEALTH, pattern: rule("葡萄籽|grape ?seed|麦角硫因|ergothioneine|槲皮素|querce|硒|selenium|生物栖|\\bv ?e\\b|维 ?e|natural e|vitamin ?e|螺旋藻|spirulina|虾青素|astaxanthin|角鲨烯|squalene|\\bnmn\\b|pqq|白藜芦醇|抗氧化|antioxid|抗衰|age protect|月光宝盒|anthogenol|mitoq|羊胎|placenta") },
+  { group: "美容抗衰", label: "头发", scope: HEALTH_AND_HAIR, pattern: rule("生物素|biotin|生发|防脱|hair,? ?skin|头发") },
   { group: "人群专项", label: "女性健康", scope: HEALTH, pattern: rule("蔓越莓|cranberry|妇科|女性|女士|women|lady|更年期|menopause|女维|蜂王浆|月见草|evening primrose|\\bepo\\b|圣洁|vitex|chaste|痛经|naprogesic|nuwoman|hormone|荷尔蒙|肌醇|inositol|卵巢") },
   { group: "人群专项", label: "男性健康", scope: HEALTH, pattern: rule("前列腺|prostate|男性|\\bmen\\b|男维|生蚝|oyster|鹿鞭|鹿茸|袋鼠|锯棕榈") },
   { group: "人群专项", label: "孕产", scope: HEALTH, pattern: rule("孕|pregnan|叶酸|folic|elevit|爱乐维|conception") },
   { group: "人群专项", label: "儿童成长", scope: HEALTH, pattern: rule("成长|赖氨酸|lysine|长高|growth|ezz|挑食") },
-  { group: "护肤", label: "保湿补水", scope: SKIN, pattern: rule("保湿|补水|hydrat|moistur|玻尿酸|hyaluronic|绵羊油|lanolin|lanocreme|芦荟|aloe|乳木果|shea") },
-  { group: "护肤", label: "修护", scope: SKIN, pattern: rule("修护|修复|repair|木瓜|papaw|屏障|barrier|万用") },
-  { group: "护肤", label: "抗皱紧致", scope: SKIN, pattern: rule("抗衰|抗皱|紧致|firming|胶原|collagen|玻色因|xylane|zylane|胜肽|peptide|羊胎|placenta|鱼子|caviar|24k|蜂毒") },
-  { group: "护肤", label: "美白提亮", scope: SKIN, pattern: rule("美白|提亮|bright|\\bvc\\b|vc |维c|vitamin ?c|烟酰胺|nicotinamide|whiten") },
-  { group: "护肤", label: "祛疤", scope: SKIN, pattern: rule("疤|scar|dermatix") },
-  { group: "护肤", label: "防晒", scope: SKIN, pattern: rule("防晒|spf|sunscreen") },
-  { group: "护肤", label: "舒缓敏感", scope: SKIN, pattern: rule("舒缓|敏感|sensitive|calm|雅漾|avene|\\bqv\\b|茶树|tea ?tree") },
-  { group: "口腔", label: "牙齿美白去渍", scope: ORAL, pattern: rule("烟民|美白|whiten|苏打|soda") },
-  { group: "口腔", label: "防蛀", scope: ORAL, pattern: rule("防蛀|fluoride|含氟|complete ?care|kids") },
-  { group: "口腔", label: "牙龈护理", scope: ORAL, pattern: rule("牙龈|gum|蜂胶|propolis|草本|herb") },
-  { group: "口腔", label: "清新口气", scope: ORAL, pattern: rule("柠檬|lemon|mint|清新|薄荷") },
+  { group: "外用护理", label: "保湿补水", scope: SKIN, pattern: rule("保湿|补水|hydrat|moistur|玻尿酸|hyaluronic|绵羊油|lanolin|lanocreme|芦荟|aloe|乳木果|shea") },
+  { group: "外用护理", label: "修护", scope: SKIN, pattern: rule("修护|修复|repair|木瓜|papaw|屏障|barrier|万用") },
+  { group: "外用护理", label: "抗皱紧致", scope: SKIN, pattern: rule("抗衰|抗皱|紧致|firming|胶原|collagen|玻色因|xylane|zylane|胜肽|peptide|羊胎|placenta|鱼子|caviar|24k|蜂毒") },
+  { group: "外用护理", label: "美白提亮", scope: SKIN, pattern: rule("美白|提亮|bright|\\bvc\\b|vc |维c|vitamin ?c|烟酰胺|nicotinamide|whiten") },
+  { group: "外用护理", label: "祛疤", scope: SKIN, pattern: rule("疤|scar|dermatix") },
+  { group: "外用护理", label: "防晒", scope: SKIN, pattern: rule("防晒|spf|sunscreen") },
+  { group: "外用护理", label: "舒缓敏感", scope: SKIN, pattern: rule("舒缓|敏感|sensitive|calm|雅漾|avene|\\bqv\\b|茶树|tea ?tree") },
+  { group: "外用护理", label: "牙齿美白去渍", scope: ORAL, pattern: rule("烟民|美白|whiten|苏打|soda") },
+  { group: "外用护理", label: "防蛀", scope: ORAL, pattern: rule("防蛀|fluoride|含氟|complete ?care|kids") },
+  { group: "外用护理", label: "牙龈护理", scope: ORAL, pattern: rule("牙龈|gum|蜂胶|propolis|草本|herb") },
+  { group: "外用护理", label: "清新口气", scope: ORAL, pattern: rule("柠檬|lemon|mint|清新|薄荷") },
 ];
 
 const AUDIENCE_RULES: { label: string; pattern: RegExp }[] = [
@@ -124,9 +131,14 @@ export function productCategory(names: (string | null | undefined)[], manual?: s
   return match ? { code: match.code, level1: match.level1, level2: match.level2 } : UNCLASSIFIED;
 }
 
-export function productFunctions(names: (string | null | undefined)[], category: ProductCategory): string[] {
+// Each matched function with its group (CR-021), for the people → group → function flow.
+export function productFunctionDetails(names: (string | null | undefined)[], category: ProductCategory): { group: string; label: string }[] {
   const text = names.filter(Boolean).join(' ');
-  return FUNCTION_RULES.filter((candidate) => candidate.scope.includes(category.level1) && candidate.pattern.test(text)).map((candidate) => candidate.label);
+  return FUNCTION_RULES.filter((candidate) => candidate.scope.includes(category.level1) && candidate.pattern.test(text)).map(({ group, label }) => ({ group, label }));
+}
+
+export function productFunctions(names: (string | null | undefined)[], category: ProductCategory): string[] {
+  return productFunctionDetails(names, category).map((detail) => detail.label);
 }
 
 export function productAudiences(names: (string | null | undefined)[]): string[] {

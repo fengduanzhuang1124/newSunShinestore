@@ -580,6 +580,40 @@ describe('App', () => {
     expect(wrapper.text()).toContain('没有负库存');
   });
 
+  it('opens location management on placing products and lists locations as compact rows (CR-020 F4)', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/inventory/locations/brands')) return json([]);
+      if (url.includes('/inventory/locations/products')) return json({ total: 0, products: [] });
+      if (url.includes('/inventory/locations')) return json({ warehouseName: '主仓库', canManage: true, locations: [
+        { locationId: '1', code: 'A-01', name: '澳佳宝货架', homeProductCount: 24 },
+        { locationId: '2', code: 'A-01-2', name: '澳佳宝 第二层', homeProductCount: 3 },
+      ] });
+      return json({ warehouseName: '主仓库', productCount: 0, totalQuantity: 0, products: [] });
+    });
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.inventory-section-tabs button').find((button) => button.text() === '仓位管理')!.trigger('click');
+    await flushPromises();
+
+    expect(wrapper.get('.bulk-place').isVisible()).toBe(true);
+    expect(wrapper.find('.location-rows').exists()).toBe(false);
+    await wrapper.findAll('.location-tabs button')[1].trigger('click');
+    const rows = wrapper.findAll('.location-rows li');
+    expect(rows).toHaveLength(2);
+    expect(rows[1].text()).toContain('属于 A-01');
+    expect(rows[1].attributes('style')).toContain('--depth: 1');
+
+    await rows[1].findAll('button').find((button) => button.text() === '查看商品')!.trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.location-rows').exists()).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/inventory/locations/products?') && String(url).includes('locationId=2'))).toBe(true);
+  });
+
   it('offers a free child code when a location code is already used (CR-019)', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -609,6 +643,91 @@ describe('App', () => {
     expect((inputs[0].element as HTMLInputElement).value).toBe('地柜-2');
     expect(wrapper.find('.location-editor-error').exists()).toBe(false);
     expect(wrapper.get('form[aria-label="仓位编辑"] button[type="submit"]').attributes('disabled')).toBeUndefined();
+  });
+
+  it('counts stock shelf by shelf with each product showing its location (CR-020 F2)', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const shelf = { locationId: '10', code: '地柜', name: 'Manuka Doctor 货架' };
+    const batch = (id: string) => [{ batchId: id, expiryDate: '2027-08', expiryPrecision: 'MONTH', quantity: 3 }];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/inventory/locations')) return json({ warehouseName: '主仓库', canManage: true, locations: [{ ...shelf, homeProductCount: 1 }] });
+      return json({ warehouseName: '主仓库', productCount: 2, totalQuantity: 6, products: [
+        { productId: '1', productName: '未放商品', barcodes: ['9400000000001'], batches: batch('1'), totalQuantity: 3, location: null },
+        { productId: '2', productName: 'Manuka 蜂蜜', barcodes: ['9400000000002'], batches: batch('2'), totalQuantity: 3, location: shelf },
+      ] });
+    });
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.inventory-section-tabs button')[1].trigger('click');
+    await flushPromises();
+
+    const names = () => wrapper.findAll('.stocktake-mobile-card h3').map((heading) => heading.text());
+    expect(names()).toEqual(['Manuka 蜂蜜', '未放商品']);
+    expect(wrapper.get('.stocktake-mobile-card').text()).toContain('地柜');
+    await wrapper.get('select[aria-label="按仓位盘点"]').setValue('NONE');
+    expect(names()).toEqual(['未放商品']);
+    await wrapper.get('select[aria-label="按仓位盘点"]').setValue('10');
+    expect(names()).toEqual(['Manuka 蜂蜜']);
+  });
+
+  it('lets an admin rename, discontinue a zero-stock product and restore it from the discontinued list (CR-020 F5–F7)', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const batch = (id: string, quantity: number) => [{ batchId: id, expiryDate: '2027-08', expiryPrecision: 'MONTH', quantity }];
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes('/inventory/locations')) return json({ locations: [] });
+      if (url.endsWith('/inventory/products/discontinued')) return json([{ productId: '1', productName: '旧款护肝片', barcodes: ['9400000000001'], discontinuedAt: '2026-11-09T01:00:00.000Z', reason: '厂家停产', performedBy: '管理员' }]);
+      if (url.endsWith('/inventory/products/2/names')) return json({ productId: '2', name: 'swisse 护肝', chineseName: null, englishName: null, posNames: ['SWISSE LIVER DETOX'] });
+      if (url.endsWith('/inventory/products/2/name') && init?.method === 'PATCH') return json({ productId: '2', name: 'Swisse 护肝片 120粒' });
+      if (url.endsWith('/inventory/products/1/discontinue')) return json({ productId: '1', productName: '旧款护肝片' });
+      if (url.endsWith('/inventory/products/1/restore')) return json({ productId: '1', productName: '旧款护肝片' });
+      return json({ warehouseName: '主仓库', productCount: 2, totalQuantity: 5, products: [
+        { productId: '1', productName: '旧款护肝片', barcodes: ['9400000000001'], batches: batch('1', 0), totalQuantity: 0 },
+        { productId: '2', productName: 'swisse 护肝', barcodes: ['9400000000002'], batches: batch('2', 5), totalQuantity: 5 },
+      ] });
+    });
+
+    const wrapper = mount(App);
+    await wrapper.get('nav').findAll('button')[1].trigger('click');
+    await flushPromises();
+    const card = (name: string) => wrapper.findAll('.inventory-stock-card').find((item) => item.text().includes(name))!;
+    const sheet = () => document.body.querySelector('[role="dialog"]') as HTMLElement;
+    const click = async (text: string) => { [...sheet().querySelectorAll('button')].find((button) => button.textContent?.trim() === text)!.click(); await flushPromises(); };
+    const type = async (label: string, value: string) => { const input = sheet().querySelector(`input[aria-label="${label}"]`) as HTMLInputElement; input.value = value; input.dispatchEvent(new Event('input')); await flushPromises(); };
+
+    // A product that still has stock cannot be discontinued.
+    await card('swisse 护肝').findAll('.product-admin-actions button')[1].trigger('click');
+    await flushPromises();
+    expect(sheet().textContent).toContain('还有 5 件库存');
+    await click('取消');
+
+    await card('swisse 护肝').findAll('.product-admin-actions button')[0].trigger('click');
+    await flushPromises();
+    expect(sheet().textContent).toContain('SWISSE LIVER DETOX');
+    await type('新商品名称', 'Swisse 护肝片 120粒');
+    await click('保存名称');
+    expect(wrapper.text()).toContain('商品名称已改为 Swisse 护肝片 120粒');
+
+    await card('旧款护肝片').findAll('.product-admin-actions button')[1].trigger('click');
+    await flushPromises();
+    await type('停售原因', '厂家停产');
+    await click('确认停售');
+    const discontinueCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/inventory/products/1/discontinue'));
+    expect(JSON.parse(String(discontinueCall?.[1]?.body))).toEqual({ reason: '厂家停产' });
+    expect(wrapper.findAll('.inventory-stock-card').some((item) => item.text().includes('旧款护肝片'))).toBe(false);
+
+    await wrapper.findAll('button').find((button) => button.text() === '已停售')!.trigger('click');
+    await flushPromises();
+    expect(sheet().textContent).toContain('厂家停产');
+    await click('恢复销售');
+    expect(sheet().textContent).toContain('已恢复销售：旧款护肝片');
+    await click('关闭');
+    wrapper.unmount();
   });
 
   it('keeps stocktake with the inventory ledger', async () => {

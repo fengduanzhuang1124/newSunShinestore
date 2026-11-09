@@ -223,6 +223,39 @@ describe('ReceivingService', () => {
     expect(transaction.stockMovement.create).toHaveBeenCalled();
   });
 
+  it('puts a discontinued product back on sale when it is received again (CR-020 F6)', async () => {
+    const permission = { warehouseId: 1n, warehouse: { id: 1n, storeId: 2n, name: '主仓库' } };
+    const product = { id: 7n, name: 'Swisse 旧款护肝片', status: 'INACTIVE' };
+    const transaction = {
+      stockMovement: {
+        findUnique: jest.fn().mockResolvedValue(null as never),
+        create: jest.fn().mockResolvedValue({ id: 40n, createdAt: new Date('2026-11-09T01:00:00.000Z') } as never),
+      },
+      organization: { findUniqueOrThrow: jest.fn().mockResolvedValue({ timezone: 'Pacific/Auckland' } as never) },
+      stockReceipt: { findFirst: jest.fn().mockResolvedValue({ id: 30n, receiptNo: 'RK-TEST-007' } as never) },
+      product: { update: jest.fn().mockResolvedValue({} as never) },
+      productBarcode: {
+        findMany: jest.fn().mockResolvedValue([{ barcode: '9311770000007', productId: 7n }] as never),
+        findUnique: jest.fn().mockResolvedValue({ id: 23n, productId: 7n, barcode: '9311770000007', product } as never),
+      },
+      productBatch: { upsert: jest.fn().mockResolvedValue({ id: 24n } as never) },
+      inventoryBalance: { upsert: jest.fn().mockResolvedValue({ quantity: 12 } as never) },
+      stockReceiptItem: { create: jest.fn().mockResolvedValue({ id: 41n } as never) },
+      auditLog: { findFirst: jest.fn().mockResolvedValue({ action: 'product.discontinue' } as never), create: jest.fn().mockResolvedValue({ id: 42n } as never) },
+    };
+    const client = { $transaction: jest.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)) };
+    const service = new ReceivingService({ client } as never, { warehousePermission: jest.fn().mockResolvedValue(permission as never) } as never);
+
+    const result = await service.receive(1n, 9n, {
+      warehouseId: '1', idempotencyKey: '22222222-2222-4222-8222-222222222222',
+      barcode: '9311770000007', productName: 'Swisse 旧款护肝片', expiryMonth: '2028-03', quantity: 12,
+    });
+
+    expect(result).toMatchObject({ restoredProduct: true, currentQuantity: 12 });
+    expect(transaction.product.update).toHaveBeenCalledWith({ where: { id: 7n }, data: { status: 'ACTIVE' } });
+    expect(transaction.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'product.restore', afterSummary: { status: 'ACTIVE', source: '扫码入库' } }) });
+  });
+
   it('merges repeated effective receipt entries while keeping reversals visible', async () => {
     const items = [
       {

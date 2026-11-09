@@ -9,8 +9,8 @@ import { isCoreReplenishmentProduct } from './core-replenishment.js';
 import { DEFAULT_COVERAGE_WEEKS, MAX_COVERAGE_WEEKS, MIN_COVERAGE_WEEKS, purchaseCoverage } from './purchase-coverage.js';
 import { purchaseCycle, skipUntil } from './purchase-cycle.js';
 import { baselineWindows, categoryTrends, findPairs, findSurges, NO_SALE_DAYS, overstockReason, PERIOD_DAYS, WINDOW_COUNT, windowBoundaries, windowCovered, windowIndex, type MarketPeriod } from './market-insights.js';
-import { buildHighlights, categoryMovers, categoryShares, centsToAmount, changePercent, dataThroughDate, demandGroups, demandRows, heatmapSummary, periodTotals } from './store-analysis.js';
-import { AUDIENCE_OPTIONS, CATEGORY_OPTIONS, FUNCTION_OPTIONS, isCategoryOption, matchesCategory, productAudiences, productCategory, productFunctions, UNCLASSIFIED } from '../shared/product-taxonomy.js';
+import { buildHighlights, buildSankey, categoryMovers, categoryShares, centsToAmount, changePercent, dataThroughDate, demandGroups, demandRows, heatmapSummary, periodTotals } from './store-analysis.js';
+import { AUDIENCE_OPTIONS, CATEGORY_OPTIONS, FUNCTION_OPTIONS, isCategoryOption, matchesCategory, productAudiences, productCategory, productFunctionDetails, productFunctions, UNCLASSIFIED } from '../shared/product-taxonomy.js';
 import { ignoreIsActive, isDirectShip, productGroupKey, productNames, purchaseBrandGroup, setDirectShip } from '../shared/replenishment-rules.js';
 
 // Shipping and international fee lines are charged per kilogram: money received, but not goods sold, so they never
@@ -891,11 +891,13 @@ export class ManagementService {
     const info = new Map(products.map((product) => {
       const names = [product.name, product.chineseName, product.englishName];
       const category = productCategory(names, product.categoryName);
+      const functions = productFunctionDetails(names, category);
       return [product.id.toString(), {
         productName: product.chineseName || product.name || product.englishName || '未命名商品',
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
         category,
-        groups: demandGroups(names, category, productFunctions(names, category), productAudiences(names)),
+        functions,
+        groups: demandGroups(names, category, functions.map((detail) => detail.label), productAudiences(names)),
         directShip: isDirectShip(product.storeProducts[0]?.directShip, productNames(product)),
         posMapped: product.posProductMappings.length > 0,
       }];
@@ -1052,6 +1054,13 @@ export class ManagementService {
       history: [...windows].reverse().map((value) => Math.round(value)), changePercent: previousComplete ? changePercent(windows[0], windows[1]) : null,
     }));
     const top = productRows.filter((row) => row.revenue > 0).sort((a, b) => b.revenue - a.revenue).slice(0, 10);
+    // CR-021: who the goods were for and what they were for, with the top products behind each node.
+    const flow = buildSankey([...productRevenue].filter(([id]) => info.has(id)).map(([id, revenue]) => {
+      const product = info.get(id)!;
+      return { productId: id, cents: revenue[0], groups: product.groups, functions: product.functions, fallback: product.category.level1 };
+    }));
+    const sankey = { ...flow, products: Object.fromEntries(Object.entries(flow.products).map(([nodeId, rows]) => [nodeId,
+      rows.map((row) => ({ ...describe(row.productId), revenue: row.revenue, units: Math.round(units.get(row.productId)?.[0] ?? 0) }))])) };
     const falling = previousComplete ? productRows.filter((row) => units.get(row.productId)![1] >= 5 && units.get(row.productId)![0] <= units.get(row.productId)![1] * 0.7)
       .sort((a, b) => (b.previousUnits - b.units) - (a.previousUnits - a.units)).slice(0, 10) : [];
     const highlights = buildHighlights({
@@ -1080,6 +1089,7 @@ export class ManagementService {
       },
       categoryShare, categoryMovers: movers,
       demand: { orders: windowOrders[0].size, rows: demand },
+      sankey,
       heatmap: heatmapSummary(heat),
       rankings: { top, falling },
       highlights,
@@ -1091,7 +1101,7 @@ export class ManagementService {
         categoryCoverage: { identified: soldNow.filter(([id]) => info.get(id)!.category.code !== UNCLASSIFIED.code).length, total: soldNow.length },
       },
       surges: surges.slice(0, 50), overstock: overstock.slice(0, 100), pairs, categories,
-      rules: { revenue: '销售额、客单价按订单实收；品类、人群、商品金额按商品标价，用于比较占比', demand: '按所购商品判定需求人群，一个订单可计入多个人群', surge: '本期 ≥ 5 件且 ≥ 前几期平均的 1.5 倍', overstock: '按近 28 天销量需 12 周以上卖完，或 60 天无销售', pairs: '同一订单出现 ≥ 5 次', category: '与上一期相比 ±10% 且 ≥ 10 件' },
+      rules: { revenue: '销售额、客单价按订单实收；品类、人群、商品金额按商品标价，用于比较占比', demand: '按所购商品判定需求人群，一个订单可计入多个人群', sankey: '人群按商品写明判断；一个商品属于多个人群或功能时，销售额平均分配', surge: '本期 ≥ 5 件且 ≥ 前几期平均的 1.5 倍', overstock: '按近 28 天销量需 12 周以上卖完，或 60 天无销售', pairs: '同一订单出现 ≥ 5 次', category: '与上一期相比 ±10% 且 ≥ 10 件' },
     };
   }
 
