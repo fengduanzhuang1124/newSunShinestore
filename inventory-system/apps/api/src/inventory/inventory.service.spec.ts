@@ -256,7 +256,7 @@ describe('ReceivingService', () => {
     expect(transaction.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'product.restore', afterSummary: { status: 'ACTIVE', source: '扫码入库' } }) });
   });
 
-  it('merges repeated effective receipt entries while keeping reversals visible', async () => {
+  it('merges one product into one receipt row across expiry dates while keeping reversals visible (CR-023)', async () => {
     const items = [
       {
         id: 1n, productId: 2n, batchId: 3n, barcode: '9400000000001', quantity: 5,
@@ -268,6 +268,12 @@ describe('ReceivingService', () => {
         id: 2n, productId: 2n, batchId: 3n, barcode: '9400000000001', quantity: 7,
         createdAt: new Date('2026-09-22T02:00:00.000Z'), product: { name: '测试商品' },
         batch: { expiryDate: new Date('2027-08-31T00:00:00.000Z'), expiryPrecision: 'MONTH' },
+        movement: { reversedBy: null },
+      },
+      {
+        id: 3n, productId: 2n, batchId: 8n, barcode: '9400000000001', quantity: 6,
+        createdAt: new Date('2026-09-22T02:30:00.000Z'), product: { name: '测试商品' },
+        batch: { expiryDate: new Date('2026-12-31T00:00:00.000Z'), expiryPrecision: 'MONTH' },
         movement: { reversedBy: null },
       },
       {
@@ -289,10 +295,12 @@ describe('ReceivingService', () => {
 
     const result = await service.listReceipts(1n, 9n, '2026-09-22');
 
-    expect(result.summary.totalQuantity).toBe(12);
-    expect(result.receipts[0]).toMatchObject({ totalQuantity: 12, productCount: 1 });
+    expect(result.summary.totalQuantity).toBe(18);
+    expect(result.receipts[0]).toMatchObject({ totalQuantity: 18, productCount: 1 });
     expect(result.receipts[0]?.items).toEqual([
-      expect.objectContaining({ quantity: 12, entryCount: 2, reversed: false }),
+      expect.objectContaining({ quantity: 18, entryCount: 3, reversed: false, batches: [
+        { batchId: '8', expiryDate: '2026-12', quantity: 6 }, { batchId: '3', expiryDate: '2027-08', quantity: 12 },
+      ] }),
       expect.objectContaining({ quantity: 4, entryCount: 1, reversed: true }),
     ]);
   });
