@@ -82,4 +82,20 @@ describe('SankeyChart (CR-021)', () => {
     await wrapper.get('.sk-path button').trigger('click');
     expect(wrapper.get('.sk-path').text()).toContain('中老年');
   });
+
+  it('lets the product panel be widened from the keyboard, remembers it, and resets on double-click (CR-022)', async () => {
+    localStorage.removeItem('sunshine.market.sankeySide');
+    const wrapper = mount(SankeyChart, { props: { data, adding: null } });
+    const splitter = wrapper.get('.sk-splitter');
+    expect(wrapper.get('.sk').attributes('style')).toContain('--sk-side: 400px');
+    await splitter.trigger('keydown', { key: 'ArrowLeft' });
+    expect(wrapper.get('.sk').attributes('style')).toContain('--sk-side: 420px');
+    expect(localStorage.getItem('sunshine.market.sankeySide')).toBe('420');
+    // Never narrower than 300px.
+    for (let step = 0; step < 10; step += 1) await splitter.trigger('keydown', { key: 'ArrowRight' });
+    expect(splitter.attributes('aria-valuenow')).toBe('300');
+    await splitter.trigger('dblclick');
+    expect(splitter.attributes('aria-valuenow')).toBe('400');
+    expect(mount(SankeyChart, { props: { data, adding: null } }).get('.sk-splitter').attributes('aria-valuenow')).toBe('400');
+  });
 });

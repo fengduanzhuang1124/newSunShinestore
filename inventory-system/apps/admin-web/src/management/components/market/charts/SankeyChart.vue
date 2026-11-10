@@ -16,15 +16,58 @@ const NO_FUNCTION = 'g:无明确功能';
 // The chart is drawn at its real width so text never scales; its height matches the product panel beside it.
 const H = 470; const NODE_W = 12; const GAP = 8; const LABEL_H = 17; const LEFT_LABELS = 150; const RIGHT_LABELS = 168;
 const HEADERS = ['买给谁', '功能大类', '功能细分'];
+const CHART_MIN = 560;
+const root = ref<HTMLElement>();
 const chart = ref<HTMLElement>();
 const W = ref(900);
+const rootWidth = ref(0);
 let resizer: ResizeObserver | null = null;
 onMounted(() => {
-  if (!chart.value || typeof ResizeObserver === 'undefined') return;
-  resizer = new ResizeObserver(([entry]) => { if (entry.contentRect.width > 0) W.value = Math.max(560, Math.round(entry.contentRect.width)); });
+  if (!root.value || !chart.value || typeof ResizeObserver === 'undefined') return;
+  resizer = new ResizeObserver((entries) => {
+    for (const { target, contentRect } of entries) {
+      const width = Math.round(contentRect.width);
+      if (!width) continue;
+      if (target === chart.value) W.value = Math.max(CHART_MIN, width); else rootWidth.value = width;
+    }
+  });
+  resizer.observe(root.value);
   resizer.observe(chart.value);
 });
 onBeforeUnmount(() => resizer?.disconnect());
+
+// CR-022: on wide screens the product panel beside the chart can be dragged wider or narrower. The width is a
+// per-viewer convenience kept in this browser; when storage is blocked the default is used.
+const SIDE_DEFAULT = 400; const SIDE_MIN = 300; const SIDE_STEP = 20; const SPLITTER_W = 14;
+const SIDE_KEY = 'sunshine.market.sankeySide';
+function storedSide() {
+  try { return Number(localStorage.getItem(SIDE_KEY)) || SIDE_DEFAULT; } catch { return SIDE_DEFAULT; }
+}
+// At most 55% of the block, and never so wide that the chart drops below its minimum.
+function clampSide(value: number) {
+  const max = rootWidth.value ? Math.max(SIDE_MIN, Math.min(rootWidth.value * 0.55, rootWidth.value - CHART_MIN - SPLITTER_W)) : Infinity;
+  return Math.round(Math.min(Math.max(value, SIDE_MIN), max));
+}
+const side = ref(storedSide());
+const sideWidth = computed(() => clampSide(side.value));
+function setSide(value: number) {
+  side.value = clampSide(value);
+  try { localStorage.setItem(SIDE_KEY, String(side.value)); } catch { /* the width just is not remembered */ }
+}
+let drag: { x: number; side: number } | null = null;
+function startDrag(event: PointerEvent) {
+  (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+  drag = { x: event.clientX, side: sideWidth.value };
+}
+// The panel is on the right, so moving the splitter left widens it.
+function moveDrag(event: PointerEvent) { if (drag) side.value = drag.side + drag.x - event.clientX; }
+function endDrag() { if (drag) { drag = null; setSide(side.value); } }
+function splitterKey(event: KeyboardEvent) {
+  const next = { ArrowLeft: sideWidth.value + SIDE_STEP, ArrowRight: sideWidth.value - SIDE_STEP, Home: SIDE_DEFAULT }[event.key];
+  if (next === undefined) return;
+  event.preventDefault();
+  setSide(next);
+}
 const columnX = computed(() => {
   const right = W.value - RIGHT_LABELS - NODE_W;
   return [LEFT_LABELS, Math.round((LEFT_LABELS + right) / 2), right];
@@ -155,7 +198,7 @@ function drillBack() {
 </script>
 
 <template>
-  <div class="sk">
+  <div ref="root" class="sk" :style="{ '--sk-side': `${sideWidth}px` }">
     <div ref="chart" class="sk-chart">
     <svg class="sk-svg" :width="W" :height="H + 30" :viewBox="`0 -30 ${W} ${H + 30}`" role="img" :aria-label="`人群与功能需求桑基图，合计 ${money(data.total)}`">
       <text v-for="(header, index) in HEADERS" :key="header" class="sk-header" :x="columnX[index] + (index === 0 ? NODE_W : 0)" y="-14" :text-anchor="index === 0 ? 'end' : 'start'">{{ header }}</text>
@@ -175,6 +218,11 @@ function drillBack() {
       </g>
     </svg>
     </div>
+
+    <div class="sk-splitter" role="separator" tabindex="0" aria-orientation="vertical" aria-label="调整商品栏宽度"
+      :aria-valuenow="sideWidth" :aria-valuemin="SIDE_MIN" title="拖动调整宽度，双击恢复默认"
+      @pointerdown="startDrag" @pointermove="moveDrag" @pointerup="endDrag" @pointercancel="endDrag"
+      @dblclick="setSide(SIDE_DEFAULT)" @keydown="splitterKey"></div>
 
     <div class="sk-drill">
       <p class="sk-path"><button v-if="drillPeople" type="button" @click="drillBack">‹ 返回</button><span>{{ drillPeople || '买给谁' }}<template v-if="drillGroup"> · {{ drillGroup }}</template></span></p>
@@ -217,7 +265,7 @@ function drillBack() {
 .sk-value { fill: var(--mk-muted); font-variant-numeric: tabular-nums; }
 .sk-node.active .sk-name { text-decoration: underline; text-underline-offset: 3px; }
 .sk-node:focus-visible rect:last-of-type { stroke: var(--mk-accent); stroke-width: 2; }
-.sk-drill { display: none; }
+.sk-drill, .sk-splitter { display: none; }
 .sk-path { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; color: var(--mk-muted); font-size: 13px; font-weight: 700; }
 .sk-path button { min-height: 32px; padding: 4px 10px; color: var(--mk-ink); border: 1px solid var(--mk-line); border-radius: 8px; background: transparent; font: inherit; }
 .sk-drill ul, .sk-products ul { display: grid; margin: 0; padding: 0; list-style: none; }
@@ -234,16 +282,19 @@ function drillBack() {
 .sk-products header span { color: var(--mk-muted); font-size: 12px; }
 .sk-products li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 2px; border-top: 1px solid var(--mk-line); color: var(--mk-ink); font-size: 13px; }
 .sk-product { display: grid; gap: 2px; min-width: 0; }
-.sk-product strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sk-product strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; line-height: 1.35; }
 .sk-product small { color: var(--mk-muted); font-size: 11px; }
 .sk-facts b { color: var(--mk-ink); font-variant-numeric: tabular-nums; }
 .sk-products button { min-height: 34px; padding: 4px 10px; color: var(--mk-accent); border: 1px solid var(--mk-accent); border-radius: 9px; background: transparent; font: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .sk-stock-note { color: var(--mk-muted); font-size: 12px; font-style: normal; white-space: nowrap; }
 .sk-products li.sk-empty { display: block; color: var(--mk-muted); }
 .sk-products h5 small { margin-left: 4px; font-weight: 600; }
-/* Wide screens: the chart takes the width and the products of the chosen node sit beside it. */
+/* Wide screens: the chart takes the width and the products of the chosen node sit beside it, split by a draggable bar. */
 @media (min-width: 1200px) {
-  .sk { grid-template-columns: minmax(0, 1fr) 340px; align-items: stretch; }
+  .sk { grid-template-columns: minmax(0, 1fr) 14px var(--sk-side); column-gap: 0; align-items: stretch; }
+  .sk-splitter { display: block; position: relative; cursor: col-resize; touch-action: none; outline: none; }
+  .sk-splitter::before { content: ''; position: absolute; inset: 0 6px; border-radius: 1px; background: var(--mk-line); transition: background .15s ease; }
+  .sk-splitter:hover::before, .sk-splitter:focus-visible::before, .sk-splitter:active::before { inset: 0 5px; background: var(--mk-accent); }
   .sk-products { grid-template-rows: auto minmax(0, 1fr); height: 500px; align-content: start; }
   .sk-products ul { align-content: start; overflow-y: auto; overscroll-behavior: contain; }
 }
