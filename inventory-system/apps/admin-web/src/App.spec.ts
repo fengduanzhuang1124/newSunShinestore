@@ -373,6 +373,43 @@ describe('App', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/inventory/scan-receive'))).toBe(false);
   });
 
+  it('says why the draft cannot be submitted, shows who received the batch today, and adds every undecided row in one go (CR-023)', async () => {
+    localStorage.setItem('sunshine_inventory_access_token', 'test-token');
+    localStorage.setItem('sunshine_inventory_mode', 'receive');
+    const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/inventory/receipts')) return json({ warehouseName: '主仓库', summary: {}, receipts: [{
+        receiptId: '6', receiptNo: 'RK-6', status: 'OPEN', employeeName: '员工1', createdAt: '2026-11-10T00:00:00.000Z', completedAt: null, productCount: 1, totalQuantity: 60,
+        items: [{ itemId: '1', productId: '2', barcode: '9414706020544', productName: 'Lanocreme 绵羊油', batches: [{ batchId: '7', expiryDate: '2029-07', quantity: 60 }], quantity: 60, reversed: false, createdAt: '2026-11-10T02:03:00.000Z' }],
+      }] });
+      return json({ products: [{
+        productId: '2', productName: 'Lanocreme 绵羊油', barcodes: ['9414706020544'],
+        batches: [{ batchId: '7', expiryDate: '2029-07', expiryPrecision: 'MONTH', quantity: 60 }], totalQuantity: 60,
+      }] });
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('input[aria-label="查询条码或商品名称"]').setValue('Lanocreme');
+    await wrapper.get('input[aria-label="查询条码或商品名称"]').trigger('keydown.enter');
+    await flushPromises();
+    await wrapper.get('.product-search-dropdown [role="option"]').trigger('click');
+    await wrapper.get('input[aria-label="到期年月"]').setValue('2029-07');
+    await wrapper.get('.receive-form input[type="number"][min="1"][step="1"]').setValue(60);
+    await wrapper.get('form.receive-form').trigger('submit');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('该日期已有 60 件，其中今天已入库：员工1 60 件');
+    expect(wrapper.get('.confirm-draft').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('.draft-blocker').text()).toContain('还有 1 项显示“该日期已有”');
+    expect(wrapper.find('tr.needs-choice').exists()).toBe(true);
+    await wrapper.get('.draft-blocker button').trigger('click');
+    expect(wrapper.find('.draft-blocker').exists()).toBe(false);
+    expect(wrapper.get('.confirm-draft').attributes('disabled')).toBeUndefined();
+    expect(wrapper.get('.recount-choice button.active').text()).toBe('新到货（相加）');
+  });
+
   it('shows bilingual product details and moves focus to expiry after a barcode scan', async () => {
     localStorage.setItem('sunshine_inventory_access_token', 'test-token');
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
@@ -413,7 +450,7 @@ describe('App', () => {
         receipts: [{
           receiptId: '1', receiptNo: 'RK-20260801-ABC123', status: 'OPEN', employeeName: '员工1',
           createdAt: '2026-08-01T01:00:00.000Z', completedAt: null, productCount: 2, totalQuantity: 15,
-          items: [{ itemId: '1', barcode: '9400000000001', productName: '测试商品', expiryDate: '2027-08', quantity: 15, createdAt: '2026-08-01T01:00:00.000Z' }],
+          items: [{ itemId: '1', productId: '1', barcode: '9400000000001', productName: '测试商品', batches: [{ batchId: '1', expiryDate: '2027-08', quantity: 15 }], quantity: 15, createdAt: '2026-08-01T01:00:00.000Z' }],
         }],
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
@@ -443,8 +480,8 @@ describe('App', () => {
           receiptId: '1', receiptNo: 'RK-20261020-ABC123', status: 'OPEN', employeeName: '员工1',
           createdAt: '2026-10-20T01:00:00.000Z', completedAt: null, productCount: 2, totalQuantity: 6,
           items: [
-            { itemId: '1', batchId: '1', barcode: '9400000000001', productName: '已入库商品', expiryDate: '2027-08', quantity: 6, reversed: false, createdAt: '2026-10-20T01:00:00.000Z' },
-            { itemId: '2', batchId: '2', barcode: '9400000000002', productName: '已撤销商品', expiryDate: '2027-09', quantity: 2, reversed: true, createdAt: '2026-10-20T01:05:00.000Z' },
+            { itemId: '1', productId: '1', barcode: '9400000000001', productName: '已入库商品', batches: [{ batchId: '1', expiryDate: '2027-08', quantity: 6 }], quantity: 6, reversed: false, createdAt: '2026-10-20T01:00:00.000Z' },
+            { itemId: '2', productId: '2', barcode: '9400000000002', productName: '已撤销商品', batches: [{ batchId: '2', expiryDate: '2027-09', quantity: 2 }], quantity: 2, reversed: true, createdAt: '2026-10-20T01:05:00.000Z' },
           ],
         }],
       },
@@ -990,7 +1027,7 @@ describe('App', () => {
     const json = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     const receipt = (receiptId: string, employeeName: string) => ({
       receiptId, receiptNo: `RK-${receiptId}`, status: 'OPEN', employeeName, createdAt: '2026-11-03T00:00:00.000Z', completedAt: null, productCount: 1, totalQuantity: 8,
-      items: [{ itemId: `${receiptId}1`, batchId: '1', barcode: '193052100665', productName: 'Zuru La Squish玩具', expiryDate: '2034-11-30', quantity: 8, reversed: false, createdAt: '2026-11-03T00:00:00.000Z' }],
+      items: [{ itemId: `${receiptId}1`, productId: '1', barcode: '193052100665', productName: 'Zuru La Squish玩具', batches: [{ batchId: '1', expiryDate: '2034-11-30', quantity: 8 }], quantity: 8, reversed: false, createdAt: '2026-11-03T00:00:00.000Z' }],
     });
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);

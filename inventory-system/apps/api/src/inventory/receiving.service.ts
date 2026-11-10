@@ -23,6 +23,8 @@ export class ReceivingService {
     return value;
   }
 
+  // CR-023 F4: one row per product in a receipt, whatever the expiry dates; each date keeps its own quantity so it
+  // can still be corrected on its own. Reversed entries stay as separate rows.
   private groupReceiptItems(items: Array<{
     id: bigint;
     productId: bigint;
@@ -36,10 +38,10 @@ export class ReceivingService {
   }>) {
     const grouped = new Map<string, {
       itemId: string;
-      batchId: string;
+      productId: string;
       barcodes: string[];
       productName: string;
-      expiryDate: string;
+      batches: { batchId: string; expiryDate: string; quantity: number }[];
       quantity: number;
       reversed: boolean;
       createdAt: string;
@@ -47,32 +49,25 @@ export class ReceivingService {
     }>();
     for (const item of items) {
       const reversed = Boolean(item.movement.reversedBy);
-      const key = reversed
-        ? `reversed:${item.id.toString()}`
-        : `effective:${item.productId.toString()}:${item.batchId.toString()}`;
-      const existing = grouped.get(key);
-      if (existing) {
-        existing.quantity += item.quantity;
-        existing.entryCount += 1;
-        if (!existing.barcodes.includes(item.barcode)) existing.barcodes.push(item.barcode);
-        continue;
-      }
-      grouped.set(key, {
-        itemId: item.id.toString(),
-        batchId: item.batchId.toString(),
-        barcodes: [item.barcode],
-        productName: item.product.name,
-        expiryDate: item.batch.expiryPrecision === 'MONTH'
-          ? item.batch.expiryDate.toISOString().slice(0, 7)
-          : item.batch.expiryDate.toISOString().slice(0, 10),
-        quantity: item.quantity,
-        reversed,
-        createdAt: item.createdAt.toISOString(),
-        entryCount: 1,
-      });
+      const key = reversed ? `reversed:${item.id.toString()}` : `effective:${item.productId.toString()}`;
+      const expiryDate = item.batch.expiryPrecision === 'MONTH'
+        ? item.batch.expiryDate.toISOString().slice(0, 7)
+        : item.batch.expiryDate.toISOString().slice(0, 10);
+      const row = grouped.get(key) ?? {
+        itemId: item.id.toString(), productId: item.productId.toString(), barcodes: [], productName: item.product.name,
+        batches: [], quantity: 0, reversed, createdAt: item.createdAt.toISOString(), entryCount: 0,
+      };
+      grouped.set(key, row);
+      row.quantity += item.quantity;
+      row.entryCount += 1;
+      if (!row.barcodes.includes(item.barcode)) row.barcodes.push(item.barcode);
+      const batch = row.batches.find((entry) => entry.batchId === item.batchId.toString());
+      if (batch) batch.quantity += item.quantity;
+      else row.batches.push({ batchId: item.batchId.toString(), expiryDate, quantity: item.quantity });
     }
     return [...grouped.values()].map(({ barcodes, ...item }) => ({
       ...item,
+      batches: item.batches.sort((a, b) => a.expiryDate.localeCompare(b.expiryDate)),
       barcode: barcodes.join('、'),
     }));
   }

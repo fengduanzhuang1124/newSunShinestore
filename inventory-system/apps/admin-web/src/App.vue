@@ -30,7 +30,9 @@ type ProductResult = {
   totalQuantity: number;
   location?: ProductLocation | null;
 };
-type ReceiptItem = { itemId: string; batchId: string; barcode: string; productName: string; expiryDate: string; quantity: number; reversed: boolean; createdAt: string; entryCount?: number };
+// CR-023 F4: one row per product in a receipt; each expiry date keeps its own quantity.
+type ReceiptBatch = { batchId: string; expiryDate: string; quantity: number };
+type ReceiptItem = { itemId: string; productId: string; barcode: string; productName: string; batches: ReceiptBatch[]; quantity: number; reversed: boolean; createdAt: string; entryCount?: number };
 type Receipt = {
   receiptId: string;
   receiptNo: string;
@@ -1055,6 +1057,42 @@ function addReceiveDraft() {
   nextTick(() => scanInput.value?.focus());
 }
 
+// CR-023 F1–F2: say why the submit button is disabled, and let every undecided row be added in one go.
+const draftNeedsChoice = computed(() => receiveDraft.value.filter((item) => item.existingBatchId && !item.countMode).length);
+const draftBadQuantity = computed(() => receiveDraft.value.filter((item) => !Number.isInteger(item.quantity) || item.quantity < 1).length);
+const draftBlocker = computed(() => [
+  draftNeedsChoice.value ? `还有 ${draftNeedsChoice.value} 项显示“该日期已有”，请逐项选择“新到货（相加）”或“重新点货（以本次为准）”，两人分工点不同的货选相加` : '',
+  draftBadQuantity.value ? `有 ${draftBadQuantity.value} 项数量不正确，请填大于 0 的整数` : '',
+].filter(Boolean).join('；'));
+function addAllAsNewArrival() {
+  for (const item of receiveDraft.value) if (item.existingBatchId && !item.countMode) item.countMode = 'ADD';
+}
+
+// CR-023 F3: how much of an existing batch was received today and by whom, so two people counting can spot the same goods.
+const todayReceivedByBatch = ref(new Map<string, string>());
+async function loadTodayReceived() {
+  try {
+    const data = await apiRequest(`/inventory/receipts?date=${encodeURIComponent(storeToday())}`);
+    const byBatch = new Map<string, Map<string, number>>();
+    for (const receipt of data.receipts as Receipt[]) {
+      for (const item of receipt.items) {
+        if (item.reversed) continue;
+        for (const batch of item.batches) {
+          const people = byBatch.get(batch.batchId) ?? new Map<string, number>();
+          people.set(receipt.employeeName, (people.get(receipt.employeeName) ?? 0) + batch.quantity);
+          byBatch.set(batch.batchId, people);
+        }
+      }
+    }
+    todayReceivedByBatch.value = new Map([...byBatch].map(([batchId, people]) => [batchId, [...people].map(([name, quantity]) => `${name} ${quantity} 件`).join('、')]));
+  } catch {
+    // The note only helps the decision; the choice still works without it.
+  }
+}
+watch(() => (activeMode.value === 'receive' ? receiveDraft.value.filter((item) => item.existingBatchId).length : 0), (count) => {
+  if (count) void loadTodayReceived();
+}, { immediate: true });
+
 function removeReceiveDraft(draftId: string) {
   receiveDraft.value = receiveDraft.value.filter((item) => item.draftId !== draftId);
 }
@@ -1520,7 +1558,7 @@ async function exportTodayCount() {
     const data = await apiRequest(`/inventory/receipts?date=${encodeURIComponent(today)}`);
     const saved = (data.receipts as Receipt[]).flatMap((receipt) => receipt.items
       .filter((item) => !item.reversed)
-      .map((item) => ['已入库', receipt.receiptNo, receipt.employeeName, item.barcode, item.productName, item.expiryDate, item.quantity, new Date(item.createdAt).toLocaleString()]));
+      .map((item) => ['已入库', receipt.receiptNo, receipt.employeeName, item.barcode, item.productName, receiptExpiries(item), item.quantity, new Date(item.createdAt).toLocaleString()]));
     const pending = receiveDraft.value.map((item) => [
       '未提交（本机）', '', '', item.barcode || '无条码', item.productName, item.expiryDisplay, item.quantity, '',
     ]);
@@ -1537,6 +1575,8 @@ async function exportTodayCount() {
   }
 }
 
+const receiptExpiries = (item: ReceiptItem) => item.batches.map((batch) => (item.batches.length > 1 ? `${batch.expiryDate} × ${batch.quantity}` : batch.expiryDate)).join('、');
+
 function exportReceipts(list = receipts.value) {
   const fileName = list.length === 1 ? `${storeName.value}-入库单-${list[0].receiptNo}.csv` : `${storeName.value}-入库记录-${reportDate.value}.csv`;
   downloadCsv(fileName, [
@@ -1547,7 +1587,7 @@ function exportReceipts(list = receipts.value) {
       receipt.employeeName,
       item.barcode,
       item.productName,
-      item.expiryDate,
+      receiptExpiries(item),
       item.quantity,
       new Date(item.createdAt).toLocaleString(),
     ])),
@@ -1723,11 +1763,12 @@ async function issueBatch(product: ProductResult, batch: Batch) {
           <button class="receive-submit action-secondary" :disabled="loading || !productName.trim() || !expiryMonth">加入本次清单</button>
         </form>
         <section class="receive-draft" aria-label="本次点货清单">
-          <div class="draft-heading"><div><h3>本次点货清单</h3><p>先核对清单，再点“确认整单入库”写入库存；未提交内容会自动保存在本机。</p></div><div class="draft-heading-actions"><strong>{{ receiveDraft.length }} 项 · {{ receiveDraft.reduce((sum, item) => sum + item.quantity, 0) }} 件</strong><button class="secondary compact-action" type="button" :disabled="loading" @click="exportTodayCount">导出今日点货</button><button v-if="receiveDraft.length" class="confirm-draft action-primary" type="button" :disabled="loading || receiveDraft.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1 || (item.existingBatchId && !item.countMode))" @click="confirmReceiveDraft">{{ loading ? '正在写入…' : '确认整单入库' }}</button></div></div>
+          <div class="draft-heading"><div><h3>本次点货清单</h3><p>先核对清单，再点“确认整单入库”写入库存；未提交内容会自动保存在本机。</p></div><div class="draft-heading-actions"><strong>{{ receiveDraft.length }} 项 · {{ receiveDraft.reduce((sum, item) => sum + item.quantity, 0) }} 件</strong><button class="secondary compact-action" type="button" :disabled="loading" @click="exportTodayCount">导出今日点货</button><button v-if="receiveDraft.length" class="confirm-draft action-primary" type="button" :disabled="loading || Boolean(draftBlocker)" @click="confirmReceiveDraft">{{ loading ? '正在写入…' : '确认整单入库' }}</button></div></div>
+          <p v-if="receiveDraft.length && draftBlocker" class="draft-blocker" role="status"><span>暂不能入库：{{ draftBlocker }}。</span><button v-if="draftNeedsChoice" class="secondary compact-action" type="button" @click="addAllAsNewArrival">全部按新到货相加</button></p>
           <div v-if="receiveDraft.length" class="table-wrap receive-draft-table-wrap">
             <table class="receive-draft-table">
               <thead><tr><th>条码</th><th>商品名</th><th>到期日期</th><th>数量</th><th>操作</th></tr></thead>
-              <tbody><tr v-for="item in receiveDraft" :key="item.draftId"><td data-label="条码">{{ item.barcode || '无条码（自动编号）' }}</td><td data-label="商品名">{{ item.productName }}<div v-if="item.existingBatchId" class="recount-choice"><small>该日期已有 {{ item.existingQuantity }} 件：</small><button type="button" class="secondary compact-action" :class="{ active: item.countMode === 'ADD' }" @click="item.countMode = 'ADD'">新到货（相加）</button><button type="button" class="secondary compact-action" :class="{ active: item.countMode === 'RECOUNT' }" @click="item.countMode = 'RECOUNT'">重新点货（以本次为准）</button></div></td><td data-label="到期日期">{{ expiryLabel(item.expiryDisplay) }}</td><td data-label="数量"><input v-model.number="item.quantity" class="table-input quantity-input" type="number" min="1" step="1" :aria-label="`${item.productName} 清单数量`" /></td><td data-label="操作"><button class="secondary danger-action" type="button" @click="removeReceiveDraft(item.draftId)">删除</button></td></tr></tbody>
+              <tbody><tr v-for="item in receiveDraft" :key="item.draftId" :class="{ 'needs-choice': item.existingBatchId && !item.countMode }"><td data-label="条码">{{ item.barcode || '无条码（自动编号）' }}</td><td data-label="商品名">{{ item.productName }}<div v-if="item.existingBatchId" class="recount-choice"><small>该日期已有 {{ item.existingQuantity }} 件<template v-if="todayReceivedByBatch.get(item.existingBatchId)">，其中今天已入库：{{ todayReceivedByBatch.get(item.existingBatchId) }}</template>：</small><button type="button" class="secondary compact-action" :class="{ active: item.countMode === 'ADD' }" @click="item.countMode = 'ADD'">新到货（相加）</button><button type="button" class="secondary compact-action" :class="{ active: item.countMode === 'RECOUNT' }" @click="item.countMode = 'RECOUNT'">重新点货（以本次为准）</button></div></td><td data-label="到期日期">{{ expiryLabel(item.expiryDisplay) }}</td><td data-label="数量"><input v-model.number="item.quantity" class="table-input quantity-input" type="number" min="1" step="1" :aria-label="`${item.productName} 清单数量`" /></td><td data-label="操作"><button class="secondary danger-action" type="button" @click="removeReceiveDraft(item.draftId)">删除</button></td></tr></tbody>
             </table>
           </div>
           <p v-else class="empty-state compact">扫描并填写日期后，商品会先出现在这里。</p>
@@ -1850,7 +1891,7 @@ async function issueBatch(product: ProductResult, batch: Batch) {
               <div class="table-wrap">
                 <table>
                   <thead><tr><th>条码</th><th>商品名称</th><th>到期日期</th><th>数量</th><th>录入时间</th><th>纠错</th></tr></thead>
-                  <tbody><tr v-for="item in receipt.items" :key="item.itemId" :class="{ 'reversed-row': item.reversed }"><td>{{ item.barcode }}</td><td>{{ item.productName }} <small v-if="!item.reversed && item.entryCount && item.entryCount > 1">（合并 {{ item.entryCount }} 次录入）</small></td><td>{{ item.expiryDate }}</td><td>{{ item.quantity }} 件 <span v-if="item.reversed" class="reversed-label">已撤销</span></td><td>{{ new Date(item.createdAt).toLocaleTimeString() }}</td><td><button v-if="!item.reversed" class="secondary compact-action" type="button" @click="openBatchExpiryCorrection(item.batchId, item.productName, item.expiryDate)">修正日期</button><span v-else>—</span></td></tr></tbody>
+                  <tbody><tr v-for="item in receipt.items" :key="item.itemId" :class="{ 'reversed-row': item.reversed }"><td>{{ item.barcode }}</td><td>{{ item.productName }} <small v-if="!item.reversed && item.entryCount && item.entryCount > 1">（合并 {{ item.entryCount }} 次录入）</small></td><td><span v-for="batch in item.batches" :key="batch.batchId" class="receipt-expiry">{{ expiryLabel(batch.expiryDate) }}<template v-if="item.batches.length > 1"> × {{ batch.quantity }}</template></span></td><td>{{ item.quantity }} 件 <span v-if="item.reversed" class="reversed-label">已撤销</span></td><td>{{ new Date(item.createdAt).toLocaleTimeString() }}</td><td><div v-if="!item.reversed" class="receipt-fix"><button v-for="batch in item.batches" :key="batch.batchId" class="secondary compact-action" type="button" @click="openBatchExpiryCorrection(batch.batchId, item.productName, batch.expiryDate)">修正{{ item.batches.length > 1 ? ` ${expiryLabel(batch.expiryDate)}` : '日期' }}</button></div><span v-else>—</span></td></tr></tbody>
                 </table>
               </div>
             </details>

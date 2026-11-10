@@ -364,6 +364,11 @@ td { color: #29483e; }
 .recount-choice small { color: var(--warning, #b7791f); font-weight: 700; }
 .recount-choice button.active { color: #fff; border-color: transparent; background: linear-gradient(135deg, #2f80ed, #5b5bd6); }
 .confirm-draft { min-width: 160px; }
+.draft-blocker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 10px 0 0; padding: 10px 12px; color: #8a4b08; border: 1px solid #f0c27a; border-radius: 10px; background: #fff7e8; font-size: 13px; font-weight: 600; line-height: 1.5; }
+.receive-draft-table tr.needs-choice td { background: #fff7e8; }
+.receive-draft-table tr.needs-choice td:first-child { box-shadow: inset 3px 0 0 #e8a33d; }
+.receipt-expiry { display: block; white-space: nowrap; }
+.receipt-fix { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .empty-state.compact { margin: 0; padding: 18px; }
 .milk-review-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .milk-review-heading h2 { margin-bottom: 4px; }
@@ -480,6 +485,7 @@ th, td, .batch-list, .batch-row { border-color: var(--line); }
 :root[data-theme="dark"] .level-badge.early { color: #a9f5d5; background: rgb(28 112 82 / 52%); }
 :root[data-theme="dark"] .movement-badge.loss { color: #ffc0ac; background: rgb(116 49 37 / 55%); }
 :root[data-theme="dark"] .reversed-label { color: #ffc8b8; background: rgb(121 51 39 / 60%); }
+:root[data-theme="dark"] .draft-blocker, :root[data-theme="dark"] .receive-draft-table tr.needs-choice td { color: #ffd9a3; border-color: rgb(232 163 61 / 50%); background: rgb(120 72 12 / 35%); }
 :root[data-theme="dark"] .danger-action { color: #ffc2b4; background: rgb(107 45 36 / 58%); }
 :root[data-theme="dark"] .delta-gain { color: #6ef0bd; }
 :root[data-theme="dark"] .delta-loss { color: #ff9e88; }
