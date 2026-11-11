@@ -107,10 +107,11 @@ export function demandRows(input: {
 
 // CR-021 F3: people → function group → function, weighted by list-price revenue. A product serving several groups or
 // functions has its revenue split evenly, so every layer adds up to the products' revenue. A product with no recognised
-// function goes to "无明确功能" with its first-level category as the function.
+// function goes to "无明确功能" with its first-level category as the function; with a store sub-category label
+// (REQ-016 A7) it goes to its first-level category with the label instead.
 export const NO_FUNCTION = '无明确功能';
 export const SANKEY_PRODUCT_LIMIT = 10;
-export type SankeyEntry = { productId: string; cents: number; groups: string[]; functions: { group: string; label: string }[]; fallback: string };
+export type SankeyEntry = { productId: string; cents: number; groups: string[]; functions: { group: string; label: string }[]; fallback: string; storeSub?: string | null };
 export type SankeyNode = { id: string; layer: 0 | 1 | 2; name: string; group: string | null; value: number };
 
 export function buildSankey(entries: SankeyEntry[]) {
@@ -133,7 +134,7 @@ export function buildSankey(entries: SankeyEntry[]) {
     if (entry.cents <= 0) continue;
     total += entry.cents;
     const groups = entry.groups.length ? entry.groups : [GENERAL];
-    const functions = entry.functions.length ? entry.functions : [{ group: NO_FUNCTION, label: entry.fallback }];
+    const functions = entry.functions.length ? entry.functions : [entry.storeSub ? { group: entry.fallback, label: entry.storeSub } : { group: NO_FUNCTION, label: entry.fallback }];
     const piece = entry.cents / (groups.length * functions.length);
     for (const people of groups) {
       for (const { group, label } of functions) {

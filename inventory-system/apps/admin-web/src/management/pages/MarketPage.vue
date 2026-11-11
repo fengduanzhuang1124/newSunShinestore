@@ -5,7 +5,8 @@ import MarketComingSoon from '../components/market/MarketComingSoon.vue';
 import MarketHome from '../components/market/MarketHome.vue';
 import MarketInsightHub from '../components/market/MarketInsightHub.vue';
 import MarketInsights from '../components/market/MarketInsights.vue';
-import { MARKET_MODULES, PERIOD_LABEL, type InsightTab, type ProductList, type MarketInsights as Insights, type MarketModuleId, type MarketPeriod } from '../components/market/market-types';
+import MarketTrends from '../components/market/MarketTrends.vue';
+import { MARKET_MODULES, PERIOD_LABEL, type InsightTab, type ProductList, type MarketInsights as Insights, type MarketModuleId, type MarketPeriod, type NewsFeed } from '../components/market/market-types';
 import { useManagementContext } from '../useManagementDashboard';
 
 // REQ-014 market analysis. Loads its own data; nothing here writes except "加入进货单", which goes through the
@@ -44,6 +45,18 @@ async function loadInsights() {
 }
 watch(period, () => { void loadInsights(); });
 
+// REQ-016: the home card shows this week's news count; a failure only leaves the card on "点击查看".
+const newsWeek = ref<NewsFeed['summary'] | null>(null);
+async function loadNewsWeek() {
+  const storeId = currentStoreId();
+  if (!storeId) return;
+  try {
+    newsWeek.value = (await managementRequest<NewsFeed>(`/news?storeId=${encodeURIComponent(storeId)}&days=7`)).summary;
+  } catch {
+    newsWeek.value = null;
+  }
+}
+
 async function addToOrder(productId: string) {
   adding.value = productId;
   try {
@@ -58,12 +71,13 @@ const metrics = computed<Record<MarketModuleId, string>>(() => {
   const summary = insights.value?.summary;
   return {
     insights: summary ? `${summary.surgeProducts} 种突然热销 · ${summary.overstockProducts} 种超量滞销` : loading.value ? '正在读取…' : '点击查看',
-    report: '即将上线', trends: '即将上线', campaigns: '即将上线',
+    report: '即将上线', campaigns: '即将上线',
+    trends: newsWeek.value ? `本周 ${newsWeek.value.total} 条 · ${newsWeek.value.related} 条与店内相关` : '点击查看',
   };
 });
 const current = computed(() => MARKET_MODULES.find((module) => module.id === view.value));
 
-onMounted(() => { void loadInsights(); });
+onMounted(() => { void loadInsights(); void loadNewsWeek(); });
 </script>
 
 <template>
@@ -83,6 +97,7 @@ onMounted(() => { void loadInsights(); });
       <MarketInsightHub v-if="view === 'insights' && insights" v-model="insightTab" :data="insights" />
       <MarketInsights v-if="view === 'insights'" v-model:tab="insightTab" v-model:list="productList" :data="insights" :loading="loading" :error="error" :adding="adding"
                       @retry="loadInsights" @add-to-order="addToOrder" @go="selectSection($event)" />
+      <MarketTrends v-else-if="view === 'trends'" :request="managementRequest" :store-id="currentStoreId()" />
       <MarketComingSoon v-else :id="view" />
     </template>
   </section>

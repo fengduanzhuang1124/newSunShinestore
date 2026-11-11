@@ -86,6 +86,8 @@ const FUNCTION_RULES: FunctionRule[] = [
   { group: "免疫与精力", label: "补铁补血", scope: HEALTH, pattern: rule("铁|iron|floradix|b12|甲钴胺|补血") },
   { group: "免疫与精力", label: "综合营养", scope: HEALTH, pattern: rule("多维|multi|综合维|多种维生素|女维|男维|女士维生素|营养粉|ensure|安素|蔬菜软糖|蛋白粉|whey|protein") },
   { group: "免疫与精力", label: "解酒", scope: HEALTH, pattern: rule("解酒|hangover") },
+  // REQ-016 A8: milk powders and products the store labelled "日常营养".
+  { group: "日常营养", label: "日常营养", scope: HEALTH, pattern: rule("日常营养|奶粉|milk pow(d)?er|full ?cream|trim ?cream|anchor trim|羊奶|goat (milk )?powder|a2 ?milk|taupo ?pure|a2 stage|aptamil|karicare|爱他美|可瑞康") },
   { group: "脑与情绪", label: "睡眠", scope: HEALTH, pattern: rule("睡眠|sleep|助眠|褪黑|樱桃|cherry|安神") },
   { group: "脑与情绪", label: "情绪压力", scope: HEALTH, pattern: rule("情绪|mood|stress|压力|圣约翰|焦虑") },
   { group: "脑与情绪", label: "健脑益智", scope: HEALTH, pattern: rule("dha|健脑|brain|银杏|ginkgo|磷脂酰丝氨酸|益智") },
@@ -121,6 +123,18 @@ const AUDIENCE_RULES: { label: string; pattern: RegExp }[] = [
 ];
 
 const byCode = new Map(CATEGORY_RULES.map(({ code, level1, level2 }) => [code, { code, level1, level2 }]));
+
+// REQ-016 A6: the texts a product is recognised from: its names plus the store sub-category label typed in by a person,
+// so a label such as "抗衰" or "香皂/伴手礼" adds that function or the tourist group.
+export function classificationNames(product: { name?: string | null; chineseName?: string | null; englishName?: string | null; storeLabel?: string | null }) {
+  return [product.name, product.chineseName, product.englishName, product.storeLabel];
+}
+
+// The first part of a store label that is a sub-category rather than the gift mark, e.g. "香皂/伴手礼" → "香皂".
+export const GIFT_LABEL = '伴手礼';
+export function storeLabelSub(label: string | null | undefined): string | null {
+  return label?.split(/[/／、,，;；]/).map((part) => part.trim()).find((part) => part && part !== GIFT_LABEL) ?? null;
+}
 
 // The category of a product from its names; `manual` is the category typed in by a person, if any.
 export function productCategory(names: (string | null | undefined)[], manual?: string | null): ProductCategory {

@@ -48,6 +48,20 @@ export type MarketInsights = {
   rules: { revenue: string; demand: string; sankey?: string; surge: string; overstock: string; pairs: string; category: string };
 };
 
+// REQ-016 part 3: GET /news. Topics are worked out on the server from the article text.
+export type NewsRegion = 'ANZ' | 'ASIA' | 'GLOBAL';
+export const NEWS_REGION_LABEL: Record<NewsRegion, string> = { ANZ: '澳新', ASIA: '亚洲', GLOBAL: '全球' };
+export type NewsTopicTag = { key: string; group: string; label: string; kind: 'function' | 'category' | 'other'; inStock: number | null };
+export type NewsItem = {
+  id: string; title: string; summary: string | null; link: string; publishedAt: string | null; fetchedAt: string;
+  source: { id: string; name: string; region: NewsRegion }; topics: NewsTopicTag[]; related: boolean;
+};
+export type NewsSource = { id: string; name: string; url: string; region: NewsRegion; enabled: boolean; lastSuccessAt: string | null; lastFailureAt: string | null; lastError: string | null };
+export type NewsFeed = {
+  days: number; canManage: boolean; summary: { total: number; related: number };
+  items: NewsItem[]; topics: (NewsTopicTag & { count: number })[]; sources: NewsSource[];
+};
+
 export type MarketModule = {
   id: MarketModuleId; title: string; english: string; summary: string; ready: boolean;
   // Two gradient stops for the card art, as "r g b".
@@ -57,7 +71,7 @@ export type MarketModule = {
 export const MARKET_MODULES: MarketModule[] = [
   { id: 'insights', title: '店铺经营发现', english: 'STORE INSIGHTS', summary: '买了什么 · 为谁买 · 经营重点', ready: true, tint: ['40 150 220', '128 220 255'] },
   { id: 'report', title: 'AI 销售报告', english: 'AI SALES REPORT', summary: '周报 · 月报 · 季报，每条建议附依据', ready: false, tint: ['118 82 230', '196 160 255'] },
-  { id: 'trends', title: '行业趋势', english: 'INDUSTRY TRENDS', summary: '国内 · 澳新 · 小红书 · 全球', ready: false, tint: ['226 132 30', '255 206 110'] },
+  { id: 'trends', title: '行业趋势', english: 'INDUSTRY TRENDS', summary: '澳新 · 亚洲 · 全球行业新闻，每天更新', ready: true, tint: ['226 132 30', '255 206 110'] },
   { id: 'campaigns', title: '活动策划', english: 'CAMPAIGNS', summary: '策划 · 清货 · 趋势活动，价格由你决定', ready: false, tint: ['42 160 104', '150 236 186'] },
 ];
 

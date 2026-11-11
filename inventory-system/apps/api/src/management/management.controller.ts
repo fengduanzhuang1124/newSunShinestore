@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import type { AuthenticatedRequest } from '../auth/jwt-auth.guard.js';
-import { ManagementService } from './management.service.js';
+import { ManagementService, STORE_LABEL_MAX_LENGTH } from './management.service.js';
 
 @Controller('management')
 @UseGuards(JwtAuthGuard)
@@ -230,6 +230,16 @@ export class ManagementController {
     if (input.category !== null && input.category !== undefined && typeof input.category !== 'string') throw new BadRequestException('品类参数无效');
     const user = request.inventoryUser!;
     return { code: 200, message: input.category ? '商品品类已指定' : '已恢复自动识别', data: await this.management.assignProductCategory(user.organizationId, user.id, storeId, BigInt(input.productId), input.category ?? null) };
+  }
+
+  @Post('product-categories/label')
+  async assignProductStoreLabel(@Req() request: AuthenticatedRequest, @Query('storeId') storeIdValue: string | undefined, @Body() input: { productId?: string; label?: string | null }) {
+    const storeId = this.storeId(storeIdValue);
+    if (!input.productId || !/^\d+$/.test(input.productId)) throw new BadRequestException('商品参数无效');
+    if (input.label !== null && input.label !== undefined && typeof input.label !== 'string') throw new BadRequestException('标签参数无效');
+    if (typeof input.label === 'string' && input.label.trim().length > STORE_LABEL_MAX_LENGTH) throw new BadRequestException(`门店细分标签不能超过${STORE_LABEL_MAX_LENGTH}个字`);
+    const user = request.inventoryUser!;
+    return { code: 200, message: input.label?.trim() ? '门店细分标签已保存' : '门店细分标签已清除', data: await this.management.assignProductStoreLabel(user.organizationId, user.id, storeId, BigInt(input.productId), input.label ?? null) };
   }
 
   @Get('market-insights')

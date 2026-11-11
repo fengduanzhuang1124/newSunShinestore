@@ -1,5 +1,5 @@
 import { buildHighlights, buildSankey, categoryMovers, categoryShares, dataThroughDate, demandGroups, demandRows, GENERAL, heatmapSummary, NO_FUNCTION, periodTotals, TOURIST } from './store-analysis.js';
-import { productAudiences, productCategory, productFunctions } from '../shared/product-taxonomy.js';
+import { classificationNames, productAudiences, productCategory, productFunctions, storeLabelSub } from '../shared/product-taxonomy.js';
 
 const groupsOf = (name: string) => {
   const category = productCategory([name]);
@@ -139,5 +139,41 @@ describe('people → function flow (CR-021)', () => {
     expect(flow.nodes.filter((node) => node.layer === 0)[0].name).toBe('家庭通用');
     expect(flow.products['g:骨骼关节']).toEqual([{ productId: '2', revenue: 60 }]);
     expect(flow.products['p:家庭通用']).toEqual([{ productId: '1', revenue: 100 }]);
+  });
+});
+
+describe('store sub-category labels (REQ-016 A6–A8)', () => {
+  const classify = (name: string, storeLabel: string | null) => {
+    const names = classificationNames({ name, storeLabel });
+    const category = productCategory(names);
+    return { category: category.level2, functions: productFunctions(names, category), groups: demandGroups(names, category, productFunctions(names, category), productAudiences(names)) };
+  };
+
+  it('recognises functions, categories and the gift mark from the label together with the names', () => {
+    expect(classify('Trilogy Certified Organic Rosehip Oil 45ml', '抗皱紧致')).toMatchObject({ category: '面部护理', functions: ['抗皱紧致'] });
+    expect(classify('antipodes kiwi gold 30ml', '眼部护理')).toMatchObject({ category: '眼部护理' });
+    expect(classify('Anchor Full cream 1kg SF *6', '日常营养')).toMatchObject({ category: '成人奶粉', functions: ['日常营养'] });
+    expect(classify('Anchor Blue Milk Powder 1kg', null).functions).toEqual(['日常营养']);
+    expect(classify('Healtheries 儿童DHA', '儿童健脑').groups).toContain('儿童');
+    expect(classify('Kiwi Bliss 火山泥面膜', '火山泥伴手礼').groups).toContain(TOURIST);
+    // A label never replaces a category recognised from the names: honey stays honey.
+    expect(classify('Manuka Hunters 15+ 500g', '美容口服').category).toBe('蜂蜜');
+  });
+
+  it('takes the first part that is not the gift mark as the sub-category', () => {
+    expect(storeLabelSub('香皂/伴手礼')).toBe('香皂');
+    expect(storeLabelSub('伴手礼／护手')).toBe('护手');
+    expect(storeLabelSub(' 高级洗发 ')).toBe('高级洗发');
+    expect(storeLabelSub('伴手礼')).toBeNull();
+    expect(storeLabelSub(null)).toBeNull();
+  });
+
+  it('shows labelled products without a function under their category and label', () => {
+    const flow = buildSankey([
+      { productId: '1', cents: 5_000, groups: [], functions: [], fallback: '洗护用品', storeSub: '高级洗发' },
+      { productId: '2', cents: 2_000, groups: [], functions: [], fallback: '食品', storeSub: null },
+    ]);
+    expect(flow.nodes.find((node) => node.id === 'f:洗护用品/高级洗发')).toMatchObject({ layer: 2, name: '高级洗发', group: '洗护用品', value: 50 });
+    expect(flow.nodes.find((node) => node.id === `f:${NO_FUNCTION}/食品`)?.value).toBe(20);
   });
 });
