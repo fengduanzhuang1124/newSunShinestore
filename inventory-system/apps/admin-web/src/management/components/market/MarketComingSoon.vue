@@ -3,18 +3,14 @@ import { computed } from 'vue';
 import MarketArt from './MarketArt.vue';
 import { MARKET_MODULES, type MarketModuleId } from './market-types';
 
-// Modules of REQ-014 stages 2–4: what they will do and what they still need.
-const props = defineProps<{ id: Exclude<MarketModuleId, 'insights'> }>();
-const PLANS: Record<Exclude<MarketModuleId, 'insights'>, { stage: string; points: string[]; needs: string }> = {
+// Modules of REQ-014 not built yet: what they will do and what they still need.
+type PlannedModule = Exclude<MarketModuleId, 'insights' | 'trends'>;
+const props = defineProps<{ id: PlannedModule }>();
+const PLANS: Record<PlannedModule, { stage: string; points: string[]; needs: string }> = {
   report: {
     stage: '阶段 2',
     points: ['按周 / 月 / 季度生成：总结、亮点、问题、3–5 条建议', '每条建议注明依据的数字，商品可点开查看', '报告存档，可翻看历史；接口失败时显示上一份', '只使用汇总数字，不含顾客信息；不给价格或折扣'],
     needs: '需要 AI 接口账号（密钥写入运行电脑的配置文件）',
-  },
-  trends: {
-    stage: '阶段 4',
-    points: ['国内、澳新、小红书、全球四类，每周整理一次', '每条附来源链接和发布日期，超过 90 天的不算本周趋势', '标出与店内哪些品类、有货商品相关', '小红书先用公开报道整理，效果不足再选其他来源'],
-    needs: '需要 AI 接口账号；可提供信任的行业网站名单',
   },
   campaigns: {
     stage: '阶段 3',

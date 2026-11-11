@@ -1,0 +1,2473 @@
+{
+ "source": "REQ-016 商品分类标注表（甲方 11 月 11 日填写）",
+ "labels": [
+  {
+   "productId": "2006",
+   "label": "日常营养",
+   "name": "Anchor Full cream 1kg SF *6"
+  },
+  {
+   "productId": "2014",
+   "label": "日常营养",
+   "name": "Anchor Blue Milk Powder 1kg"
+  },
+  {
+   "productId": "460",
+   "label": "蜂蜜/养胃",
+   "name": "Comvita 康维他 UMF18+250g"
+  },
+  {
+   "productId": "1982",
+   "label": "日常营养",
+   "name": "Taupopure陶波牛奶全脂"
+  },
+  {
+   "productId": "428",
+   "label": "蜂蜜",
+   "name": "Comvita 康维他 20+250g"
+  },
+  {
+   "productId": "1936",
+   "label": "羊奶粉",
+   "name": "贺寿利羊奶"
+  },
+  {
+   "productId": "2008",
+   "label": "日常营养",
+   "name": "Anchor Trim cream 1kg SF *6"
+  },
+  {
+   "productId": "1032",
+   "label": "美容口服",
+   "name": "Manuka Hunters 15+ 500g"
+  },
+  {
+   "productId": "1703",
+   "label": "抗皱紧致",
+   "name": "Trilogy Certified Organic 玫瑰果 油 45ml"
+  },
+  {
+   "productId": "2009",
+   "label": "羊奶粉",
+   "name": "Healtheries goat powder 6 tins SF"
+  },
+  {
+   "productId": "3614",
+   "label": "日常营养",
+   "name": "A2 Milk Powder Adult 6bags"
+  },
+  {
+   "productId": "995",
+   "label": "蜂蜜",
+   "name": "MANUKA DOCTOR MGO40+ 250g"
+  },
+  {
+   "productId": "99",
+   "label": "眼部护理",
+   "name": "antipodes kiwi gold 30ml"
+  },
+  {
+   "productId": "1716",
+   "label": "外用护理/抗皱紧致",
+   "name": "Trilogy 玫瑰果 油抗氧化果油30ml"
+  },
+  {
+   "productId": "703",
+   "label": "植物与草本提取",
+   "name": "harker 清肺液500ml"
+  },
+  {
+   "productId": "1015",
+   "label": "蜂蜜",
+   "name": "Manuka Health MGO 400+ 500G"
+  },
+  {
+   "productId": "949",
+   "label": "精油与香薰",
+   "name": "linden leaves 薰衣草oil 100ml"
+  },
+  {
+   "productId": "2015",
+   "label": "日常营养",
+   "name": "anchor trim"
+  },
+  {
+   "productId": "952",
+   "label": "精油与香薰",
+   "name": "Linden Leaves 柑橘橙花精油 100ml"
+  },
+  {
+   "productId": "1031",
+   "label": "蜂蜜",
+   "name": "Manuka Hunters 10+ 500g"
+  },
+  {
+   "productId": "100",
+   "label": "眼部护理",
+   "name": "Antipodes 奇异果眼霜 30ml"
+  },
+  {
+   "productId": "1017",
+   "label": "蜂蜜",
+   "name": "Manuka Health MGO 573+ 500g"
+  },
+  {
+   "productId": "1319",
+   "label": "香皂/伴手礼",
+   "name": "parrs Honey & 蜂胶 香皂 140g"
+  },
+  {
+   "productId": "380",
+   "label": "唇部护理",
+   "name": "chantelle Lip Blam 3.4g"
+  },
+  {
+   "productId": "40",
+   "label": "手部护理",
+   "name": "alpine 蜂蜜护手霜"
+  },
+  {
+   "productId": "1130",
+   "label": "中端护发",
+   "name": "Moroccanoil 100ml+25mlfree"
+  },
+  {
+   "productId": "21",
+   "label": "洗发护发",
+   "name": "8 minute 人参洗发水 800ml*2"
+  },
+  {
+   "productId": "374",
+   "label": "面膜",
+   "name": "chantelle 面膜 7pieces"
+  },
+  {
+   "productId": "1925",
+   "label": "抗衰",
+   "name": "srw细胞能量cel2"
+  },
+  {
+   "productId": "3620",
+   "label": "日常营养",
+   "name": "a2 stage3"
+  },
+  {
+   "productId": "1841",
+   "label": "日常营养",
+   "name": "The pure羊奶粉400g"
+  },
+  {
+   "productId": "732",
+   "label": "儿童零食",
+   "name": "Healtheries 香草牛奶片50"
+  },
+  {
+   "productId": "2123",
+   "label": "日常营养",
+   "name": "Anchor Full cream 900g SF *6 tins"
+  },
+  {
+   "productId": "1034",
+   "label": "蜂蜜",
+   "name": "Manuka Hunters 5+ 500g"
+  },
+  {
+   "productId": "3717",
+   "label": "高级洗发",
+   "name": "kerastase chronologiste set"
+  },
+  {
+   "productId": "278",
+   "label": "抗衰",
+   "name": "Bio-E OPS 花胶饮精华 14bags*30ml"
+  },
+  {
+   "productId": "2424",
+   "label": "蜂蜜/养胃",
+   "name": "whenua umf20+250g"
+  },
+  {
+   "productId": "1030",
+   "label": "蜂蜜",
+   "name": "蜜纽康 mgo 700+ 250g"
+  },
+  {
+   "productId": "954",
+   "label": "精油与香薰",
+   "name": "Linden 玫瑰依兰香精油100m"
+  },
+  {
+   "productId": "2475",
+   "label": "面部护理",
+   "name": "cemoy toner+lotion+cream*2"
+  },
+  {
+   "productId": "1012",
+   "label": "喉糖与蜂蜜糖果",
+   "name": "Manuka Health MGO 263+ 1KG"
+  },
+  {
+   "productId": "2388",
+   "label": "日常营养",
+   "name": "taupo pure 1kg*6s trim"
+  },
+  {
+   "productId": "2127",
+   "label": "婴幼儿奶粉",
+   "name": "Aptamil Pro 1 SF* 3TINS"
+  },
+  {
+   "productId": "27",
+   "label": "面膜",
+   "name": "8+面膜 羊奶 焕活面膜"
+  },
+  {
+   "productId": "429",
+   "label": "蜂蜜",
+   "name": "Comvita 康维他 5+ 30sachets 300g"
+  },
+  {
+   "productId": "1859",
+   "label": "面膜",
+   "name": "Royal Nectar 面膜50m l"
+  },
+  {
+   "productId": "839",
+   "label": "高级洗发",
+   "name": "Kerastase 元气姜套盒"
+  },
+  {
+   "productId": "1009",
+   "label": "蜂蜜",
+   "name": "Manuka Health MGO 115+ 1KG"
+  },
+  {
+   "productId": "1999",
+   "label": "蜂蜜",
+   "name": "metodayumf5+500g"
+  },
+  {
+   "productId": "350",
+   "label": "手部护理",
+   "name": "careline 玫瑰护手霜100ml"
+  },
+  {
+   "productId": "368",
+   "label": "面部护理",
+   "name": "Cemoy 面霜50ml"
+  },
+  {
+   "productId": "405",
+   "label": "面部护理",
+   "name": "coco brownie bare skin cream 40ml"
+  },
+  {
+   "productId": "2007",
+   "label": "婴幼儿奶粉",
+   "name": "aptamil pro stage2 3tins"
+  },
+  {
+   "productId": "347",
+   "label": "抗衰",
+   "name": "Bruntwood Lane felted wool 香皂 rose 100g"
+  },
+  {
+   "productId": "341",
+   "label": "香皂/伴手礼",
+   "name": "Bruntwood Lane felted wool 香皂 羊奶 100g"
+  },
+  {
+   "productId": "2315",
+   "label": "胆固醇调节",
+   "name": "Ethical Nutrients Cholestrienol Cardiovascular 30 caps"
+  },
+  {
+   "productId": "731",
+   "label": "儿童零食",
+   "name": "Healtheries 草莓牛奶片"
+  },
+  {
+   "productId": "1435",
+   "label": "面部护理/伴手礼",
+   "name": "parrs pamper trio handcream+sope+lipcare"
+  },
+  {
+   "productId": "799",
+   "label": "零食",
+   "name": "Jack links beef jerky Original 150g"
+  },
+  {
+   "productId": "1013",
+   "label": "蜂蜜",
+   "name": "manuka health MGO 263+ 500g"
+  },
+  {
+   "productId": "344",
+   "label": "香皂/伴手礼",
+   "name": "Bruntwood Lane felted wool 香皂 麦卢卡蜂蜜 100g"
+  },
+  {
+   "productId": "82",
+   "label": "面膜",
+   "name": "Antipodes Aura 麦卢卡蜂蜜 面膜"
+  },
+  {
+   "productId": "359",
+   "label": "面部护理",
+   "name": "Cemoy 洁面 100ml"
+  },
+  {
+   "productId": "1019",
+   "label": "蜂蜜",
+   "name": "manuka health mgo250+ 250g"
+  },
+  {
+   "productId": "2128",
+   "label": "婴幼儿奶粉",
+   "name": "Karicare Goat SF 3* 6tins"
+  },
+  {
+   "productId": "2312",
+   "label": "日常营养",
+   "name": "Taupo Milk Power A2 *6"
+  },
+  {
+   "productId": "2126",
+   "label": "婴幼儿奶粉",
+   "name": "Aptamil Pro 2 SF* 3TINS"
+  },
+  {
+   "productId": "2125",
+   "label": "婴幼儿奶粉",
+   "name": "Aptamil Pro 3 SF* 3TINS"
+  },
+  {
+   "productId": "1010",
+   "label": "蜂蜜",
+   "name": "Manuka Health MGO 115+ 500G"
+  },
+  {
+   "productId": "3641",
+   "label": "婴幼儿奶粉",
+   "name": "karicare goat 2rd 3tin"
+  },
+  {
+   "productId": "1160",
+   "label": "中端护发",
+   "name": "Moroccanoil volume 洗发水+condi cambo 500ml"
+  },
+  {
+   "productId": "844",
+   "label": "高级洗发",
+   "name": "kerastase gloss absolu 45mlglaze drops"
+  },
+  {
+   "productId": "465",
+   "label": "面膜",
+   "name": "ddmask white 面膜 7pices"
+  },
+  {
+   "productId": "288",
+   "label": "减肥",
+   "name": "BioE 咖啡片56g"
+  },
+  {
+   "productId": "837",
+   "label": "高级洗发",
+   "name": "Kerastase Elixir Ultime set"
+  },
+  {
+   "productId": "3721",
+   "label": "高级洗发",
+   "name": "kerastase glossabsoluset3set"
+  },
+  {
+   "productId": "3605",
+   "label": "婴幼儿奶粉",
+   "name": "aptamil pro stage3 3tins"
+  },
+  {
+   "productId": "348",
+   "label": "香皂/伴手礼",
+   "name": "Bruntwood Lane felted wool 香皂 sandalwood 100g"
+  },
+  {
+   "productId": "397",
+   "label": "面部护理",
+   "name": "coco browine double anti 乳液 120ml"
+  },
+  {
+   "productId": "1131",
+   "label": "中端护发",
+   "name": "Moroccanoil 100ml+25mlfree 轻盈版发油套盒"
+  },
+  {
+   "productId": "820",
+   "label": "高级护发",
+   "name": "Kerastase8小时魔术精华90ml"
+  },
+  {
+   "productId": "852",
+   "label": "高级洗发",
+   "name": "Kerastase pink bain hydra-fortifiant 洗发水 250ml"
+  },
+  {
+   "productId": "1985",
+   "label": "抗衰",
+   "name": "莱文医生晚霜"
+  },
+  {
+   "productId": "423",
+   "label": "驱虫与常备药",
+   "name": "combantrin巧克力打虫药"
+  },
+  {
+   "productId": "145",
+   "label": "染发",
+   "name": "Aromaganic Hair Colour 5.02染发膏"
+  },
+  {
+   "productId": "1689",
+   "label": "精油与香薰",
+   "name": "Thursday Plantation lavender oil 25ml"
+  },
+  {
+   "productId": "340",
+   "label": "香皂/伴手礼",
+   "name": "Bruntwood Lane felted wool 香皂 french pear 100g"
+  },
+  {
+   "productId": "282",
+   "label": "精油与香薰",
+   "name": "Bio-Oil 200ml百洛油200ml"
+  },
+  {
+   "productId": "96",
+   "label": "手部护理",
+   "name": "Antipodes Joyful hand cream 120ml"
+  },
+  {
+   "productId": "345",
+   "label": "香皂/伴手礼",
+   "name": "Bruntwood Lane felted wool 香皂 ocean 100g"
+  },
+  {
+   "productId": "346",
+   "label": "香皂/伴手礼",
+   "name": "Bruntwood Lane felted wool 香皂 pomegranate 100g"
+  },
+  {
+   "productId": "86",
+   "label": "面部护理",
+   "name": "antipodes 水凝霜60ml"
+  },
+  {
+   "productId": "1006",
+   "label": "唇部护理",
+   "name": "manuka health lip rescue4.5g"
+  },
+  {
+   "productId": "2011",
+   "label": "其他日用与玩具",
+   "name": "Jellycat APN4BC"
+  },
+  {
+   "productId": "801",
+   "label": "零食",
+   "name": "jack links sweet&hot 150g"
+  },
+  {
+   "productId": "2108",
+   "label": "日常营养",
+   "name": "Aptamil Gold 1*6tins SF"
+  },
+  {
+   "productId": "1292",
+   "label": "手部护理/伴手礼",
+   "name": "parrs *5handcream30ml supple touch"
+  },
+  {
+   "productId": "1016",
+   "label": "蜂蜜",
+   "name": "manuka health mgo 550+ 250g"
+  },
+  {
+   "productId": "1847",
+   "label": "日常营养",
+   "name": "Taupo特贝优脱脂Skim奶粉"
+  },
+  {
+   "productId": "802",
+   "label": "零食",
+   "name": "jack links teriyaki 150g"
+  },
+  {
+   "productId": "1158",
+   "label": "中端护发",
+   "name": "Moroccanoil Treatment 100ml All Hair"
+  },
+  {
+   "productId": "342",
+   "label": "香皂/伴手礼",
+   "name": "Bruntwood Lane felted wool 香皂 Lavender 100g"
+  },
+  {
+   "productId": "912",
+   "label": "面部护理",
+   "name": "Lacues c洗面奶100g（"
+  },
+  {
+   "productId": "512",
+   "label": "面部护理",
+   "name": "EAORON CLEANER 100ML"
+  },
+  {
+   "productId": "976",
+   "label": "零食",
+   "name": "Macadamias夏威夷果"
+  },
+  {
+   "productId": "1410",
+   "label": "手部护理",
+   "name": "parrs 麦卢卡蜂蜜 trio treatment hand&nail 霜+香皂+lipcare"
+  },
+  {
+   "productId": "964",
+   "label": "唇部护理",
+   "name": "Lumea 唇膏4.5g"
+  },
+  {
+   "productId": "3719",
+   "label": "洗发护发",
+   "name": "kerastase vhronologiste90ml"
+  },
+  {
+   "productId": "834",
+   "label": "高级洗发",
+   "name": "Kerastase 卷发套盒"
+  },
+  {
+   "productId": "813",
+   "label": "高级洗发",
+   "name": "Kerastase Bain Chroma Respect 洗发水 1L"
+  },
+  {
+   "productId": "411",
+   "label": "眼部护理",
+   "name": "coco brownie 眼霜"
+  },
+  {
+   "productId": "862",
+   "label": "高级洗发",
+   "name": "kerastase symbiose 250mlshampoo"
+  },
+  {
+   "productId": "337",
+   "label": "香皂/伴手礼",
+   "name": "Bruntwood Lane felted wool 香皂 Coconut+vanila 100g"
+  },
+  {
+   "productId": "257",
+   "label": "感冒鼻塞与咳嗽",
+   "name": "BEGGI NASAL OINTMENT 3.5g for Adult（待确认）"
+  },
+  {
+   "productId": "693",
+   "label": "其他日用与玩具",
+   "name": "haab 洗脸巾340g"
+  },
+  {
+   "productId": "1429",
+   "label": "面部护理/伴手礼",
+   "name": "parrs nanuka honey with royal jelly facemask100ml"
+  },
+  {
+   "productId": "2130",
+   "label": "婴幼儿奶粉",
+   "name": "Karicare Goat SF 1* 6tins"
+  },
+  {
+   "productId": "64",
+   "label": "洗发护发",
+   "name": "anihana 洗发水+ 护发素 bar ocean 65g"
+  },
+  {
+   "productId": "930",
+   "label": "手部护理",
+   "name": "LanoLux护手霜5ml"
+  },
+  {
+   "productId": "881",
+   "label": "手部护理",
+   "name": "kiwiherb 200ml chest syrup"
+  },
+  {
+   "productId": "858",
+   "label": "高级洗发",
+   "name": "Kerastase refreshing dry 洗发水 233ml"
+  },
+  {
+   "productId": "2088",
+   "label": "零食",
+   "name": "Lowrey butter cookies Plain 430g"
+  },
+  {
+   "productId": "2090",
+   "label": "零食",
+   "name": "Lowrey butter cookies coffee 430g"
+  },
+  {
+   "productId": "918",
+   "label": "面部护理",
+   "name": "lacues 素颜霜50g"
+  },
+  {
+   "productId": "89",
+   "label": "手部护理",
+   "name": "Antipodes Delight hand cream 120ml"
+  },
+  {
+   "productId": "93",
+   "label": "面部护理",
+   "name": "Antipodes Hosanna H2O intensive skin-plumping 精华 30ml"
+  },
+  {
+   "productId": "580",
+   "label": "女性护理",
+   "name": "femfresh 百合香清洗液白色瓶250ml"
+  },
+  {
+   "productId": "866",
+   "label": "高级洗发",
+   "name": "Kerastase(Black) Youth revitalizing hair masque 200ml"
+  },
+  {
+   "productId": "816",
+   "label": "高级洗发",
+   "name": "Kerastase (Black) hair 洗发水 250ml"
+  },
+  {
+   "productId": "2085",
+   "label": "其他日用与玩具",
+   "name": "jellycat batholomew huge bear"
+  },
+  {
+   "productId": "704",
+   "label": "感冒鼻塞与咳嗽",
+   "name": "Harker 清肺液250ml"
+  },
+  {
+   "productId": "3768",
+   "label": "高级洗发",
+   "name": "卡诗Nutritive Bain Satin Richie白金营养润泽洗发水"
+  },
+  {
+   "productId": "865",
+   "label": "高级洗发",
+   "name": "Kerastase White 洗发水 250ml"
+  },
+  {
+   "productId": "968",
+   "label": "女性护理",
+   "name": "Lycocelle 女性内衣清洗液"
+  },
+  {
+   "productId": "339",
+   "label": "面部护理",
+   "name": "Bruntwood Lane felted wool 香皂 Frangipani 100g"
+  },
+  {
+   "productId": "1702",
+   "label": "外用护理/抗皱紧致",
+   "name": "Trilogy certified organic 玫瑰果 油 20ml"
+  },
+  {
+   "productId": "41",
+   "label": "香皂/伴手礼",
+   "name": "alpine 蜂蜜香皂"
+  },
+  {
+   "productId": "715",
+   "label": "低价护发",
+   "name": "hask h护发油按压20ml"
+  },
+  {
+   "productId": "415",
+   "label": "面部护理",
+   "name": "coco brownie控油爽肤水 170ml"
+  },
+  {
+   "productId": "895",
+   "label": "修护面部精华",
+   "name": "LA ROCHE-POSAY B5 精华 30ml"
+  },
+  {
+   "productId": "343",
+   "label": "香皂/伴手礼",
+   "name": "Bruntwood Lane felted wool 香皂 lemongrass 100g"
+  },
+  {
+   "productId": "931",
+   "label": "面部清洁",
+   "name": "lewinns 莱文医生400ml卸妆水"
+  },
+  {
+   "productId": "1473",
+   "label": "洗发护发/伴手礼",
+   "name": "parrs wild ferens daily renewal"
+  },
+  {
+   "productId": "62",
+   "label": "洗发护发/伴手礼",
+   "name": "anihana 洗发水 bar lavender 65g"
+  },
+  {
+   "productId": "370",
+   "label": "面部护理",
+   "name": "Cemoy 爽肤水 120ml"
+  },
+  {
+   "productId": "3604",
+   "label": "婴幼儿奶粉",
+   "name": "aptamil pro stage4 3tins"
+  },
+  {
+   "productId": "1206",
+   "label": "蜂蜜/养胃",
+   "name": "ngati umf10+500g"
+  },
+  {
+   "productId": "1528",
+   "label": "染发膏",
+   "name": "Restoria colour restoring 洗发水 147ml"
+  },
+  {
+   "productId": "149",
+   "label": "染发膏",
+   "name": "Aromaganic Hair Colour1.0N染发膏"
+  },
+  {
+   "productId": "777",
+   "label": "面部护理",
+   "name": "Hobera 黄金膏 30ml"
+  },
+  {
+   "productId": "77",
+   "label": "抗皱紧致",
+   "name": "Antipodes 抗氧化爽肤水 100ml"
+  },
+  {
+   "productId": "856",
+   "label": "高级护发",
+   "name": "Kerastase Proteins Niacinamide hair 发膜 500ml"
+  },
+  {
+   "productId": "1463",
+   "label": "面膜",
+   "name": "parrs rotoruamud pruifying facemask100ml"
+  },
+  {
+   "productId": "118",
+   "label": "面部护理",
+   "name": "antipodes益生菌面霜cream 60ml"
+  },
+  {
+   "productId": "1846",
+   "label": "高级洗发",
+   "name": "卡诗元气姜Genesis防脱3件套盒（Bain+Fondant+Thermique）"
+  },
+  {
+   "productId": "836",
+   "label": "高级洗发",
+   "name": "Kerastase DENSIFQUE 洗发水 500ml"
+  },
+  {
+   "productId": "617",
+   "label": "香皂/伴手礼",
+   "name": "Goat 香皂 原味"
+  },
+  {
+   "productId": "827",
+   "label": "高级洗发",
+   "name": "Kerastase Blond Absolu purple 500ml"
+  },
+  {
+   "productId": "3767",
+   "label": "高级洗发",
+   "name": "卡诗Gloss Absolu釉光玫瑰洗发水"
+  },
+  {
+   "productId": "1480",
+   "label": "绵羊油/伴手礼",
+   "name": "parrsmanukahoney nightcreme90g"
+  },
+  {
+   "productId": "728",
+   "label": "零食",
+   "name": "Healtheries 香蕉牛奶瓶 50"
+  },
+  {
+   "productId": "702",
+   "label": "感冒鼻塞与咳嗽",
+   "name": "Harker 儿童清肺液150ml"
+  },
+  {
+   "productId": "1828",
+   "label": "玩具",
+   "name": "zuru brands apt迷你音乐盒"
+  },
+  {
+   "productId": "1888",
+   "label": "蚊虫叮咬",
+   "name": "Haab驱蚊止痒喷雾60ml"
+  },
+  {
+   "productId": "1420",
+   "label": "蜂蜜唇膏",
+   "name": "parrs manukahoneylipbalm4.2g"
+  },
+  {
+   "productId": "3726",
+   "label": "减肥瘦身",
+   "name": "Encare Cleanse轻体小分子白芸豆小蛮腰胶囊"
+  },
+  {
+   "productId": "91",
+   "label": "洁面",
+   "name": "Antipodes H青柠藿香洗面奶00ml"
+  },
+  {
+   "productId": "1310",
+   "label": "洁面",
+   "name": "parrs facial wash100ml"
+  },
+  {
+   "productId": "506",
+   "label": "护足",
+   "name": "DU IT 护脚膏"
+  },
+  {
+   "productId": "78",
+   "label": "眼部护理",
+   "name": "Antipodes水感水凝霜眼霜30ml"
+  },
+  {
+   "productId": "1193",
+   "label": "儿童健脑",
+   "name": "natures way trio 60 soft"
+  },
+  {
+   "productId": "3629",
+   "label": "日常营养",
+   "name": "Healtheries goat powder 3tins"
+  },
+  {
+   "productId": "845",
+   "label": "高级洗发",
+   "name": "Kerastase Gloss Absolu 洗发水 250ml"
+  },
+  {
+   "productId": "122",
+   "label": "面部护理",
+   "name": "Antipodes 神经酰胺面霜 60ml"
+  },
+  {
+   "productId": "1718",
+   "label": "抗皱紧致",
+   "name": "trilogy 玫瑰果 transformation cleansing 油 100ml"
+  },
+  {
+   "productId": "509",
+   "label": "护手/伴手礼",
+   "name": "duit touch hands 75g手霜"
+  },
+  {
+   "productId": "823",
+   "label": "高级护发",
+   "name": "Kerastase 防毛躁顺滑喷雾 190ml"
+  },
+  {
+   "productId": "376",
+   "label": "面部护理/伴手礼",
+   "name": "Chantelle Full Cycle Revitalizing Cream 50ml"
+  },
+  {
+   "productId": "531",
+   "label": "面膜",
+   "name": "eaoron 蜂胶 面膜"
+  },
+  {
+   "productId": "1428",
+   "label": "洁面",
+   "name": "parrs namukahoneyfacialcleaner180ml"
+  },
+  {
+   "productId": "1549",
+   "label": "抗衰",
+   "name": "SkinCeuticals 2.4.2 48ml修丽可皮脂膜面霜48ml"
+  },
+  {
+   "productId": "1373",
+   "label": "面部护理",
+   "name": "parrs manaka honey facial 精华 + daycream+eyecream"
+  },
+  {
+   "productId": "369",
+   "label": "润唇",
+   "name": "Cemoy乳液 120ml"
+  },
+  {
+   "productId": "3775",
+   "label": "保湿",
+   "name": "the Nature land润唇膏"
+  },
+  {
+   "productId": "2087",
+   "label": "零食",
+   "name": "Lowrey butter cookies choc 430g"
+  },
+  {
+   "productId": "1677",
+   "label": "儿童零食",
+   "name": "The good vitac棒棒糖"
+  },
+  {
+   "productId": "1852",
+   "label": "美睫",
+   "name": "Flash睫毛增长膏2ml"
+  },
+  {
+   "productId": "3708",
+   "label": "护足/臭脚粉",
+   "name": "Grans Remedy smelly feet 50g original"
+  },
+  {
+   "productId": "335",
+   "label": "香皂/伴手礼",
+   "name": "Bruntwood Lane felted wool 香皂 Basil+lime+mandarin 100g"
+  },
+  {
+   "productId": "482",
+   "label": "抗衰紧致",
+   "name": "Dr lewinns S8 eye recovery complex"
+  },
+  {
+   "productId": "2393",
+   "label": "护足/臭脚粉",
+   "name": "Grans food powder scented35g"
+  },
+  {
+   "productId": "1882",
+   "label": "臭脚粉",
+   "name": "Cemoy反重力眼霜"
+  },
+  {
+   "productId": "2773",
+   "label": "眼部护理抗衰",
+   "name": "lionia rejuvenating serum 15ml"
+  },
+  {
+   "productId": "824",
+   "label": "高级洗发",
+   "name": "kerastase bain ulter-volet 1000ml anti-faux"
+  },
+  {
+   "productId": "828",
+   "label": "高级洗发",
+   "name": "Kerastase Blond Absolu 洗发水 250ml"
+  },
+  {
+   "productId": "840",
+   "label": "高级洗发",
+   "name": "Kerastase Genesis Homme 洗发水 1000ml"
+  },
+  {
+   "productId": "3778",
+   "label": "紧致",
+   "name": "skinceuticals phyton corrective gel"
+  },
+  {
+   "productId": "3788",
+   "label": "伴手礼",
+   "name": "Heathcote Ivory in the garden礼盒"
+  },
+  {
+   "productId": "1110",
+   "label": "身体乳",
+   "name": "MooGoo 快速吸收乳液 200g"
+  },
+  {
+   "productId": "1812",
+   "label": "衣服",
+   "name": "YPL Correct Back"
+  },
+  {
+   "productId": "1418",
+   "label": "绵羊油/伴手礼",
+   "name": "parrs manukahoney nightcream+facemask+facialserum radiantglow（待确认）"
+  },
+  {
+   "productId": "1471",
+   "label": "香皂/伴手礼",
+   "name": "Parrs thermal mud & volcanic sulphur 香皂 115g"
+  },
+  {
+   "productId": "1767",
+   "label": "美容口服",
+   "name": "vida glon peach 30servings"
+  },
+  {
+   "productId": "114",
+   "label": "洗发",
+   "name": "antipodes 麦卢卡蜂蜜香橙洗发水340ml"
+  },
+  {
+   "productId": "471",
+   "label": "唇部护理",
+   "name": "Dermal Lip 原味唇膏10g"
+  },
+  {
+   "productId": "749",
+   "label": "口腔清洁",
+   "name": "henry bloons 修复速口水375ml"
+  },
+  {
+   "productId": "2070",
+   "label": "玩具",
+   "name": "SquishMallows   HelloKitty"
+  },
+  {
+   "productId": "2038",
+   "label": "玩具",
+   "name": "zuru nooknooks blind box"
+  },
+  {
+   "productId": "904",
+   "label": "保湿",
+   "name": "LA ROCHE-POSAY 理肤泉喷雾300ml"
+  },
+  {
+   "productId": "1044",
+   "label": "感冒鼻塞与咳嗽",
+   "name": "Maxcural 通鼻膏 care gel 10g"
+  },
+  {
+   "productId": "863",
+   "label": "高级洗发",
+   "name": "Kerastase Symbiose 精华 90ml"
+  },
+  {
+   "productId": "398",
+   "label": "保湿",
+   "name": "coco browine 抗糖肤水 170ml"
+  },
+  {
+   "productId": "613",
+   "label": "香皂/伴手礼",
+   "name": "goat mix 6肥皂套盒"
+  },
+  {
+   "productId": "853",
+   "label": "高级洗发",
+   "name": "Kerastase Potentialiste 精华 90ml"
+  },
+  {
+   "productId": "920",
+   "label": "护足",
+   "name": "lamisil脚气膏15g"
+  },
+  {
+   "productId": "3682",
+   "label": "护足/臭脚粉",
+   "name": "Grans Remedy smelly feet 50g Cooling"
+  },
+  {
+   "productId": "1207",
+   "label": "蜂蜜/养胃",
+   "name": "ngatioporou umf20+250g"
+  },
+  {
+   "productId": "1850",
+   "label": "高级护发",
+   "name": "卡诗Gloss absolu釉光玫瑰发膜200ml"
+  },
+  {
+   "productId": "238",
+   "label": "日用品",
+   "name": "Bbox350ml保温杯"
+  },
+  {
+   "productId": "1411",
+   "label": "日用品",
+   "name": "parrs manuka honeyeyecreme"
+  },
+  {
+   "productId": "902",
+   "label": "洁面",
+   "name": "LA ROCHE-POSAY 理肤泉卸妆水400ml"
+  },
+  {
+   "productId": "1719",
+   "label": "抗皱紧致",
+   "name": "trilogy 玫瑰果+ hand butter 75ml"
+  },
+  {
+   "productId": "1636",
+   "label": "面膜",
+   "name": "Syrene aqua hydating 面膜 50ml"
+  },
+  {
+   "productId": "3733",
+   "label": "抗衰紧致",
+   "name": "Dr.LeWinn’s莱文医生Ultra R4丰盈提拉精华液"
+  },
+  {
+   "productId": "1869",
+   "label": "零食",
+   "name": "Macadamia Dry夏威夷果225g"
+  },
+  {
+   "productId": "1691",
+   "label": "精油",
+   "name": "Thursday Plantation尤加利亚精油 200ML"
+  },
+  {
+   "productId": "594",
+   "label": "睡眠",
+   "name": "GMN 晚安帖24 patches"
+  },
+  {
+   "productId": "63",
+   "label": "香皂/伴手礼",
+   "name": "anihana 洗发水 bar 麦卢卡蜂蜜 almond 65g"
+  },
+  {
+   "productId": "1535",
+   "label": "面部精华",
+   "name": "royal nectar 精华 20ml"
+  },
+  {
+   "productId": "20",
+   "label": "护发",
+   "name": "8 minute 人参 护发油 80ml"
+  },
+  {
+   "productId": "522",
+   "label": "彩妆",
+   "name": "EAORON 素颜霜50g"
+  },
+  {
+   "productId": "1392",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs 麦卢卡蜂蜜 facial wash 100ml"
+  },
+  {
+   "productId": "3722",
+   "label": "高级洗发",
+   "name": "kerastase magic night duo hari ritual90+30ml"
+  },
+  {
+   "productId": "2083",
+   "label": "玩具",
+   "name": "jellycat eggplant"
+  },
+  {
+   "productId": "378",
+   "label": "伴手礼",
+   "name": "chantelle gift pack set of 4香娜露儿四件套"
+  },
+  {
+   "productId": "1306",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs body biss trio gifeset*3body30ml"
+  },
+  {
+   "productId": "141",
+   "label": "染发",
+   "name": "aromaganic black men染发膏"
+  },
+  {
+   "productId": "1933",
+   "label": "免疫力",
+   "name": "Nestle雀巢医院配方奶粉"
+  },
+  {
+   "productId": "140",
+   "label": "染发",
+   "name": "aromaganic 4.0染发膏"
+  },
+  {
+   "productId": "144",
+   "label": "染发",
+   "name": "Aromaganic Hair Colour 4.02染发膏"
+  },
+  {
+   "productId": "1476",
+   "label": "面膜",
+   "name": "parrsconditiningfacemask100ml"
+  },
+  {
+   "productId": "76",
+   "label": "洗发",
+   "name": "antipodes斐济果滋润洗发水340ml"
+  },
+  {
+   "productId": "3622",
+   "label": "婴幼儿奶粉",
+   "name": "a2 stage1"
+  },
+  {
+   "productId": "1990",
+   "label": "抗衰紧致",
+   "name": "莱文医生日晚霜"
+  },
+  {
+   "productId": "381",
+   "label": "面部保湿",
+   "name": "chantelle 乳液 100ml"
+  },
+  {
+   "productId": "2081",
+   "label": "玩具",
+   "name": "Jellycat bear med"
+  },
+  {
+   "productId": "860",
+   "label": "高级洗发",
+   "name": "Kerastase SPECIFIQUE 洗发水 250ml"
+  },
+  {
+   "productId": "854",
+   "label": "高级洗发",
+   "name": "Kerastase Premiere gift set"
+  },
+  {
+   "productId": "3318",
+   "label": "婴幼儿奶粉",
+   "name": "a2 stage4"
+  },
+  {
+   "productId": "235",
+   "label": "日常用品",
+   "name": "bbox&disney保温杯e350ml"
+  },
+  {
+   "productId": "1700",
+   "label": "抗皱紧致",
+   "name": "Trilogy Age Proof Replenishing Night Cream 60ml"
+  },
+  {
+   "productId": "232",
+   "label": "玩具",
+   "name": "bbox&disney保温杯350ml"
+  },
+  {
+   "productId": "1462",
+   "label": "绵羊油/伴手礼",
+   "name": "parrs rotoruamud moments brigmask+puri 面膜+conti facemask"
+  },
+  {
+   "productId": "1809",
+   "label": "衣服",
+   "name": "ypl alpaca wool scarf gre"
+  },
+  {
+   "productId": "399",
+   "label": "眼部紧致",
+   "name": "coco browine 眼膜"
+  },
+  {
+   "productId": "468",
+   "label": "唇部护理",
+   "name": "Dermal 梅子味唇膏"
+  },
+  {
+   "productId": "1830",
+   "label": "玩具",
+   "name": "zuru mini"
+  },
+  {
+   "productId": "119",
+   "label": "面膜",
+   "name": "antipodes 益生菌面膜 75ml"
+  },
+  {
+   "productId": "830",
+   "label": "高级洗发",
+   "name": "Kerastase Blond Absolu white 500ml"
+  },
+  {
+   "productId": "1105",
+   "label": "皮肤护理",
+   "name": "MooGoo宝宝湿疹膏120g"
+  },
+  {
+   "productId": "230",
+   "label": "皮肤护理",
+   "name": "bbox迪斯尼保温杯350ml"
+  },
+  {
+   "productId": "2027",
+   "label": "日用品",
+   "name": "the original golden dry roasted"
+  },
+  {
+   "productId": "692",
+   "label": "低价洗发",
+   "name": "Haab anti-dandruff 洗发水 460ml"
+  },
+  {
+   "productId": "1146",
+   "label": "中端护发",
+   "name": "moroccanoil light 100ml（待确认）"
+  },
+  {
+   "productId": "1764",
+   "label": "女性护理",
+   "name": "Vagisil peach blossom daily intimate wash 240ml"
+  },
+  {
+   "productId": "1701",
+   "label": "提亮美白",
+   "name": "trilogy booster 15ml"
+  },
+  {
+   "productId": "1768",
+   "label": "美容口服",
+   "name": "vida glon pineapple 30 servings"
+  },
+  {
+   "productId": "146",
+   "label": "染发",
+   "name": "Aromaganic Hair Colour 5.43染发膏"
+  },
+  {
+   "productId": "2040",
+   "label": "日用",
+   "name": "needoh fuzz ball"
+  },
+  {
+   "productId": "3725",
+   "label": "绵羊油",
+   "name": "careline"
+  },
+  {
+   "productId": "616",
+   "label": "香皂/伴手礼",
+   "name": "Goat 麦卢卡蜂蜜香皂"
+  },
+  {
+   "productId": "385",
+   "label": "面部保湿",
+   "name": "chantelle 爽肤水 120ml"
+  },
+  {
+   "productId": "233",
+   "label": "日用品",
+   "name": "bbox&disney学饮杯 sippycup240ml"
+  },
+  {
+   "productId": "1415",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs manukahoney get glowing facial wash+daycream+nightcream"
+  },
+  {
+   "productId": "3772",
+   "label": "高级洗发",
+   "name": "卡诗白金赋活洗发水1L Densifique Bain densite"
+  },
+  {
+   "productId": "868",
+   "label": "香皂/伴手礼",
+   "name": "kids goat 香皂 100g"
+  },
+  {
+   "productId": "470",
+   "label": "唇部护理",
+   "name": "Dermal 麦卢卡蜂蜜唇膏 10g"
+  },
+  {
+   "productId": "61",
+   "label": "洗发护发/伴手礼",
+   "name": "anihana 洗发水 bar Grape&chamomile 65g"
+  },
+  {
+   "productId": "483",
+   "label": "抗衰紧致",
+   "name": "Dr Lewinns S8 eye 精华 15ml"
+  },
+  {
+   "productId": "1335",
+   "label": "绵羊油/伴手礼",
+   "name": "parrs lanoin basket（待确认）"
+  },
+  {
+   "productId": "752",
+   "label": "儿童牙膏",
+   "name": "henry bloons儿童橙子味益生菌牙膏 50g"
+  },
+  {
+   "productId": "716",
+   "label": "低价护发",
+   "name": "hask 角蛋白护发素355ml"
+  },
+  {
+   "productId": "1314",
+   "label": "蜂蜜系列伴手礼",
+   "name": "Parrs Flowers RoomDiffuser 100ml"
+  },
+  {
+   "productId": "193",
+   "label": "日用品",
+   "name": "Bbox Bluey minilunchbox"
+  },
+  {
+   "productId": "2359",
+   "label": "日常营养",
+   "name": "taupo A2 1kg"
+  },
+  {
+   "productId": "979",
+   "label": "玩具",
+   "name": "MAMA 过家家宠物粉色"
+  },
+  {
+   "productId": "2030",
+   "label": "购物袋",
+   "name": "bagcharms"
+  },
+  {
+   "productId": "574",
+   "label": "礼盒",
+   "name": "elizabeth 伊丽莎白护手霜套盒"
+  },
+  {
+   "productId": "515",
+   "label": "面膜",
+   "name": "EAORON hyaluronic acid 10ml"
+  },
+  {
+   "productId": "58",
+   "label": "伴手礼",
+   "name": "anihana feel good 香皂 lavender love 120g"
+  },
+  {
+   "productId": "1113",
+   "label": "蜂蜜唇膏/伴手礼",
+   "name": "MOOGOO HONEY LIP BALM 5g"
+  },
+  {
+   "productId": "842",
+   "label": "高级洗发",
+   "name": "kerastase genesis nutri-fortifiant anti-chute1000ml"
+  },
+  {
+   "productId": "1427",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs namukahoney40g 香皂"
+  },
+  {
+   "productId": "1307",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs cherry&vanila room diffuser 120ml"
+  },
+  {
+   "productId": "814",
+   "label": "高级洗发",
+   "name": "Kerastase Bain Satin 洗发水 1L"
+  },
+  {
+   "productId": "850",
+   "label": "高级洗发",
+   "name": "Kerastase 滋润套盒礼盒"
+  },
+  {
+   "productId": "2136",
+   "label": "护肝",
+   "name": "Metagenics Thyrobalance 60 tabs"
+  },
+  {
+   "productId": "1807",
+   "label": "衣服",
+   "name": "YPL 360 Degrees Yoga Pants"
+  },
+  {
+   "productId": "1461",
+   "label": "火山泥伴手礼",
+   "name": "parrs rotoruamud handcreme100ml"
+  },
+  {
+   "productId": "2020",
+   "label": "玩具",
+   "name": "buttery squishy"
+  },
+  {
+   "productId": "712",
+   "label": "低价洗发",
+   "name": "hask椰子油洗发水355ml"
+  },
+  {
+   "productId": "3765",
+   "label": "护发",
+   "name": "摩洛哥Good to glow duo normal"
+  },
+  {
+   "productId": "1317",
+   "label": "绵羊油伴手礼",
+   "name": "parrs handcreme100ml"
+  },
+  {
+   "productId": "3745",
+   "label": "礼盒",
+   "name": "Heathcote’s Emportium护手霜盒装1支"
+  },
+  {
+   "productId": "90",
+   "label": "中端洗发",
+   "name": "Antipodes 斐济果护发素 340ml"
+  },
+  {
+   "productId": "2021",
+   "label": "玩具",
+   "name": "buttery halloween"
+  },
+  {
+   "productId": "1707",
+   "label": "眼部护理抗衰",
+   "name": "Trilogy Eye Contour Cream 10ml"
+  },
+  {
+   "productId": "2154",
+   "label": "玩具",
+   "name": "Jellycat A6SFN"
+  },
+  {
+   "productId": "888",
+   "label": "女性护理",
+   "name": "Kolorex 女性无皂私处清洗液250ml"
+  },
+  {
+   "productId": "2169",
+   "label": "玩具",
+   "name": "Jellycat CEL2S"
+  },
+  {
+   "productId": "211",
+   "label": "日用品",
+   "name": "BBOX 艾莎大餐盒"
+  },
+  {
+   "productId": "835",
+   "label": "高级洗发",
+   "name": "kerastase curl manifesto spray190ml"
+  },
+  {
+   "productId": "3718",
+   "label": "高级护发",
+   "name": "kerastast l'huile originale75ml refillable"
+  },
+  {
+   "productId": "1831",
+   "label": "玩具",
+   "name": "zuru mini 迷你厨房"
+  },
+  {
+   "productId": "3789",
+   "label": "护手/伴手礼",
+   "name": "Cath kidston Red berry cedar hand cream trio"
+  },
+  {
+   "productId": "1475",
+   "label": "身体磨砂膏",
+   "name": "Parrs wild ferns rotorua mud body scrub150ml"
+  },
+  {
+   "productId": "1309",
+   "label": "身体磨砂膏",
+   "name": "parrs facial 精华"
+  },
+  {
+   "productId": "1438",
+   "label": "绵羊油面部精华",
+   "name": "parrs restore ritual mini facial set eye+daycream+nightcream"
+  },
+  {
+   "productId": "3783",
+   "label": "护手/伴手礼",
+   "name": "Cath Kidston香氛护手礼盒3支装"
+  },
+  {
+   "productId": "618",
+   "label": "香皂/伴手礼",
+   "name": "Goat Spao Ometal（待确认）"
+  },
+  {
+   "productId": "2010",
+   "label": "护手/伴手礼",
+   "name": "frog"
+  },
+  {
+   "productId": "1451",
+   "label": "火山泥伴手礼",
+   "name": "parrs rotorua soap40g"
+  },
+  {
+   "productId": "2041",
+   "label": "护手/伴手礼",
+   "name": "nee nice cure"
+  },
+  {
+   "productId": "691",
+   "label": "低价护发",
+   "name": "Haab anti-dandruff 护发素 460ml"
+  },
+  {
+   "productId": "1311",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs fijioa&ginger room diffuser 120ml"
+  },
+  {
+   "productId": "2018",
+   "label": "护足/臭脚粉",
+   "name": "Grans foot powder origial 35g"
+  },
+  {
+   "productId": "262",
+   "label": "感冒鼻塞与咳嗽",
+   "name": "Beggi 舒缓通鼻贴16片"
+  },
+  {
+   "productId": "889",
+   "label": "身体保湿",
+   "name": "LA 露肤泉AP霜 balm400ml"
+  },
+  {
+   "productId": "1465",
+   "label": "火山泥伴手礼",
+   "name": "parrs rotoruamud warmingfacamask100,ml"
+  },
+  {
+   "productId": "753",
+   "label": "儿童牙膏",
+   "name": "henry bloons 儿童西瓜味益生菌牙膏"
+  },
+  {
+   "productId": "847",
+   "label": "高级洗发",
+   "name": "Kerastase K2 Bain Decalcifiant 洗发水 1000ml"
+  },
+  {
+   "productId": "1449",
+   "label": "火山泥伴手礼",
+   "name": "parrs rotorua mud revive remix 香皂+bodyscrub+bodylotion"
+  },
+  {
+   "productId": "104",
+   "label": "蜂蜜唇膏/伴手礼",
+   "name": "antipodes 唇膏r4g"
+  },
+  {
+   "productId": "778",
+   "label": "感冒鼻塞与咳嗽",
+   "name": "hobera 鼻通膏20g"
+  },
+  {
+   "productId": "3683",
+   "label": "护足/臭脚粉",
+   "name": "Grans Remedy smelly feet 50g Scented"
+  },
+  {
+   "productId": "472",
+   "label": "口红",
+   "name": "Dermal 蜜桃裸色唇膏 8g"
+  },
+  {
+   "productId": "231",
+   "label": "口红",
+   "name": "bbox&disne学饮杯psippucup240ml"
+  },
+  {
+   "productId": "2063",
+   "label": "日用品",
+   "name": "heorshe  antler feeder  white"
+  },
+  {
+   "productId": "237",
+   "label": "日用品",
+   "name": "bbox&disneysippycup小鹿学饮杯240ml"
+  },
+  {
+   "productId": "855",
+   "label": "高级护发",
+   "name": "Kerastase Premiere 发膜500ml"
+  },
+  {
+   "productId": "113",
+   "label": "中端护发",
+   "name": "Antipodes麦卢卡疯魔蜂蜜护发素"
+  },
+  {
+   "productId": "1695",
+   "label": "面部护理",
+   "name": "Thursday Plantation Tea tree oil 25ml"
+  },
+  {
+   "productId": "3794",
+   "label": "唇膏/伴手礼",
+   "name": "Burt‘s Bees beeswax bounty assorted mix 四支装蓝色"
+  },
+  {
+   "productId": "1412",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs manukahoney basket hand+香皂"
+  },
+  {
+   "productId": "2012",
+   "label": "玩具",
+   "name": "squish"
+  },
+  {
+   "productId": "3758",
+   "label": "抗衰紧致",
+   "name": "Dr. LeWinn's莱文医生 ultra r4日霜面霜50g"
+  },
+  {
+   "productId": "2391",
+   "label": "儿童帽子",
+   "name": "lemonkid lotus leaf brim hat blue"
+  },
+  {
+   "productId": "545",
+   "label": "婴幼儿护肤",
+   "name": "ecostore baby foaming wash&洗发水 250ml"
+  },
+  {
+   "productId": "1406",
+   "label": "蜂蜜系列伴手礼",
+   "name": "Parrs 麦卢卡蜂蜜 香皂 100g"
+  },
+  {
+   "productId": "1450",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs rotorua mud100g"
+  },
+  {
+   "productId": "899",
+   "label": "面部保湿",
+   "name": "LA ROCHE-POSAY 理肤泉水油平衡乳40ml"
+  },
+  {
+   "productId": "1139",
+   "label": "中端护发",
+   "name": "Moroccanoil Hand Wash Beach Frans 360ml"
+  },
+  {
+   "productId": "469",
+   "label": "口红",
+   "name": "Dermal lip 梅红唇膏有色 8g"
+  },
+  {
+   "productId": "546",
+   "label": "婴幼儿洗护",
+   "name": "ecostore baby mosturiser 200ml"
+  },
+  {
+   "productId": "1658",
+   "label": "儿童免疫力",
+   "name": "The good kids magenesium 90 soft-chew"
+  },
+  {
+   "productId": "615",
+   "label": "香皂/伴手礼",
+   "name": "Goat 香皂 argan 油"
+  },
+  {
+   "productId": "1104",
+   "label": "婴幼儿洗护",
+   "name": "MooGoo 2in1 Bubbly Wash 500ml"
+  },
+  {
+   "productId": "1125",
+   "label": "婴幼儿洗护",
+   "name": "MOOGOO STRAWBERRY LIP Vanilla balm"
+  },
+  {
+   "productId": "2168",
+   "label": "玩具",
+   "name": "Jellycat L4SBC"
+  },
+  {
+   "productId": "1318",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs handnailcreme80ml"
+  },
+  {
+   "productId": "1280",
+   "label": "蜂蜜系列伴手礼",
+   "name": "Oribe Hair small set"
+  },
+  {
+   "productId": "2025",
+   "label": "伴手礼",
+   "name": "5.30"
+  },
+  {
+   "productId": "2019",
+   "label": "玩具",
+   "name": "butter squishy"
+  },
+  {
+   "productId": "3748",
+   "label": "唇膏/伴手礼",
+   "name": "润唇膏礼盒"
+  },
+  {
+   "productId": "721",
+   "label": "低价护发",
+   "name": "hask椰子油护发素355ml"
+  },
+  {
+   "productId": "112",
+   "label": "面部保湿",
+   "name": "ANTIPODES 麦卢卡蜂蜜 日霜60ml"
+  },
+  {
+   "productId": "3757",
+   "label": "唇膏/伴手礼",
+   "name": "cathkidston lip sweet cherry"
+  },
+  {
+   "productId": "1444",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs rotorua mud facial moisturiser80ml"
+  },
+  {
+   "productId": "779",
+   "label": "火山泥伴手礼",
+   "name": "hobera 驱蚊 喷雾 100ml"
+  },
+  {
+   "productId": "3796",
+   "label": "驱蚊",
+   "name": "balance 100%chocolate1kg"
+  },
+  {
+   "productId": "1848",
+   "label": "高级洗发",
+   "name": "Kerastase nutritive Bain Satin洗发水250m l"
+  },
+  {
+   "productId": "1895",
+   "label": "高级洗发",
+   "name": "卡诗粉橙盒柔顺洗发水250ml"
+  },
+  {
+   "productId": "1467",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs rotoruamudhandcreme30ml"
+  },
+  {
+   "productId": "1479",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrsmanukahoney handcreme30ml"
+  },
+  {
+   "productId": "240",
+   "label": "日用品",
+   "name": "Bbox600mlbluey水杯"
+  },
+  {
+   "productId": "107",
+   "label": "中端洗发",
+   "name": "antipodes lipstick piha beach tangerine"
+  },
+  {
+   "productId": "110",
+   "label": "中端洗发",
+   "name": "antipodes lipstick ruby bay rouge"
+  },
+  {
+   "productId": "143",
+   "label": "染发",
+   "name": "aromaganic hair colour 3.0N染发膏"
+  },
+  {
+   "productId": "2369",
+   "label": "零食",
+   "name": "Mrs rogers fine pink salt 1kg"
+  },
+  {
+   "productId": "987",
+   "label": "洁面",
+   "name": "Manuka 洁面霜100ml"
+  },
+  {
+   "productId": "375",
+   "label": "洁面",
+   "name": "chantelle洁面100ml"
+  },
+  {
+   "productId": "894",
+   "label": "面膜修护",
+   "name": "LA ROCHE-POSAY B5 面膜*5"
+  },
+  {
+   "productId": "2161",
+   "label": "玩具",
+   "name": "Jellycat LOVE3M"
+  },
+  {
+   "productId": "843",
+   "label": "高级洗发",
+   "name": "Kerastase Gensis Homme 洗发水 250ml"
+  },
+  {
+   "productId": "3761",
+   "label": "玩具",
+   "name": "Sticki Rolls series 3盲盒"
+  },
+  {
+   "productId": "175",
+   "label": "日用品",
+   "name": "b.box&bluey大午餐袋"
+  },
+  {
+   "productId": "1040",
+   "label": "感冒鼻塞与咳嗽",
+   "name": "maxcural 迈可乐通鼻膏soothing 10g"
+  },
+  {
+   "productId": "2028",
+   "label": "梳子",
+   "name": "tangleteezerbigpink"
+  },
+  {
+   "productId": "1290",
+   "label": "火山泥伴手礼",
+   "name": "parrs basket rotorua mud"
+  },
+  {
+   "productId": "1116",
+   "label": "婴幼儿洗护",
+   "name": "MooGoo milk udder cream200g"
+  },
+  {
+   "productId": "3795",
+   "label": "玩具",
+   "name": "Zuru La Squish玩具"
+  },
+  {
+   "productId": "1704",
+   "label": "洁面",
+   "name": "Trilogy 霜 洁面 200ml"
+  },
+  {
+   "productId": "960",
+   "label": "日用品",
+   "name": "Lumea 套盒喷雾+乳液"
+  },
+  {
+   "productId": "1673",
+   "label": "面部护理",
+   "name": "the good专注力卷卷糖"
+  },
+  {
+   "productId": "2036",
+   "label": "面部护理",
+   "name": "buttery squshy rainbow"
+  },
+  {
+   "productId": "1447",
+   "label": "火山泥伴手礼",
+   "name": "parrs rotorua mud nightcreme90g"
+  },
+  {
+   "productId": "191",
+   "label": "日用品",
+   "name": "Bbox Bluey bottle 600mlgreen"
+  },
+  {
+   "productId": "3741",
+   "label": "护足",
+   "name": "Carb Kidston唇部修护膏Tutti Fruit"
+  },
+  {
+   "productId": "3731",
+   "label": "面部护理",
+   "name": "Trilogy Quench+Glow 护肤套装"
+  },
+  {
+   "productId": "2035",
+   "label": "面部护理",
+   "name": "niceicesmall"
+  },
+  {
+   "productId": "1730",
+   "label": "梳子",
+   "name": "TT berry mini brush"
+  },
+  {
+   "productId": "192",
+   "label": "日用品",
+   "name": "Bbox Bluey mini lunch box"
+  },
+  {
+   "productId": "864",
+   "label": "高级护发",
+   "name": "Kerastase White 护发素 200ml"
+  },
+  {
+   "productId": "55",
+   "label": "低价护发",
+   "name": "anihana 护发素 薰衣草柠檬60g"
+  },
+  {
+   "productId": "1111",
+   "label": "低价洗发",
+   "name": "MooGoo 柔顺蛋白洗发水 500ml"
+  },
+  {
+   "productId": "51",
+   "label": "身体洗护",
+   "name": "anihana 泡澡球 麦卢卡蜂蜜 180g"
+  },
+  {
+   "productId": "1791",
+   "label": "洗发护发/伴手礼",
+   "name": "Wild Ferns Blue combo set"
+  },
+  {
+   "productId": "1765",
+   "label": "女性护理",
+   "name": "Vagisil PH Balance daily intimate wash 240ml"
+  },
+  {
+   "productId": "1810",
+   "label": "衣服",
+   "name": "YPL Cap"
+  },
+  {
+   "productId": "3756",
+   "label": "衣服",
+   "name": "aromagnic7.0"
+  },
+  {
+   "productId": "2047",
+   "label": "染发",
+   "name": "heorshe 240ml babybootle gery"
+  },
+  {
+   "productId": "2057",
+   "label": "日用品",
+   "name": "heorshe  dental-care sippy cup 300ml pink"
+  },
+  {
+   "productId": "1836",
+   "label": "高级洗发",
+   "name": "卡诗Chroma Absolu染后护色洗发水"
+  },
+  {
+   "productId": "1989",
+   "label": "抗衰紧致",
+   "name": "莱文医生素颜颈霜"
+  },
+  {
+   "productId": "2056",
+   "label": "婴幼儿用品",
+   "name": "heorshe  dental-care sippy cup300ml white"
+  },
+  {
+   "productId": "117",
+   "label": "中端洗发",
+   "name": "antipodes 蜜桃洗发水340ml"
+  },
+  {
+   "productId": "188",
+   "label": "婴幼儿用品",
+   "name": "Bbox Bluey 绿色大餐盒bluey"
+  },
+  {
+   "productId": "1289",
+   "label": "洁面",
+   "name": "parra wild ferns facial scurb80ml"
+  },
+  {
+   "productId": "708",
+   "label": "低价洗发",
+   "name": "hask 坚果洗发水335ml"
+  },
+  {
+   "productId": "1115",
+   "label": "低价洗发",
+   "name": "MOOGOO MILK 洗发水 500ML"
+  },
+  {
+   "productId": "547",
+   "label": "婴幼儿护肤",
+   "name": "ecostore baby oatmilk 香皂 80g"
+  },
+  {
+   "productId": "1276",
+   "label": "婴幼儿用品",
+   "name": "oral-b 5+years 电动牙刷"
+  },
+  {
+   "productId": "3777",
+   "label": "玩具",
+   "name": "jellycat"
+  },
+  {
+   "productId": "1842",
+   "label": "洗发",
+   "name": "anihana feel good 香皂Mango passion 120g"
+  },
+  {
+   "productId": "3787",
+   "label": "洗发护发/伴手礼",
+   "name": "Cath Kidston bathing time variety show礼盒"
+  },
+  {
+   "productId": "1273",
+   "label": "衣服",
+   "name": "okioki sun-proof clothing"
+  },
+  {
+   "productId": "1855",
+   "label": "面膜",
+   "name": "Eaoron黄金NMN面膜"
+  },
+  {
+   "productId": "1856",
+   "label": "面膜",
+   "name": "Eaoron顺滑面膜紫色"
+  },
+  {
+   "productId": "3746",
+   "label": "梳子",
+   "name": "anging mini hairbrush粉色"
+  },
+  {
+   "productId": "1316",
+   "label": "火山泥伴手礼",
+   "name": "parrs hand&nail cream 85ml"
+  },
+  {
+   "productId": "1108",
+   "label": "蜂蜜唇膏/伴手礼",
+   "name": "MOOGOO COW LICK LIP BALM 5g"
+  },
+  {
+   "productId": "189",
+   "label": "日用品",
+   "name": "Bbox Bluey bottle 450mlgreen"
+  },
+  {
+   "productId": "548",
+   "label": "婴幼儿护肤",
+   "name": "ecostore 宝宝油125ml"
+  },
+  {
+   "productId": "1106",
+   "label": "低价洗发",
+   "name": "MooGoo B&C gentle 洗发水 250ml"
+  },
+  {
+   "productId": "194",
+   "label": "婴幼儿用品",
+   "name": "Bbox Bluey snack box"
+  },
+  {
+   "productId": "281",
+   "label": "减肥瘦身",
+   "name": "Bio-e 青香蕉60 tablts"
+  },
+  {
+   "productId": "1900",
+   "label": "身体精油",
+   "name": "帕玛氏150ml椰子油"
+  },
+  {
+   "productId": "109",
+   "label": "口红",
+   "name": "antipodes lipstick remarkably red"
+  },
+  {
+   "productId": "151",
+   "label": "染发",
+   "name": "Aromaganic medium brown for men染发膏"
+  },
+  {
+   "productId": "111",
+   "label": "口红",
+   "name": "antipodes lipstick west coast sunset"
+  },
+  {
+   "productId": "105",
+   "label": "口红",
+   "name": "antipodes lipstick boom rock bronze"
+  },
+  {
+   "productId": "1732",
+   "label": "梳子",
+   "name": "TT light pink detangling hairbrush Large"
+  },
+  {
+   "productId": "1860",
+   "label": "面膜",
+   "name": "coco brownie 人皮面膜"
+  },
+  {
+   "productId": "466",
+   "label": "身体洗护",
+   "name": "dermal 干皮沐浴露750ml"
+  },
+  {
+   "productId": "982",
+   "label": "洁面",
+   "name": "Manuka 麦卢卡医生洁面 110ml"
+  },
+  {
+   "productId": "3779",
+   "label": "火山泥伴手礼",
+   "name": "parrs mud old"
+  },
+  {
+   "productId": "1477",
+   "label": "火山泥伴手礼",
+   "name": "parrsfacialmoisturiser80ml"
+  },
+  {
+   "productId": "234",
+   "label": "婴幼儿用品",
+   "name": "bbox&disney 狮子学饮杯240ml"
+  },
+  {
+   "productId": "2064",
+   "label": "婴幼儿用品",
+   "name": "heorshe  antler feeder pink"
+  },
+  {
+   "productId": "3740",
+   "label": "护足",
+   "name": "Carb Kidston唇部修护膏Mint"
+  },
+  {
+   "productId": "549",
+   "label": "婴幼儿护肤",
+   "name": "ecostore beeswax lip balm 4.5g"
+  },
+  {
+   "productId": "1124",
+   "label": "蜂蜜唇膏/伴手礼",
+   "name": "MOOGOO STRAWBERRY LIP BALM 5g"
+  },
+  {
+   "productId": "1446",
+   "label": "火山泥伴手礼",
+   "name": "parrs rotorua mud fersh fix bodyscurb+bodylotion+handcreme（待确认）"
+  },
+  {
+   "productId": "718",
+   "label": "低价护发",
+   "name": "hask 头皮精华100ml"
+  },
+  {
+   "productId": "2269",
+   "label": "羊奶粉",
+   "name": "Taupo Pure Goat Whole Milk Powder 400g"
+  },
+  {
+   "productId": "3743",
+   "label": "唇膏/伴手礼",
+   "name": "Carb Kidston唇部修护膏pink Guava"
+  },
+  {
+   "productId": "2031",
+   "label": "玩具",
+   "name": "solarsquishers"
+  },
+  {
+   "productId": "2013",
+   "label": "玩具",
+   "name": "squ"
+  },
+  {
+   "productId": "1736",
+   "label": "梳子",
+   "name": "TT pink mini brush"
+  },
+  {
+   "productId": "408",
+   "label": "洁面",
+   "name": "coco brownie 洁面 120g"
+  },
+  {
+   "productId": "50",
+   "label": "身体洗护",
+   "name": "anihana 泡澡球 薰衣草180g"
+  },
+  {
+   "productId": "48",
+   "label": "身体洗护",
+   "name": "anihana 泡澡球 蓝色海洋 180g"
+  },
+  {
+   "productId": "65",
+   "label": "身体洗护",
+   "name": "anihana 梅子味沐浴泡泡球50g"
+  },
+  {
+   "productId": "2195",
+   "label": "婴幼儿护肤",
+   "name": "ecostore dish liquid 500ml"
+  },
+  {
+   "productId": "499",
+   "label": "洁面",
+   "name": "Dr.Lewinns Glycolic 洁面 120ml"
+  },
+  {
+   "productId": "1738",
+   "label": "梳子",
+   "name": "TT scalp massager brush pink（"
+  },
+  {
+   "productId": "1977",
+   "label": "宠物用品",
+   "name": "宠物护足膏"
+  },
+  {
+   "productId": "1739",
+   "label": "梳子",
+   "name": "TT scalp massager green"
+  },
+  {
+   "productId": "1470",
+   "label": "蜂蜜系列伴手礼",
+   "name": "parrs sweet orange&clove room diffuser 120ml"
+  },
+  {
+   "productId": "751",
+   "label": "牙膏",
+   "name": "henry bloons 益生菌牙膏"
+  },
+  {
+   "productId": "707",
+   "label": "低价护发",
+   "name": "hask坚果护发素r355ml"
+  },
+  {
+   "productId": "706",
+   "label": "低价洗发",
+   "name": "hask keratinsmoothshampoo355ml角蛋白顺滑洗发水"
+  },
+  {
+   "productId": "2004",
+   "label": "玩具",
+   "name": "Zuru Rainbocorns"
+  },
+  {
+   "productId": "1789",
+   "label": "零食",
+   "name": "WeetBix1.2kg"
+  },
+  {
+   "productId": "750",
+   "label": "口腔清洁",
+   "name": "henry bloons敏感型速口水375ml"
+  },
+  {
+   "productId": "1839",
+   "label": "婴幼儿护肤",
+   "name": "Ecostore wash&shampoo 535ml"
+  },
+  {
+   "productId": "252",
+   "label": "感冒鼻塞与咳嗽",
+   "name": "Beggi adult seawater 喷雾 100ml"
+  },
+  {
+   "productId": "555",
+   "label": "婴幼儿洗护",
+   "name": "ecostore lemongrass 香皂 80g"
+  },
+  {
+   "productId": "1897",
+   "label": "低价护发",
+   "name": "hask喷雾发油"
+  },
+  {
+   "productId": "3780",
+   "label": "玩具",
+   "name": "jadore"
+  },
+  {
+   "productId": "53",
+   "label": "身体洗护",
+   "name": "anihana 泡澡球 rasbeery marshmellow 180g"
+  },
+  {
+   "productId": "52",
+   "label": "身体洗护",
+   "name": "anihana 泡澡球 柔顺桃子 180g"
+  },
+  {
+   "productId": "56",
+   "label": "身体洗护",
+   "name": "anihana 护发素 bar 麦卢卡蜂蜜 香草60g"
+  },
+  {
+   "productId": "71",
+   "label": "身体洗护",
+   "name": "anihana s香橙泡泡球50g"
+  },
+  {
+   "productId": "537",
+   "label": "婴幼儿洗护",
+   "name": "eco 婴幼儿沐浴路00ml"
+  },
+  {
+   "productId": "551",
+   "label": "婴幼儿洗护",
+   "name": "ecostore f沐浴露3in1 350ml"
+  },
+  {
+   "productId": "72",
+   "label": "身体洗护",
+   "name": "anihana 西瓜泡泡球50g"
+  },
+  {
+   "productId": "69",
+   "label": "身体洗护",
+   "name": "anihana s芒果泡泡球50g"
+  },
+  {
+   "productId": "334",
+   "label": "身体洗护",
+   "name": "Bruntwood Lane Baby 香皂 70g"
+  },
+  {
+   "productId": "2309",
+   "label": "购物袋",
+   "name": "Shopping Bag"
+  }
+ ],
+ "categories": [
+  {
+   "productId": "693",
+   "category": "其他日用与玩具"
+  },
+  {
+   "productId": "856",
+   "category": "洗发护发"
+  },
+  {
+   "productId": "855",
+   "category": "洗发护发"
+  },
+  {
+   "productId": "718",
+   "category": "洗发护发"
+  }
+ ]
+}

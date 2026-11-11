@@ -59,6 +59,7 @@ function setup(options: { failPos?: boolean; limited?: boolean; multipleStores?:
       return new Response(JSON.stringify({ data: options.ambiguous && !picked ? ambiguousReply : assistantReply }), { status: 200 });
     }
     if (assistantPath?.endsWith('/feedback')) return new Response(JSON.stringify({ data: { replyId: '9', outcome: JSON.parse(String(init?.body)).outcome } }), { status: 200 });
+    if (String(input).includes('/news?')) return new Response(JSON.stringify({ data: { days: 7, canManage: true, summary: { total: 3, related: 1 }, items: [], topics: [], sources: [] } }), { status: 200 });
     const path = String(input).split('/management/')[1]?.split('?')[0];
     if (options.failPos && path?.startsWith('pos-sync/')) return new Response(JSON.stringify({ message: 'POS 状态读取失败' }), { status: 500 });
     const data = path === 'access' ? { administrator: !options.limited, roleCodes: ['ADMIN'], capabilities: options.limited ? { ...capabilities, posSync: false, posIssues: false, permissionsManage: false } : capabilities, grantedPermissionCodes: [] }
@@ -215,6 +216,7 @@ describe('经营管理页面组织', () => {
       const tiles = wrapper.findAll('.glass-card');
       expect(tiles.map((tile) => tile.get('strong').text())).toEqual(['店铺经营发现', 'AI 销售报告', '行业趋势', '活动策划']);
       expect(tiles[0].text()).toContain('1 种突然热销 · 1 种超量滞销');
+      expect(tiles[2].text()).toContain('本周 3 条 · 1 条与店内相关');
       expect(tiles[3].text()).toContain('即将上线');
 
       // The brief on the home page shows what needs attention and opens the matching list.

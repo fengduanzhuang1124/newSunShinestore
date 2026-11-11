@@ -10,7 +10,7 @@ import { DEFAULT_COVERAGE_WEEKS, MAX_COVERAGE_WEEKS, MIN_COVERAGE_WEEKS, purchas
 import { purchaseCycle, skipUntil } from './purchase-cycle.js';
 import { baselineWindows, categoryTrends, findPairs, findSurges, NO_SALE_DAYS, overstockReason, PERIOD_DAYS, WINDOW_COUNT, windowBoundaries, windowCovered, windowIndex, type MarketPeriod } from './market-insights.js';
 import { buildHighlights, buildSankey, categoryMovers, categoryShares, centsToAmount, changePercent, dataThroughDate, demandGroups, demandRows, heatmapSummary, periodTotals } from './store-analysis.js';
-import { AUDIENCE_OPTIONS, CATEGORY_OPTIONS, FUNCTION_OPTIONS, isCategoryOption, matchesCategory, productAudiences, productCategory, productFunctionDetails, productFunctions, UNCLASSIFIED } from '../shared/product-taxonomy.js';
+import { AUDIENCE_OPTIONS, CATEGORY_OPTIONS, classificationNames, FUNCTION_OPTIONS, isCategoryOption, matchesCategory, productAudiences, productCategory, productFunctionDetails, productFunctions, storeLabelSub, UNCLASSIFIED } from '../shared/product-taxonomy.js';
 import { ignoreIsActive, isDirectShip, productGroupKey, productNames, purchaseBrandGroup, setDirectShip } from '../shared/replenishment-rules.js';
 
 // Shipping and international fee lines are charged per kilogram: money received, but not goods sold, so they never
@@ -30,6 +30,8 @@ const ARRIVED_WINDOW_DAYS = 7;
 const LONG_SALES_WINDOW_DAYS = 90;
 // Shelf quantity kept for slow sellers without a configured minimum stock (CR-006 D3).
 const DEFAULT_DISPLAY_STOCK = 2;
+// REQ-016 A6: same as the products.store_label column.
+export const STORE_LABEL_MAX_LENGTH = 60;
 // Products that will sell out within this many weeks are bought this week (CR-006 D4).
 const THIS_WEEK_COVERAGE_WEEKS = 2;
 const MANAGEMENT_PERMISSIONS = {
@@ -492,7 +494,7 @@ export class ManagementService {
         where: productWhere,
         orderBy: { name: 'asc' },
         select: {
-          id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
+          id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true, storeLabel: true,
           barcodes: { where: { status: 'ACTIVE' }, orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }], select: { barcode: true }, take: 1 },
           storeProducts: { where: { storeId, enabled: true }, select: { sellingPriceCents: true, level4PriceCents: true, minimumStock: true }, take: 1 },
         },
@@ -623,7 +625,7 @@ export class ManagementService {
       this.prisma.client.product.findMany({
         where: productWhere, orderBy: { name: 'asc' },
         select: {
-          id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
+          id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true, storeLabel: true,
           storeProducts: { where: { storeId, enabled: true }, select: { minimumStock: true, directShip: true }, take: 1 },
           posProductMappings: { where: { storeId, status: 'ACTIVE' }, select: { id: true }, take: 1 },
         },
@@ -787,7 +789,7 @@ export class ManagementService {
     const [products, sales, balances] = await Promise.all([
       this.prisma.client.product.findMany({
         where: productWhere,
-        select: { id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true, barcodes: { where: { status: 'ACTIVE' }, orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }], select: { barcode: true }, take: 1 } },
+        select: { id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true, storeLabel: true, barcodes: { where: { status: 'ACTIVE' }, orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }], select: { barcode: true }, take: 1 } },
       }),
       this.prisma.client.posOrderItem.groupBy({
         by: ['productId'],
@@ -799,14 +801,14 @@ export class ManagementService {
     const units = new Map(sales.map((row) => [row.productId!.toString(), Math.round(Number(row._sum.quantity ?? 0))]));
     const stock = new Map(balances.map((row) => [row.productId.toString(), row._sum.quantity ?? 0]));
     const rows = products.map((product) => {
-      const names = [product.name, product.chineseName, product.englishName];
+      const names = classificationNames(product);
       const info = this.classify(product);
       const automatic = productCategory(names);
       return {
         productId: product.id.toString(), sku: product.sku, barcode: product.barcodes[0]?.barcode ?? null,
         productName: product.chineseName || product.name || product.englishName || '未命名商品',
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
-        level1: info.category.level1, level2: info.category.level2, manualCategory: product.categoryName?.trim() || null,
+        level1: info.category.level1, level2: info.category.level2, manualCategory: product.categoryName?.trim() || null, storeLabel: product.storeLabel?.trim() || null,
         automaticCategory: automatic.code === UNCLASSIFIED.code ? null : automatic.level2,
         functions: info.functions, unitsLast90Days: units.get(product.id.toString()) ?? 0, currentInventory: stock.get(product.id.toString()) ?? 0,
       };
@@ -825,15 +827,37 @@ export class ManagementService {
     if (!access.admin) throw new ForbiddenException('只有管理员可以修改商品品类');
     const value = category?.trim() || null;
     if (value && !isCategoryOption(value)) throw new BadRequestException('品类不在分类表中');
-    const product = await this.prisma.client.product.findFirst({ where: { id: productId, organizationId, status: 'ACTIVE' }, select: { id: true, name: true, chineseName: true, englishName: true, categoryName: true } });
+    const product = await this.prisma.client.product.findFirst({ where: { id: productId, organizationId, status: 'ACTIVE' }, select: { id: true, name: true, chineseName: true, englishName: true, categoryName: true, storeLabel: true } });
     if (!product) throw new NotFoundException('商品不存在');
     const updated = await this.prisma.client.$transaction(async (tx) => {
-      const row = await tx.product.update({ where: { id: productId }, data: { categoryName: value }, select: { id: true, name: true, chineseName: true, englishName: true, categoryName: true } });
+      const row = await tx.product.update({ where: { id: productId }, data: { categoryName: value }, select: { id: true, name: true, chineseName: true, englishName: true, categoryName: true, storeLabel: true } });
       await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'catalog.product_category.assign', entityType: 'Product', entityId: productId.toString(), requestId: randomUUID(), beforeSummary: { categoryName: product.categoryName }, afterSummary: { categoryName: value } } });
       return row;
     });
     const info = this.classify(updated);
     return { productId: productId.toString(), level1: info.category.level1, level2: info.category.level2, manualCategory: updated.categoryName, functions: info.functions };
+  }
+
+  // REQ-016 A6: set or clear the store sub-category label of a product (null clears it). Admins only.
+  async assignProductStoreLabel(organizationId: bigint, userId: bigint, storeId: bigint, productId: bigint, label: string | null) {
+    const access = await this.storeAccess(organizationId, userId, storeId);
+    if (!access.admin) throw new ForbiddenException('只有管理员可以修改门店细分标签');
+    const value = label?.trim().replace(/\s+/g, ' ') || null;
+    if (value && value.length > STORE_LABEL_MAX_LENGTH) throw new BadRequestException(`门店细分标签不能超过${STORE_LABEL_MAX_LENGTH}个字`);
+    const product = await this.prisma.client.product.findFirst({ where: { id: productId, organizationId, status: 'ACTIVE' }, select: { id: true, name: true, chineseName: true, englishName: true, categoryName: true, storeLabel: true } });
+    if (!product) throw new NotFoundException('商品不存在');
+    if ((product.storeLabel ?? null) === value) return this.labelResult(product);
+    const updated = await this.prisma.client.$transaction(async (tx) => {
+      const row = await tx.product.update({ where: { id: productId }, data: { storeLabel: value }, select: { id: true, name: true, chineseName: true, englishName: true, categoryName: true, storeLabel: true } });
+      await tx.auditLog.create({ data: { organizationId, userId, storeId, action: 'catalog.product_store_label.assign', entityType: 'Product', entityId: productId.toString(), requestId: randomUUID(), beforeSummary: { storeLabel: product.storeLabel }, afterSummary: { storeLabel: value } } });
+      return row;
+    });
+    return this.labelResult(updated);
+  }
+
+  private labelResult(product: { id: bigint; name: string; chineseName: string | null; englishName: string | null; categoryName: string | null; storeLabel: string | null }) {
+    const info = this.classify(product);
+    return { productId: product.id.toString(), level1: info.category.level1, level2: info.category.level2, storeLabel: product.storeLabel, functions: info.functions, audiences: info.audiences };
   }
 
   // REQ-014 §4.3: store findings for the market analysis page. Read only.
@@ -857,7 +881,7 @@ export class ManagementService {
       this.prisma.client.product.findMany({
         where: productWhere,
         select: {
-          id: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
+          id: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true, storeLabel: true,
           storeProducts: { where: { storeId, enabled: true }, select: { directShip: true }, take: 1 },
           posProductMappings: { where: { storeId, status: 'ACTIVE' }, select: { id: true }, take: 1 },
         },
@@ -889,7 +913,7 @@ export class ManagementService {
 
     const included = new Set(currentOrder?.items.map((item) => item.productId.toString()) ?? []);
     const info = new Map(products.map((product) => {
-      const names = [product.name, product.chineseName, product.englishName];
+      const names = classificationNames(product);
       const category = productCategory(names, product.categoryName);
       const functions = productFunctionDetails(names, category);
       return [product.id.toString(), {
@@ -897,6 +921,7 @@ export class ManagementService {
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
         category,
         functions,
+        storeSub: storeLabelSub(product.storeLabel),
         groups: demandGroups(names, category, functions.map((detail) => detail.label), productAudiences(names)),
         directShip: isDirectShip(product.storeProducts[0]?.directShip, productNames(product)),
         posMapped: product.posProductMappings.length > 0,
@@ -1057,7 +1082,7 @@ export class ManagementService {
     // CR-021: who the goods were for and what they were for, with the top products behind each node.
     const flow = buildSankey([...productRevenue].filter(([id]) => info.has(id)).map(([id, revenue]) => {
       const product = info.get(id)!;
-      return { productId: id, cents: revenue[0], groups: product.groups, functions: product.functions, fallback: product.category.level1 };
+      return { productId: id, cents: revenue[0], groups: product.groups, functions: product.functions, fallback: product.category.level1, storeSub: product.storeSub };
     }));
     const sankey = { ...flow, products: Object.fromEntries(Object.entries(flow.products).map(([nodeId, rows]) => [nodeId,
       rows.map((row) => ({ ...describe(row.productId), revenue: row.revenue, units: Math.round(units.get(row.productId)?.[0] ?? 0) }))])) };
@@ -1117,7 +1142,7 @@ export class ManagementService {
       this.prisma.client.product.findMany({
         where: productWhere, orderBy: { name: 'asc' },
         select: {
-          id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
+          id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true, storeLabel: true,
           barcodes: { where: { status: 'ACTIVE' }, orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }], select: { barcode: true }, take: 1 },
           storeProducts: { where: { storeId, enabled: true }, select: { minimumStock: true, directShip: true }, take: 1 },
         },
@@ -1535,7 +1560,7 @@ export class ManagementService {
         where: { organizationId, status: 'ACTIVE', storeProducts: { some: { storeId, enabled: true } }, ...textFilter },
         orderBy: { name: 'asc' },
         select: {
-          id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
+          id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true, storeLabel: true,
           insightAssignments: {
             where: { reviewStatus: { in: ['PENDING', 'APPROVED'] }, tag: { status: 'ACTIVE' } },
             orderBy: { updatedAt: 'desc' },
@@ -1677,7 +1702,7 @@ export class ManagementService {
           id: true,
           name: true, chineseName: true, englishName: true,
           brandName: true,
-          categoryName: true,
+          categoryName: true, storeLabel: true,
           barcodes: { where: { status: 'ACTIVE' }, select: { id: true }, take: 1 },
           storeProducts: { where: { storeId }, select: { minimumStock: true, sellingPriceCents: true, level4PriceCents: true }, take: 1 },
         },
@@ -1985,7 +2010,7 @@ export class ManagementService {
           where: itemWhere,
           select: {
             productId: true, externalProductId: true, sourceName: true, quantity: true, unitPrice: true, isMinus: true, disposition: true,
-            product: { select: { name: true, chineseName: true, englishName: true, brandName: true, categoryName: true } },
+            product: { select: { name: true, chineseName: true, englishName: true, brandName: true, categoryName: true, storeLabel: true } },
           },
         },
       },
@@ -1996,14 +2021,14 @@ export class ManagementService {
   private async productIdsInCategory(organizationId: bigint, storeId: bigint, category: string) {
     const products = await this.prisma.client.product.findMany({
       where: { organizationId, status: 'ACTIVE', storeProducts: { some: { storeId, enabled: true } } },
-      select: { id: true, name: true, chineseName: true, englishName: true, categoryName: true },
+      select: { id: true, name: true, chineseName: true, englishName: true, categoryName: true, storeLabel: true },
     });
     return products.filter((product) => matchesCategory(this.classify(product).category, category)).map((product) => product.id);
   }
 
   // Category (typed in by a person, otherwise recognised from the names), functions and audiences of a product.
-  private classify(product: { name?: string | null; chineseName?: string | null; englishName?: string | null; categoryName?: string | null }) {
-    const names = [product.name, product.chineseName, product.englishName];
+  private classify(product: { name?: string | null; chineseName?: string | null; englishName?: string | null; categoryName?: string | null; storeLabel?: string | null }) {
+    const names = classificationNames(product);
     const category = productCategory(names, product.categoryName);
     return { category, manual: Boolean(product.categoryName?.trim()), functions: productFunctions(names, category), audiences: productAudiences(names) };
   }
@@ -2093,7 +2118,7 @@ export class ManagementService {
         include: {
           product: {
             select: {
-              sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true,
+              sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true, storeLabel: true,
               barcodes: { where: { status: 'ACTIVE' as const }, orderBy: [{ isPrimary: 'desc' as const }, { id: 'asc' as const }], select: { barcode: true }, take: 1 },
             },
           },

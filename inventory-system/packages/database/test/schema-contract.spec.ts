@@ -31,6 +31,8 @@ describe('inventory database contract', () => {
     'model PosRefundReview',
     'model PosInventorySimulation',
     'model PosInventorySimulationItem',
+    'model NewsSource',
+    'model NewsItem',
   ])('contains %s', (modelName) => {
     expect(schema).toContain(modelName);
   });

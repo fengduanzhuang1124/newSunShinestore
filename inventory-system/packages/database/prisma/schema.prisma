@@ -193,6 +193,8 @@ model Organization {
   assistantAliases          AssistantAlias[]
   assistantAnswers          AssistantAnswer[]
   assistantReplyLogs        AssistantReplyLog[]
+  newsSources               NewsSource[]
+  newsItems                 NewsItem[]
 
   @@map("organizations")
 }
@@ -286,6 +288,7 @@ model Product {
   chineseName         String?                       @map("chinese_name") @db.VarChar(255)
   brandName           String?                       @map("brand_name") @db.VarChar(80)
   categoryName        String?                       @map("category_name") @db.VarChar(120)
+  storeLabel          String?                       @map("store_label") @db.VarChar(60)
   description         String?                       @db.Text
   unit                String                        @default("piece") @db.VarChar(20)
   status              RecordStatus                  @default(ACTIVE)
@@ -1282,4 +1285,49 @@ model AssistantReplyLog {
   @@index([organizationId, createdAt])
   @@index([storeId, outcome])
   @@map("assistant_reply_logs")
+}
+
+enum NewsRegion {
+  ANZ
+  ASIA
+  GLOBAL
+}
+
+// Industry news feeds (REQ-016 part 3). Only public RSS / Atom addresses are read; pages are never scraped.
+model NewsSource {
+  id             BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt       @map("organization_id") @db.UnsignedBigInt
+  name           String       @db.VarChar(80)
+  url            String       @db.VarChar(500)
+  region         NewsRegion
+  enabled        Boolean      @default(true)
+  lastSuccessAt  DateTime?    @map("last_success_at")
+  lastFailureAt  DateTime?    @map("last_failure_at")
+  lastError      String?      @map("last_error") @db.VarChar(255)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  items          NewsItem[]
+
+  @@unique([organizationId, url])
+  @@map("news_sources")
+}
+
+// One row per article link. Topics are worked out when the news is read, so rule changes apply to old items too.
+model NewsItem {
+  id             BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  organizationId BigInt       @map("organization_id") @db.UnsignedBigInt
+  sourceId       BigInt       @map("source_id") @db.UnsignedBigInt
+  title          String       @db.VarChar(300)
+  summary        String?      @db.VarChar(600)
+  link           String       @db.VarChar(700)
+  publishedAt    DateTime?    @map("published_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  source         NewsSource   @relation(fields: [sourceId], references: [id])
+
+  @@unique([organizationId, link])
+  @@index([organizationId, publishedAt])
+  @@index([sourceId, createdAt])
+  @@map("news_items")
 }

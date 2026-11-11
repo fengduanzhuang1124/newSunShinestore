@@ -189,4 +189,16 @@ describe('ManagementController POS sync', () => {
       { externalId: '356', name: '深海鱼油', dimension: 'HEALTH_NEED', parentExternalId: '2', description: undefined, sortOrder: 2, status: 'ACTIVE' },
     ]);
   });
+
+  it('saves or clears a store label and rejects bad input before the service (REQ-016 A6)', async () => {
+    const management = { assignProductStoreLabel: jest.fn().mockResolvedValue({ productId: '9' } as never) };
+    const controller = new ManagementController(management as never);
+    await expect(controller.assignProductStoreLabel(request as never, '3', { productId: '9', label: '高级洗发' })).resolves.toMatchObject({ message: '门店细分标签已保存' });
+    await expect(controller.assignProductStoreLabel(request as never, '3', { productId: '9', label: null })).resolves.toMatchObject({ message: '门店细分标签已清除' });
+    expect(management.assignProductStoreLabel).toHaveBeenLastCalledWith(2n, 1n, 3n, 9n, null);
+    await expect(controller.assignProductStoreLabel(request as never, '3', { productId: 'x', label: 'a' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(controller.assignProductStoreLabel(request as never, '3', { productId: '9', label: 5 as never })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(controller.assignProductStoreLabel(request as never, '3', { productId: '9', label: 'x'.repeat(61) })).rejects.toBeInstanceOf(BadRequestException);
+    expect(management.assignProductStoreLabel).toHaveBeenCalledTimes(2);
+  });
 });

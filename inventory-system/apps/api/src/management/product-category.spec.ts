@@ -81,4 +81,27 @@ describe('product categories (CR-010)', () => {
     // A search shows every match, whatever its state.
     expect((await service(client).productCategories(1n, 2n, 1n, { view: 'UNCLASSIFIED', query: 'a' })).products).toHaveLength(4);
   });
+
+  it('lets only admins set or clear a store label, audits real changes and recognises the label at once', async () => {
+    const update = jest.fn(async ({ data }: { data: { storeLabel: string | null } }) => ({ id: 9n, name: 'Trilogy Rosehip Oil 30ml', chineseName: null, englishName: null, categoryName: null, storeLabel: data.storeLabel }));
+    const auditCreate = jest.fn().mockResolvedValue({} as never);
+    const findFirst = jest.fn().mockResolvedValue({ id: 9n, name: 'Trilogy Rosehip Oil 30ml', chineseName: null, englishName: null, categoryName: null, storeLabel: null } as never);
+    const client = {
+      userStoreRole: { findMany: jest.fn().mockResolvedValue(role('ADMIN') as never) },
+      product: { findFirst, update },
+      auditLog: { create: auditCreate },
+      $transaction: jest.fn(async (callback: (tx: unknown) => unknown) => callback(client)),
+    };
+    await expect(service(client).assignProductStoreLabel(1n, 2n, 1n, 9n, '  抗皱紧致 ')).resolves.toMatchObject({ level2: '面部护理', storeLabel: '抗皱紧致', functions: ['抗皱紧致'] });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { storeLabel: '抗皱紧致' } }));
+    expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'catalog.product_store_label.assign', beforeSummary: { storeLabel: null }, afterSummary: { storeLabel: '抗皱紧致' } }) }));
+    // Running the import twice changes nothing the second time.
+    findFirst.mockResolvedValueOnce({ id: 9n, name: 'Trilogy Rosehip Oil 30ml', chineseName: null, englishName: null, categoryName: null, storeLabel: '抗皱紧致' } as never);
+    await service(client).assignProductStoreLabel(1n, 2n, 1n, 9n, '抗皱紧致');
+    expect(update).toHaveBeenCalledTimes(1);
+    await expect(service(client).assignProductStoreLabel(1n, 2n, 1n, 9n, 'x'.repeat(61))).rejects.toThrow('不能超过60个字');
+
+    const staff = { ...client, userStoreRole: { findMany: jest.fn().mockResolvedValue(role('STAFF', ['management.sales.view']) as never) } };
+    await expect(service(staff).assignProductStoreLabel(1n, 2n, 1n, 9n, '高级洗发')).rejects.toThrow('只有管理员');
+  });
 });
