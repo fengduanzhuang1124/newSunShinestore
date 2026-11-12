@@ -106,7 +106,7 @@ const busiest = computed(() => {
         <section v-if="data.sankey && data.sankey.total > 0" id="mk-flow" class="mk-panel mk-flow mk-reveal" style="--d: 1">
           <header class="mk-panel-head"><h4>人群与功能需求</h4><span>商品销售额 {{ money(data.sankey.total) }}</span></header>
           <SankeyChart :data="data.sankey" :adding="adding" @add-to-order="emit('add-to-order', $event)" />
-          <p class="mk-rule">{{ data.rules.sankey }}。线越粗代表销售额越多；点击节点查看对应商品。电脑上只显示前 7 个功能大类和前 10 个功能细分，其余合并为“其他”。</p>
+          <p class="mk-rule">{{ data.rules.sankey }}。线越粗代表销售额越多；点击节点查看对应商品。占销售额 1% 以上的大类和细分单独显示；同一大类里不足 1% 的细分合并为“大类·其他”，点击可查看其中的商品。</p>
         </section>
       </div>
 
