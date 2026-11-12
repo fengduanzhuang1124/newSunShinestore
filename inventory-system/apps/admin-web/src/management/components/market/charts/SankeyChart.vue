@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // CR-021: who the goods were for → function group → function, weighted by list-price revenue. Desktop draws a
-// three-column Sankey (top 7 groups and top 10 functions, the rest folded into 其他); a phone drills layer by layer.
+// three-column Sankey; a phone drills layer by layer. REQ-016 A5: every group and function of at least 1% of revenue
+// is drawn on its own; smaller functions fold into "<group>·其他" within their group, smaller groups into 其他大类.
 // Clicking a node lists its best sellers; one running short can be put on this week's purchase order (提醒进货).
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { marketMoney as money, type SankeyData, type SankeyNode, type SankeyProduct } from '../market-types';
@@ -9,12 +10,13 @@ const props = defineProps<{ data: SankeyData; adding: string | null }>();
 const emit = defineEmits<{ 'add-to-order': [productId: string] }>();
 
 const GROUP_LIMIT = 7;
-const FUNCTION_LIMIT = 10;
+const SHOW_SHARE = 0.01;
 const OTHER_GROUP = 'g:__other';
 const OTHER_FUNCTION = 'f:__other';
+const otherOf = (group: string) => `f:__other:${group}`;
 const NO_FUNCTION = 'g:无明确功能';
 // The chart is drawn at its real width so text never scales; its height matches the product panel beside it.
-const H = 470; const NODE_W = 12; const GAP = 8; const LABEL_H = 17; const LEFT_LABELS = 150; const RIGHT_LABELS = 168;
+const MIN_H = 470; const NODE_W = 12; const GAP = 8; const LABEL_H = 17; const LEFT_LABELS = 150; const RIGHT_LABELS = 168;
 const HEADERS = ['买给谁', '功能大类', '功能细分'];
 const CHART_MIN = 560;
 const root = ref<HTMLElement>();
@@ -82,20 +84,32 @@ const colorOf = (groupId: string | null) => (groupId && groupSlot.value.has(grou
 // Desktop folding: every node maps to the node it is drawn as.
 const shownAs = computed(() => {
   const map = new Map<string, string>();
-  const functions = props.data.nodes.filter((node) => node.layer === 2);
+  const small = (node: SankeyNode) => node.value < props.data.total * SHOW_SHARE;
   for (const node of props.data.nodes) {
     if (node.layer === 0) map.set(node.id, node.id);
-    if (node.layer === 1) map.set(node.id, node.id === NO_FUNCTION || groupSlot.value.has(node.id) ? node.id : OTHER_GROUP);
+    if (node.layer === 1) map.set(node.id, node.id === NO_FUNCTION || !small(node) ? node.id : OTHER_GROUP);
   }
-  functions.forEach((node, index) => map.set(node.id, index < FUNCTION_LIMIT ? node.id : OTHER_FUNCTION));
+  const smallByGroup = new Map<string, number>();
+  for (const node of props.data.nodes) if (node.layer === 2 && small(node)) smallByGroup.set(node.group ?? '', (smallByGroup.get(node.group ?? '') ?? 0) + 1);
+  for (const node of props.data.nodes) {
+    if (node.layer !== 2) continue;
+    const group = node.group ?? '';
+    if (map.get(`g:${group}`) === OTHER_GROUP) map.set(node.id, OTHER_FUNCTION);
+    else map.set(node.id, small(node) && (smallByGroup.get(group) ?? 0) > 1 ? otherOf(group) : node.id);
+  }
   return map;
 });
 
+// Taller when a column has many nodes, so every node keeps a line for its label.
+const chartH = computed(() => {
+  const counts = [0, 1, 2].map((layer) => new Set([...shownAs.value].filter(([id]) => props.data.nodes.find((node) => node.id === id)?.layer === layer).map(([, shown]) => shown)).size);
+  return Math.max(MIN_H, Math.max(...counts) * (LABEL_H + GAP + 4));
+});
 type Box = SankeyNode & { x: number; y: number; h: number; slot: number; color: string };
-const isCatchAll = (id: string) => id.endsWith('__other') || id === NO_FUNCTION;
+const isCatchAll = (id: string) => id.includes('__other') || id === NO_FUNCTION;
 // Pixels per dollar for one column: nodes too small for a label get a fixed slot and the rest share what is left.
 function columnScale(column: Box[]) {
-  const room = H - GAP * Math.max(column.length - 1, 0);
+  const room = chartH.value - GAP * Math.max(column.length - 1, 0);
   const total = column.reduce((sum, box) => sum + box.value, 0) || 1;
   let scale = room / total;
   for (let pass = 0; pass < 3; pass += 1) {
@@ -111,12 +125,18 @@ const layout = computed(() => {
     const id = shownAs.value.get(node.id)!;
     const existing = boxes.get(id);
     if (existing) { existing.value += node.value; continue; }
-    const name = id === OTHER_GROUP ? '其他大类' : id === OTHER_FUNCTION ? '其他细分' : node.name;
+    const name = id === OTHER_GROUP ? '其他大类' : id === OTHER_FUNCTION ? '其他细分' : id.startsWith('f:__other:') ? `${node.group}·${node.group === '无明确功能' ? '其他品类' : '其他'}` : node.name;
     const groupId = node.layer === 1 ? id : node.layer === 2 && id !== OTHER_FUNCTION ? `g:${node.group}` : null;
     boxes.set(id, { ...node, id, name, x: columnX.value[node.layer], y: 0, h: 0, slot: 0, color: node.layer === 0 ? 'var(--mk-ink)' : colorOf(groupId) });
   }
-  const columns = [0, 1, 2].map((layer) => [...boxes.values()].filter((box) => box.layer === layer)
-    .sort((a, b) => Number(isCatchAll(a.id)) - Number(isCatchAll(b.id)) || b.value - a.value));
+  const order = (a: Box, b: Box) => Number(isCatchAll(a.id)) - Number(isCatchAll(b.id)) || b.value - a.value;
+  const columns = [0, 1].map((layer) => [...boxes.values()].filter((box) => box.layer === layer).sort(order));
+  // Functions follow the order of their groups, so bands from one group stay together and cross less.
+  const groupRank = new Map(columns[1].map((box, index) => [box.id, index]));
+  const rankOf = (box: Box) => groupRank.get(box.id === OTHER_FUNCTION ? OTHER_GROUP : `g:${box.group}`) ?? groupRank.size;
+  const withinGroup = (a: Box, b: Box) => Number(a.id.startsWith('f:__other:')) - Number(b.id.startsWith('f:__other:')) || b.value - a.value;
+  columns.push([...boxes.values()].filter((box) => box.layer === 2).sort((a, b) => rankOf(a) - rankOf(b) || withinGroup(a, b)));
+  const H = chartH.value;
   // Every node keeps at least one label line of space, so small groups such as 孕产 and 青少年 never overlap.
   const scale = Math.min(...columns.map(columnScale));
   for (const column of columns) {
@@ -162,7 +182,7 @@ const selectedBox = computed<SankeyNode | null>(() => layout.value.boxes.find((b
 
 // Products behind a node; a folded node merges the products of the nodes inside it.
 function productsOf(id: string): SankeyProduct[] {
-  const members = id.endsWith('__other') ? [...shownAs.value].filter(([, shown]) => shown === id).map(([original]) => original) : [id];
+  const members = id.includes('__other') ? [...shownAs.value].filter(([, shown]) => shown === id).map(([original]) => original) : [id];
   const merged = new Map<string, SankeyProduct>();
   for (const member of members) for (const row of props.data.products[member] ?? []) {
     const existing = merged.get(row.productId);
@@ -200,7 +220,7 @@ function drillBack() {
 <template>
   <div ref="root" class="sk" :style="{ '--sk-side': `${sideWidth}px` }">
     <div ref="chart" class="sk-chart">
-    <svg class="sk-svg" :width="W" :height="H + 30" :viewBox="`0 -30 ${W} ${H + 30}`" role="img" :aria-label="`人群与功能需求桑基图，合计 ${money(data.total)}`">
+    <svg class="sk-svg" :width="W" :height="chartH + 30" :viewBox="`0 -30 ${W} ${chartH + 30}`" role="img" :aria-label="`人群与功能需求桑基图，合计 ${money(data.total)}`">
       <text v-for="(header, index) in HEADERS" :key="header" class="sk-header" :x="columnX[index] + (index === 0 ? NODE_W : 0)" y="-14" :text-anchor="index === 0 ? 'end' : 'start'">{{ header }}</text>
       <g class="sk-bands">
         <path v-for="band in layout.bands" :key="band.key" :d="band.path" :fill="band.color" :class="{ faded: !touches(band) }"><title>{{ band.label }}：{{ money(band.value) }}（{{ percent(band.value) }}）</title></path>

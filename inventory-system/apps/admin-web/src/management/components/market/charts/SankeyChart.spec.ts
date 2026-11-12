@@ -98,4 +98,40 @@ describe('SankeyChart (CR-021)', () => {
     expect(splitter.attributes('aria-valuenow')).toBe('400');
     expect(mount(SankeyChart, { props: { data, adding: null } }).get('.sk-splitter').attributes('aria-valuenow')).toBe('400');
   });
+
+  it('draws every function of at least 1% and folds smaller ones within their own group (REQ-016 A5)', async () => {
+    // 20 functions of 3.6% each under 外用护理 would all have been folded after the 10th before.
+    const big = Array.from({ length: 20 }, (_, index) => ({ id: `f:外用护理/细分${index + 1}`, layer: 2 as const, name: `细分${index + 1}`, group: '外用护理', value: 36 }));
+    const tiny = [{ id: 'f:外用护理/小A', layer: 2 as const, name: '小A', group: '外用护理', value: 4 }, { id: 'f:外用护理/小B', layer: 2 as const, name: '小B', group: '外用护理', value: 3 },
+      { id: 'f:食品/唯一小', layer: 2 as const, name: '唯一小', group: '食品', value: 5 }];
+    const wide: SankeyData = {
+      total: 1000,
+      nodes: [
+        { id: 'p:家庭通用', layer: 0, name: '家庭通用', group: null, value: 1000 },
+        { id: 'g:外用护理', layer: 1, name: '外用护理', group: null, value: 727 },
+        { id: 'g:日常营养', layer: 1, name: '日常营养', group: null, value: 268 },
+        { id: 'g:食品', layer: 1, name: '食品', group: null, value: 5 },
+        ...big, ...tiny,
+        { id: 'f:日常营养/日常营养', layer: 2, name: '日常营养', group: '日常营养', value: 268 },
+      ],
+      links: [], flows: [],
+      products: { 'f:外用护理/小A': [product('7', '小A 面霜', 4, 6)], 'f:外用护理/小B': [product('8', '小B 面膜', 3, 6)] },
+    };
+    const wrapper = mount(SankeyChart, { props: { data: wide, adding: null } });
+    const names = wrapper.findAll('.sk-node .sk-name').map((node) => node.text());
+    expect(names).toContain('细分20');
+    expect(names).toContain('外用护理·其他');
+    expect(names).not.toContain('小A');
+    // Only a group with less than 1% folds into 其他大类, and its functions into 其他细分.
+    expect(names.filter((name) => name === '其他大类' || name === '其他细分')).toEqual(['其他大类', '其他细分']);
+    // Functions follow their groups: 外用护理 first, its 其他 last within it, then 日常营养.
+    const column = wrapper.findAll('.sk-node').map((node) => ({ name: node.get('.sk-name').text(), x: Number(node.findAll('rect')[1].attributes('x')), y: Number(node.findAll('rect')[1].attributes('y')) }));
+    const right = Math.max(...column.map((node) => node.x));
+    const third = column.filter((node) => node.x === right).sort((a, b) => a.y - b.y).map((node) => node.name);
+    expect(third.slice(20)).toEqual(['外用护理·其他', '日常营养', '其他细分']);
+    await wrapper.findAll('.sk-node').find((node) => node.text().includes('外用护理·其他'))!.trigger('click');
+    expect(wrapper.get('.sk-products').text()).toContain('小A 面霜');
+    expect(wrapper.get('.sk-products').text()).toContain('小B 面膜');
+    expect(Number(wrapper.get('.sk-svg').attributes('height'))).toBeGreaterThan(500);
+  });
 });
