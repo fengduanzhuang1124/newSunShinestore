@@ -626,6 +626,7 @@ export class ManagementService {
         where: productWhere, orderBy: { name: 'asc' },
         select: {
           id: true, sku: true, name: true, chineseName: true, englishName: true, brandName: true, categoryName: true, storeLabel: true,
+          barcodes: { where: { status: 'ACTIVE' }, orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }], select: { barcode: true } },
           storeProducts: { where: { storeId, enabled: true }, select: { minimumStock: true, directShip: true }, take: 1 },
           posProductMappings: { where: { storeId, status: 'ACTIVE' }, select: { id: true }, take: 1 },
         },
@@ -715,7 +716,7 @@ export class ManagementService {
       // Without a POS mapping no sale can be recorded, so "no sales" says nothing about demand.
       const slowMoving = posMapped && salesCoverageReliable && currentInventory > 0 && (soldUnits <= 0 || (daysSinceLastSale !== null && daysSinceLastSale >= Math.min(observedDays, 60)) || (coverageDays !== null && coverageDays > 180));
       return {
-        productId: key, sku: product.sku, productName,
+        productId: key, sku: product.sku, productName, barcodes: product.barcodes.map((row) => row.barcode),
         brandName: this.displayBrand(product.brandName, product.chineseName, product.name, product.englishName),
         categoryName: category.level2, categoryGroup: category.level1,
         currentInventory, minimumStock, configuredMinimumStock,
@@ -2183,6 +2184,7 @@ export class ManagementService {
         orderedQuantity: item.orderedQuantity, receivedQuantity: item.receivedQuantity, supplierName: item.supplierName,
         unitCostCents: item.unitCostCents, caseSize: item.caseSize, notes: item.notes,
         coverageWeeks: item.coverageWeeks, quantityEdited: item.quantityEdited,
+        brandGroup: purchaseBrandGroup(`${productNames(item.product)} ${item.product.brandName ?? ''}`),
       })),
     };
   }

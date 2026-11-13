@@ -1,9 +1,10 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, HttpException, HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 import { LoginDto } from './login.dto.js';
+import { distanceMetres, distanceText, isValidPosition, MAX_LOCATION_ACCURACY_M } from './store-location.js';
 
 @Injectable()
 export class AuthService {
@@ -24,6 +25,7 @@ export class AuthService {
     if (!user || !(await compare(input.password, user.passwordHash))) {
       throw new UnauthorizedException('用户名或密码错误');
     }
+    if (user.inStoreOnly) await this.requireInStore(user, input);
 
     const accessToken = await this.jwt.signAsync({
       sub: user.id.toString(),
@@ -54,6 +56,32 @@ export class AuthService {
         })),
       },
     };
+  }
+
+  // CR-025: checked only after the password, so the position is never asked for an unknown account.
+  private async requireInStore(
+    user: { id: bigint; organizationId: bigint; storeRoles: { store: { id: bigint; latitude: unknown; longitude: unknown; loginRadiusM: number } }[] },
+    input: LoginDto,
+  ) {
+    const position = { latitude: input.latitude, longitude: input.longitude };
+    if (!isValidPosition(position)) {
+      throw new HttpException('该账号只能在门店内登录，请允许获取位置后重试', HttpStatus.PRECONDITION_REQUIRED);
+    }
+    if (input.accuracy !== undefined && input.accuracy > MAX_LOCATION_ACCURACY_M) {
+      throw new ForbiddenException('定位不够准确，请打开手机的精确定位后重试');
+    }
+    const stores = user.storeRoles.map(({ store }) => store)
+      .filter((store) => store.latitude !== null && store.longitude !== null)
+      .map((store) => ({ id: store.id, radius: store.loginRadiusM, distance: distanceMetres(position, { latitude: Number(store.latitude), longitude: Number(store.longitude) }) }));
+    if (!stores.length) throw new ForbiddenException('门店还没有设置位置，暂时不能登录，请联系管理员');
+    const nearest = stores.reduce((best, store) => (store.distance < best.distance ? store : best));
+    if (nearest.distance <= nearest.radius) return;
+    await this.prisma.client.auditLog.create({ data: {
+      organizationId: user.organizationId, userId: user.id, storeId: nearest.id, action: 'auth.login.outside_store', entityType: 'User',
+      entityId: user.id.toString(), requestId: randomUUID(),
+      afterSummary: { distanceMetres: Math.round(nearest.distance), radiusMetres: nearest.radius, accuracyMetres: input.accuracy ?? null },
+    } });
+    throw new ForbiddenException(`该账号只能在门店内登录（当前距离门店约 ${distanceText(nearest.distance)}）`);
   }
 
   async changePassword(organizationId: bigint, userId: bigint, currentPassword: string, newPassword: string) {

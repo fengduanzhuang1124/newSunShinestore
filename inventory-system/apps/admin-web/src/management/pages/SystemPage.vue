@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoginSettingsPanel from '../components/LoginSettingsPanel.vue';
 import { useManagementContext } from '../useManagementDashboard';
 
 const {
@@ -8,16 +9,19 @@ const {
   posInventoryPreviewLoading, posInventoryApplyState, managementAccess, canSection, posSyncState, posReadinessLabel,
   realtimeSyncLabel, money, number, dateTime, readinessLabel, domainLabel, openNativePicker, loadOverview,
   runManualSync, posInventoryIssueLabel, previewPosInventory, openPosInventoryConfirmation, reapplyReviewLines,
-  exportUnlistedStockExcel
+  exportUnlistedStockExcel, managementRequest, storeId
 } = useManagementContext();
 </script>
 
 <template>
   <section class="pos-management">
-    <div class="view-switcher" role="group" aria-label="数据中心视图"><button type="button" :aria-pressed="systemView === 'sync'" @click="systemView = 'sync'">POS 同步</button><button type="button" :aria-pressed="systemView === 'quality'" @click="systemView = 'quality'">数据检查</button><button v-if="managementAccess?.capabilities.posIssues" type="button" :aria-pressed="systemView === 'issues'" @click="systemView = 'issues'">异常记录</button></div>
+    <div class="view-switcher" role="group" aria-label="数据中心视图"><button type="button" :aria-pressed="systemView === 'sync'" @click="systemView = 'sync'">POS 同步</button><button type="button" :aria-pressed="systemView === 'quality'" @click="systemView = 'quality'">数据检查</button><button v-if="managementAccess?.capabilities.posIssues" type="button" :aria-pressed="systemView === 'issues'" @click="systemView = 'issues'">异常记录</button><button v-if="managementAccess?.administrator" type="button" :aria-pressed="systemView === 'login'" @click="systemView = 'login'">登录限制</button></div>
+    <LoginSettingsPanel v-if="systemView === 'login' && managementAccess?.administrator" :store-id="storeId" :request="managementRequest" />
+    <template v-if="systemView !== 'login'">
     <p class="scope-note">“刷新状态”只查询现有数据；只有“开始同步”会读取 POS 订单。</p>
     <p v-if="posMessage" class="management-alert inventory-source"><strong>同步完成</strong><span>{{ posMessage }}</span></p>
     <p class="management-alert pending"><strong>分步处理</strong><span>“开始同步”只读取 POS 订单，不修改库存。需要先生成下方扣库预览，再由管理员明确确认，才会写入正式库存流水。</span></p>
+    </template>
 
 
 
@@ -46,14 +50,14 @@ const {
       </template>
       <p v-else class="pos-inventory-empty">选择日期并生成预览后，系统会列出可以扣减的订单、件数和被拦截原因。这里不会自动写入库存。</p>
     </section>
-    <section v-if="managementAccess?.capabilities.posSync" class="system-card pos-unlisted-card">
+    <section v-if="managementAccess?.capabilities.posSync && systemView !== 'login'" class="system-card pos-unlisted-card">
       <div class="card-title"><div><h3>POS 未建档商品</h3><p>这些商品有库存，但 POS 里还没有，卖出后不会扣库存。请在 POS 用相同条码建档，系统每小时自动关联。</p></div><button v-if="posUnlistedStock?.products.length" class="table-action" type="button" @click="exportUnlistedStockExcel">导出 Excel</button></div>
       <p v-if="posUnlistedStock === null" class="system-empty">{{ posLoading ? '正在读取…' : posLoadError ? '读取失败' : '尚未读取' }}</p>
       <p v-else-if="!posUnlistedStock.products.length" class="system-empty">所有有库存的商品都已在 POS 建档。</p>
       <template v-else><p class="scope-note">{{ posUnlistedStock.products.length }} 种商品，共 {{ number(posUnlistedStock.totalUnits) }} 件库存。</p>
       <div class="product-table-wrap management-detail-scroll"><table><thead><tr><th>商品</th><th>条码</th><th>库存</th></tr></thead><tbody><tr v-for="item in posUnlistedStock.products" :key="item.productId"><td data-label="商品"><strong>{{ item.productName }}</strong><small v-if="item.englishName">{{ item.englishName }}</small></td><td data-label="条码">{{ item.barcodes.join(' / ') || '无条码' }}</td><td data-label="库存">{{ number(item.stock) }}</td></tr></tbody></table></div></template>
     </section>
-    <section v-if="managementAccess?.capabilities.posSync" class="system-card pos-review-card">
+    <section v-if="managementAccess?.capabilities.posSync && systemView !== 'login'" class="system-card pos-review-card">
       <div class="card-title"><div><h3>复核明细</h3><p>已扣库订单中没扣足的销售行。商品映射补齐后系统会自动补扣；库存不足的行需确认货已到再重扣，不会扣成负数。</p></div><button v-if="posReviewLines?.some((line) => line.canReapply)" class="table-action" type="button" :disabled="posReapplyLoading" @click="reapplyReviewLines(posReviewLines!.filter((line) => line.canReapply).map((line) => line.itemId))">重扣全部可扣明细（{{ posReviewLines!.filter((line) => line.canReapply).length }}）</button></div>
       <p v-if="posReapplyResult" class="management-alert inventory-source" role="status"><strong>重新扣减完成</strong><span>补扣 {{ number(posReapplyResult.unitsApplied) }} 件：{{ posReapplyResult.completed }} 行已扣足，{{ posReapplyResult.stillShort }} 行仍有缺口，{{ posReapplyResult.skipped.length }} 行跳过。</span></p>
       <p v-if="posReviewLines === null" class="system-empty">{{ posLoading ? '正在读取…' : posLoadError ? '复核明细读取失败' : '尚未读取' }}</p>

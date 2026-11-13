@@ -41,6 +41,41 @@ describe('App', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('asks for the position when the account is limited to the store, then signs in with it (CR-025)', async () => {
+    localStorage.removeItem('sunshine_inventory_profile');
+    const getCurrentPosition = vi.fn((success: PositionCallback) => success({ coords: { latitude: -37.787, longitude: 175.279, accuracy: 24.6 } } as GeolocationPosition));
+    vi.stubGlobal('navigator', { ...navigator, geolocation: { getCurrentPosition } });
+    vi.stubGlobal('isSecureContext', true);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: '该账号只能在门店内登录，请允许获取位置后重试' }), { status: 428 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: '该账号只能在门店内登录（当前距离门店约 1.4 公里）' }), { status: 403 }));
+    const wrapper = mount(App);
+    await wrapper.get('input[aria-label="员工账号"]').setValue('wf66');
+    await wrapper.get('input[aria-label="密码"]').setValue('secret-123');
+    await wrapper.get('form.lg-form').trigger('submit');
+    await flushPromises();
+
+    expect(getCurrentPosition).toHaveBeenCalledWith(expect.any(Function), expect.any(Function), expect.objectContaining({ enableHighAccuracy: true }));
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toEqual({ username: 'wf66', password: 'secret-123' });
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toEqual({ username: 'wf66', password: 'secret-123', latitude: -37.787, longitude: 175.279, accuracy: 25 });
+    expect(wrapper.text()).toContain('当前距离门店约 1.4 公里');
+  });
+
+  it('explains that location must be allowed when the phone refuses it (CR-025)', async () => {
+    localStorage.removeItem('sunshine_inventory_profile');
+    const getCurrentPosition = vi.fn((_success: PositionCallback, failure: PositionErrorCallback) => failure({ code: 1, PERMISSION_DENIED: 1 } as GeolocationPositionError));
+    vi.stubGlobal('navigator', { ...navigator, geolocation: { getCurrentPosition } });
+    vi.stubGlobal('isSecureContext', true);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ message: '需要位置' }), { status: 428 }));
+    const wrapper = mount(App);
+    await wrapper.get('input[aria-label="员工账号"]').setValue('wf66');
+    await wrapper.get('input[aria-label="密码"]').setValue('secret-123');
+    await wrapper.get('form.lg-form').trigger('submit');
+    await flushPromises();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain('需要允许本网站使用位置');
+  });
+
   it('switches between light and dark themes and remembers the choice', async () => {
     const wrapper = mount(App);
     const toggle = wrapper.get('button[aria-label="切换到深色模式"]');

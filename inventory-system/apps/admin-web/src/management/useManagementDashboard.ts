@@ -122,7 +122,7 @@ type InventoryOperations = {
   defaultMinimumStock: number; shortageNotice: string;
 };
 type InventoryOperationRow = {
-  productId: string; sku: string; productName: string; brandName: string; categoryName: string;
+  productId: string; sku: string; productName: string; brandName: string; categoryName: string; barcodes?: string[];
   currentInventory: number; minimumStock: number | null; configuredMinimumStock: number | null; minimumStockSource: 'DEFAULT' | 'MANUAL' | 'NONE'; coreProduct?: boolean; posMapped?: boolean; soldUnits: number; dailyVelocity: number; coverageDays: number | null; shortageVisible: boolean;
   lastSoldAt: string | null; daysSinceLastSale: number | null; lastMovementAt: string | null; inventoryUpdatedAt: string | null;
   stockStatus: 'OUT_OF_STOCK' | 'LOW' | 'IN_STOCK'; slowMoving: boolean;
@@ -131,7 +131,7 @@ type InventoryOperationRow = {
 type PurchaseSource = 'MANUAL' | 'OUT_OF_STOCK' | 'LOW_STOCK' | 'HOT_SALES' | 'WEEKLY_FORECAST';
 export type PurchaseSuggestion = { productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; currentInventory: number; minimumStock: number | null; recent28DayQty: number; weeklyVelocity: number; coverageWeeks: number | null; targetWeeks: number | null; targetInventory: number; suggestedQuantity: number; source: PurchaseSource; priority: 'THIS_WEEK' | 'FOLLOW_UP'; alreadyIncluded: boolean; ignored: boolean; ignoredReason: string | null; ignoredAt: string | null; hiddenUntil?: string | null; recentReceivedQty?: number; lastReceivedAt?: string | null; salesBasis?: '28_DAYS' | '90_DAYS'; displayStock?: boolean; brandGroup?: 'PARRS' | 'COCO_BROWNIE' | 'METODAY' | 'HAAB' | null; mergedProducts?: { productId: string; productName: string; barcode: string | null; currentInventory: number; recent28DayQty: number }[] };
 type PurchaseSuggestions = { generatedAt: string; inventoryLatestUpdatedAt: string | null; period: { from: string; to: string }; calculation: string; summary: { products: number; suggestedUnits: number; thisWeekProducts: number; followUpProducts: number; alreadyIncluded: number; ignored: number; arrived?: number }; suggestions: PurchaseSuggestion[]; ignoredSuggestions: PurchaseSuggestion[]; arrivedSuggestions?: PurchaseSuggestion[] };
-export type PurchaseOrderItem = { id: string; productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; source: PurchaseSource; currentInventory: number; recentSevenDayQty: number; suggestedQuantity: number; orderedQuantity: number; receivedQuantity: number; supplierName: string | null; unitCostCents: number | null; caseSize: number | null; notes: string | null; coverageWeeks: number; quantityEdited: boolean };
+export type PurchaseOrderItem = { id: string; productId: string; sku: string; barcode: string | null; productName: string; brandName: string; categoryName: string; source: PurchaseSource; currentInventory: number; recentSevenDayQty: number; suggestedQuantity: number; orderedQuantity: number; receivedQuantity: number; supplierName: string | null; unitCostCents: number | null; caseSize: number | null; notes: string | null; coverageWeeks: number; quantityEdited: boolean; brandGroup?: PurchaseSuggestion['brandGroup'] };
 export type PurchaseOrder = { id: string; orderNo: string; weekStart: string; weekEnd?: string; status: 'DRAFT' | 'CONFIRMED' | 'ORDERED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'; createdAt: string; updatedAt: string; confirmedAt: string | null; orderedAt: string | null; summary: { productCount: number; suggestedUnits: number; orderedUnits: number; receivedUnits: number; totalCostCents: number }; items: PurchaseOrderItem[] };
 type CurrentPurchaseOrder = { generatedAt?: string; inventoryLatestUpdatedAt?: string | null; currency: string; order: PurchaseOrder | null };
 type StoreComparison = {
@@ -160,7 +160,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
   const productView = ref<'products' | 'brands' | 'categories'>('products');
   const tagView = ref<'products' | 'dictionary' | 'categories'>('products');
   const tagEditorOpen = ref(false);
-  const systemView = ref<'sync' | 'quality' | 'issues'>('sync');
+  const systemView = ref<'sync' | 'quality' | 'issues' | 'login'>('sync');
   const posLoadError = ref('');
   const overview = ref<Overview | null>(null);
   const foundation = ref<DataFoundation | null>(null);
@@ -225,7 +225,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
   const inventoryBrandFilter = ref('');
   const inventoryCategoryFilter = ref('');
   const inventoryStatusFilter = ref<'ALL' | 'SLOW' | 'OUT_OF_STOCK' | 'LOW' | 'OVERSTOCK' | 'NO_MINIMUM'>('ALL');
-  const inventorySort = ref<'INVENTORY_DESC' | 'SALES_DESC' | 'COVERAGE_DESC' | 'LAST_SALE_ASC' | 'NAME_ASC'>('INVENTORY_DESC');
+  const inventorySort = ref<'INVENTORY_DESC' | 'INVENTORY_ASC' | 'SALES_DESC' | 'COVERAGE_DESC' | 'LAST_SALE_ASC' | 'NAME_ASC'>('INVENTORY_DESC');
   const inventoryPage = ref(1);
   const inventoryPageSize = ref(54);
   const pageGuideOpen = ref(false);
@@ -461,8 +461,9 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
   const filteredInventoryProducts = computed(() => {
     const query = inventoryTableQuery.value.trim().toLowerCase();
     const rows = (inventoryOperations.value?.products ?? []).filter((item) => {
-      if (item.replenishmentHidden || item.directShipExcluded) return false;
-      if (query && ![item.productName, item.brandName, item.categoryName, item.sku].some((value) => value?.toLowerCase().includes(query))) return false;
+      // A search also finds ignored and direct-ship products, so any product's stock can be looked up (CR-024 F5).
+      if (!query && (item.replenishmentHidden || item.directShipExcluded)) return false;
+      if (query && ![item.productName, item.brandName, item.categoryName, item.sku, ...(item.barcodes ?? [])].some((value) => value?.toLowerCase().includes(query))) return false;
       if (inventoryBrandFilter.value && item.brandName !== inventoryBrandFilter.value) return false;
       if (inventoryCategoryFilter.value && item.categoryName !== inventoryCategoryFilter.value) return false;
       if (inventoryStatusFilter.value === 'SLOW' && !item.slowMoving) return false;
@@ -473,6 +474,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
       return true;
     });
     return rows.sort((a, b) => {
+      if (inventorySort.value === 'INVENTORY_ASC') return a.currentInventory - b.currentInventory;
       if (inventorySort.value === 'SALES_DESC') return b.soldUnits - a.soldUnits;
       if (inventorySort.value === 'COVERAGE_DESC') return (b.coverageDays ?? Number.MAX_SAFE_INTEGER) - (a.coverageDays ?? Number.MAX_SAFE_INTEGER);
       if (inventorySort.value === 'LAST_SALE_ASC') return (b.daysSinceLastSale ?? Number.MAX_SAFE_INTEGER) - (a.daysSinceLastSale ?? Number.MAX_SAFE_INTEGER);
@@ -1042,12 +1044,14 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = fileName; anchor.click(); URL.revokeObjectURL(url);
   }
 
-  function exportPurchaseOrderExcel() {
+  // CR-024 F2: a brand list exports only its own lines; the label names the list in the file name.
+  function exportPurchaseOrderExcel(items?: PurchaseOrderItem[], listLabel = '本周进货单') {
     const order = currentPurchaseOrder.value?.order;
-    if (!order?.items.length) return;
+    const lines = items ?? order?.items;
+    if (!order || !lines?.length) return;
     const headers = ['序号', '商品名称', 'SKU/条码', '来源', '当前库存', '近7天销量', '建议数量', '确定进货数量', '供应商', '单件进价(NZ$)', '整箱规格', '预计金额(NZ$)', '备注'];
-    const rows = order.items.map((item, index) => [index + 1, item.productName, item.barcode || item.sku, purchaseSourceLabel(item.source), item.currentInventory, item.recentSevenDayQty, item.suggestedQuantity, item.orderedQuantity, item.supplierName || '', item.unitCostCents == null ? '' : (item.unitCostCents / 100).toFixed(2), item.caseSize ?? '', item.unitCostCents == null ? '' : ((item.unitCostCents * item.orderedQuantity) / 100).toFixed(2), item.notes || '']);
-    downloadSpreadsheet(`${order.orderNo}-本周进货单.xls`, '本周进货单', [headers, ...rows]);
+    const rows = lines.map((item, index) => [index + 1, item.productName, item.barcode || item.sku, purchaseSourceLabel(item.source), item.currentInventory, item.recentSevenDayQty, item.suggestedQuantity, item.orderedQuantity, item.supplierName || '', item.unitCostCents == null ? '' : (item.unitCostCents / 100).toFixed(2), item.caseSize ?? '', item.unitCostCents == null ? '' : ((item.unitCostCents * item.orderedQuantity) / 100).toFixed(2), item.notes || '']);
+    downloadSpreadsheet(`${order.orderNo}-${listLabel}.xls`, listLabel, [headers, ...rows]);
     showPurchaseMessage('进货单 Excel 已生成');
   }
 
@@ -1132,6 +1136,8 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
   watch(productDetailPageCount, (count) => { if (productDetailPage.value > count) productDetailPage.value = count; });
   watch(insightDetailPageSize, () => { insightDetailPage.value = 1; });
   watch(insightDetailPageCount, (count) => { if (insightDetailPage.value > count) insightDetailPage.value = count; });
+  // Searching looks across every status tab, so a product is found wherever it sits (CR-024 F5).
+  watch(inventoryTableQuery, (query, previous) => { if (query.trim() && !previous?.trim()) inventoryStatusFilter.value = 'ALL'; });
   watch([inventoryTableQuery, inventoryBrandFilter, inventoryCategoryFilter, inventoryStatusFilter, inventorySort, inventoryPageSize], () => { inventoryPage.value = 1; });
   watch([posInventoryFrom, posInventoryTo], () => { posInventoryPreview.value = null; posInventoryApplyResult.value = null; });
   watch(inventoryPageCount, (count) => { if (inventoryPage.value > count) inventoryPage.value = count; });
@@ -1190,6 +1196,7 @@ export function useManagementDashboard(props: Readonly<ManagementDashboardProps>
     loadProcurement, addToPurchaseOrder, performAddToPurchaseOrder, showPurchaseMessage, isProductInCurrentOrder,
     ignorePurchaseSuggestion, skipPurchaseSuggestion, skipPurchaseItem, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem, setPurchaseItemCoverage, recalculatePurchaseOrder,
     performRemovePurchaseItem, PURCHASE_STATUS_CONSEQUENCE, changePurchaseStatus, performPurchaseStatusChange,
+    storeId: computed(() => props.storeId),
     confirmPurchaseAction, escapeXml, downloadSpreadsheet, exportPurchaseOrderExcel, exportUnlistedStockExcel,
     openProcurement, purchaseSourceLabel, purchaseStatusLabel, loadStoreComparison, loadProductInsights,
     assignInsightTag, editInsightTag, resetInsightTagEditor, saveInsightTag, emit
