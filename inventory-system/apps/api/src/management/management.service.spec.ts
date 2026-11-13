@@ -5,7 +5,7 @@ const DAY = 86_400_000;
 
 function product(id: bigint, name: string, options: { minimumStock?: number | null; mapped?: boolean } = {}) {
   return {
-    id, sku: `SKU-${id}`, name, chineseName: null, englishName: null, brandName: null, categoryName: null,
+    id, sku: `SKU-${id}`, name, chineseName: null, englishName: null, brandName: null, categoryName: null, barcodes: [{ barcode: `94${id}` }],
     storeProducts: [{ minimumStock: options.minimumStock ?? null }],
     posProductMappings: options.mapped === false ? [] : [{ id: 1n }],
   };
@@ -45,7 +45,7 @@ describe('ManagementService.inventoryOperations', () => {
       [sale(1n, 150), sale(2n, 200)],
     );
 
-    expect(rows.get('1')).toMatchObject({ stockStatus: 'OUT_OF_STOCK', shortageVisible: true });
+    expect(rows.get('1')).toMatchObject({ stockStatus: 'OUT_OF_STOCK', shortageVisible: true, barcodes: ['941'] });
     // Zero stock with no sale in 180 days is catalogue-only: counted nowhere and left out of the list.
     expect(rows.has('2')).toBe(false);
     expect(rows.has('3')).toBe(false);
@@ -253,7 +253,7 @@ describe('ManagementService purchase cycle and coverage (CR-009)', () => {
 
   function purchaseClient(items: { id: bigint; productId: bigint; orderedQuantity: number; quantityEdited: boolean; coverageWeeks: number; suggestedQuantity: number }[], status = 'DRAFT') {
     const order = { id: 9n, orderNo: 'PO-1', weekStart: new Date('2026-10-27T00:00:00.000Z'), organization: { timezone: 'Pacific/Auckland' }, status, notes: null, createdAt: new Date(), updatedAt: new Date(), confirmedAt: null, orderedAt: null };
-    const withProduct = (item: typeof items[number]) => ({ purchaseOrderId: 9n, source: 'MANUAL', currentInventory: 0, recentSevenDayQty: 0, receivedQuantity: 0, supplierName: null, unitCostCents: null, caseSize: null, notes: null, ...item, product: { sku: 'S', name: `P${item.productId}`, chineseName: null, englishName: null, brandName: null, categoryName: null, barcodes: [] } });
+    const withProduct = (item: typeof items[number]) => ({ purchaseOrderId: 9n, source: 'MANUAL', currentInventory: 0, recentSevenDayQty: 0, receivedQuantity: 0, supplierName: null, unitCostCents: null, caseSize: null, notes: null, ...item, product: { sku: 'S', name: item.productId === 12n ? 'Parrs 绵羊油' : `P${item.productId}`, chineseName: null, englishName: null, brandName: null, categoryName: null, barcodes: [] } });
     const purchaseOrderItem = {
       findFirst: jest.fn(async ({ where }: { where: { id: bigint } }) => { const item = items.find((row) => row.id === where.id); return item ? { ...withProduct(item), purchaseOrder: order } : null; }),
       update: jest.fn(async ({ where, data }: { where: { id: bigint }; data: Record<string, unknown> }) => { const item = items.find((row) => row.id === where.id)!; Object.assign(item, data); return withProduct(item); }),
@@ -287,6 +287,8 @@ describe('ManagementService purchase cycle and coverage (CR-009)', () => {
     expect(order).toMatchObject({ weekStart: '2026-10-28', weekEnd: '2026-11-03' });
     // Four weeks of 10 a week is 40; 6 on hand leaves 34.
     expect(order.items.find((item) => item.id === '1')).toMatchObject({ coverageWeeks: 4, suggestedQuantity: 34, orderedQuantity: 34, currentInventory: 6 });
+    // Each line names its brand list, so the order can be split and exported per brand (CR-024 F2).
+    expect(order.items.map((item) => item.brandGroup)).toEqual([null, 'PARRS']);
 
     await service.setPurchaseItemCoverage(1n, 2n, 1n, 2n, 3);
     expect(items[1]).toMatchObject({ coverageWeeks: 3, suggestedQuantity: 24, orderedQuantity: 50 });

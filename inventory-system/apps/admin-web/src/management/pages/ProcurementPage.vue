@@ -10,7 +10,7 @@ const {
   purchaseSuggestions, currentPurchaseOrder, purchaseLoading, purchaseView,
   thisWeekPurchaseSuggestions, followUpPurchaseSuggestions, money, number, dateTime, addToPurchaseOrder,
   skipPurchaseSuggestion, skipPurchaseItem, restorePurchaseSuggestion, savePurchaseItem, removePurchaseItem, changePurchaseStatus, setPurchaseItemCoverage, recalculatePurchaseOrder,
-  exportPurchaseOrderExcel, purchaseSourceLabel, purchaseStatusLabel, managementRequest, loadProcurement, showPurchaseMessage
+  exportPurchaseOrderExcel, downloadSpreadsheet, purchaseSourceLabel, purchaseStatusLabel, managementRequest, loadProcurement, showPurchaseMessage
 } = useManagementContext();
 
 // CR-009: weeks of stock per purchase line (1–8) and the read-only preview of the order.
@@ -49,12 +49,38 @@ const BRAND_LISTS: { key: BrandList; label: string }[] = [
   { key: 'METODAY', label: 'Metoday' }, { key: 'HAAB', label: 'Haab' },
 ];
 const brandList = ref<BrandList>('GENERAL');
-const inList = (item: PurchaseSuggestion, list: BrandList) => (item.brandGroup ?? 'GENERAL') === list;
-const brandTabs = computed(() => BRAND_LISTS.map((list) => ({ ...list, count: (purchaseSuggestions.value?.suggestions ?? []).filter((item) => inList(item, list.key)).length })));
-const listTitle = computed(() => (brandList.value === 'GENERAL' ? '总进货单' : `${BRAND_LISTS.find((list) => list.key === brandList.value)!.label}进货单`));
-const thisWeek = computed(() => thisWeekPurchaseSuggestions.value.filter((item) => inList(item, brandList.value)));
-const followUp = computed(() => followUpPurchaseSuggestions.value.filter((item) => inList(item, brandList.value)));
-const ignoredRows = computed(() => (purchaseSuggestions.value?.ignoredSuggestions ?? []).filter((item) => inList(item, brandList.value)));
+type BrandItem = { brandGroup?: PurchaseSuggestion['brandGroup'] };
+const inList = (item: BrandItem, list: BrandList) => (item.brandGroup ?? 'GENERAL') === list;
+const brandLabel = (list: BrandList) => BRAND_LISTS.find((entry) => entry.key === list)!.label;
+const listTitle = computed(() => (brandList.value === 'GENERAL' ? '总进货单' : `${brandLabel(brandList.value)}进货单`));
+
+// CR-024 F3: one search for the suggestions and the order, by name, brand, barcode or SKU.
+const search = ref('');
+type Searchable = { productName: string; brandName: string; barcode: string | null; sku: string };
+function matches(item: Searchable) {
+  const query = search.value.trim().toLowerCase();
+  return !query || [item.productName, item.brandName, item.barcode, item.sku].some((value) => value?.toLowerCase().includes(query));
+}
+const searching = computed(() => Boolean(search.value.trim()));
+const brandTabs = computed(() => BRAND_LISTS.map((list) => ({ ...list, count: (purchaseSuggestions.value?.suggestions ?? []).filter((item) => inList(item, list.key) && matches(item)).length })));
+const thisWeekAll = computed(() => thisWeekPurchaseSuggestions.value.filter((item) => inList(item, brandList.value)));
+const followUpAll = computed(() => followUpPurchaseSuggestions.value.filter((item) => inList(item, brandList.value)));
+const ignoredAll = computed(() => (purchaseSuggestions.value?.ignoredSuggestions ?? []).filter((item) => inList(item, brandList.value)));
+const thisWeek = computed(() => thisWeekAll.value.filter(matches));
+const followUp = computed(() => followUpAll.value.filter(matches));
+const ignoredRows = computed(() => ignoredAll.value.filter(matches));
+
+// CR-024 F2: the order is split into the same brand lists; preview and export show only the chosen one.
+const orderItems = computed(() => currentPurchaseOrder.value?.order?.items ?? []);
+const orderBrandTabs = computed(() => BRAND_LISTS.map((list) => ({ ...list, count: orderItems.value.filter((item) => inList(item, list.key) && matches(item)).length })));
+const orderBrandItems = computed(() => orderItems.value.filter((item) => inList(item, brandList.value)));
+const orderRows = computed(() => orderBrandItems.value.filter(matches));
+const orderListTitle = computed(() => (brandList.value === 'GENERAL' ? '本周总进货单' : `本周${brandLabel(brandList.value)}进货单`));
+const previewOrder = computed(() => (currentPurchaseOrder.value?.order ? { ...currentPurchaseOrder.value.order, items: orderBrandItems.value } : null));
+const exportOrder = () => exportPurchaseOrderExcel(orderBrandItems.value, orderListTitle.value);
+// Where else the search term turns up, so it is clear whether a product is in the order or still a suggestion.
+const orderMatchCount = computed(() => (searching.value ? orderItems.value.filter(matches).length : 0));
+const suggestionMatchCount = computed(() => (searching.value ? (purchaseSuggestions.value?.suggestions ?? []).filter(matches).length : 0));
 const suggestionTabs = computed(() => [
   { key: 'ALL' as const, label: '全部', count: thisWeek.value.length + followUp.value.length },
   { key: 'THIS_WEEK' as const, label: '本周优先', count: thisWeek.value.length },
@@ -68,6 +94,19 @@ const suggestionRows = computed(() => {
   if (suggestionFilter.value === 'FOLLOW_UP') return followUp.value;
   return [...thisWeek.value, ...followUp.value];
 });
+
+// CR-024 F1: the current brand list and tab as an Excel file; the search narrows the screen only, not the file.
+function downloadSuggestions() {
+  const tab = suggestionFilter.value;
+  const rows = tab === 'IGNORED' ? ignoredAll.value : tab === 'THIS_WEEK' ? thisWeekAll.value : tab === 'FOLLOW_UP' ? followUpAll.value : [...thisWeekAll.value, ...followUpAll.value];
+  if (!rows.length) return;
+  const headers = ['序号', '品牌', '商品名称', '条码/SKU', '当前库存', '周销量', '可卖', '建议进货', '优先级', '已加入进货单', '说明'];
+  const lines = rows.map((item, index) => [index + 1, item.brandName, item.productName, item.barcode || item.sku, item.currentInventory, item.weeklyVelocity, coverageText(item), item.suggestedQuantity, priorityOf(item).label, item.alreadyIncluded ? '是' : '否', [suggestionNote(item), item.ignoredReason ? `忽略原因：${item.ignoredReason}` : ''].filter(Boolean).join('；')]);
+  const tabLabel = tab === 'ALL' ? '' : `-${suggestionTabs.value.find((entry) => entry.key === tab)!.label}`;
+  const name = `${listTitle.value.replace(/进货单$/, '')}进货建议${tabLabel}`;
+  downloadSpreadsheet(`${name}-${new Date().toLocaleDateString('sv-SE')}.xls`, name, [headers, ...lines]);
+  showPurchaseMessage(`已下载 ${rows.length} 项进货建议`);
+}
 
 // 高: out of stock or under a week left; 中: other this-week items; 低: follow-up.
 function priorityOf(item: PurchaseSuggestion) {
@@ -102,12 +141,13 @@ function suggestionNote(item: PurchaseSuggestion) {
       <section class="system-card buy-panel" v-if="purchaseSuggestions">
         <header class="buy-panel-head">
           <div><h3>{{ listTitle }}</h3><p>按近 28 天销量备 4–6 周货 · 库存读取 {{ dateTime(purchaseSuggestions.generatedAt) }}</p></div>
-          <div class="buy-panel-links"><button class="buy-link" type="button" @click="showRules = !showRules">{{ showRules ? '收起规则' : '规则说明' }}</button><button class="buy-link" type="button" @click="purchaseView = 'order'">本周进货单 →</button></div>
+          <div class="buy-panel-links"><button class="buy-btn primary buy-download" type="button" :disabled="!thisWeekAll.length && !followUpAll.length && !ignoredAll.length" @click="downloadSuggestions">下载 Excel</button><button class="buy-link" type="button" @click="showRules = !showRules">{{ showRules ? '收起规则' : '规则说明' }}</button><button class="buy-link" type="button" @click="purchaseView = 'order'">本周进货单 →</button></div>
         </header>
         <div v-if="showRules" class="buy-rules"><p>{{ purchaseSuggestions.calculation }}</p><p>加入进货单不会改变库存；到货后在扫码入库中填写批次和到期日期，库存才会增加。</p></div>
         <nav class="buy-brands" aria-label="品牌进货单">
           <button v-for="list in brandTabs" :key="list.key" type="button" :class="{ active: brandList === list.key }" @click="brandList = list.key; suggestionFilter = 'ALL'">{{ list.label }}<b>{{ list.count }}</b></button>
         </nav>
+        <div class="buy-search"><input v-model="search" type="search" placeholder="搜索商品名、品牌、条码或SKU" aria-label="搜索进货建议" /><button v-if="orderMatchCount" class="buy-link" type="button" @click="purchaseView = 'order'">本周进货单中也有 {{ orderMatchCount }} 项 →</button><span v-else-if="searching">本周进货单中没有匹配的商品</span></div>
         <nav class="buy-tabs" aria-label="进货建议筛选">
           <button v-for="tab in suggestionTabs" :key="tab.key" type="button" :class="{ active: suggestionFilter === tab.key }" @click="suggestionFilter = tab.key">{{ tab.label }}（{{ tab.count }}）</button>
         </nav>
@@ -133,7 +173,7 @@ function suggestionNote(item: PurchaseSuggestion) {
               </tr>
             </tbody>
           </table>
-          <p v-if="!suggestionRows.length" class="system-empty">{{ suggestionFilter === 'IGNORED' ? '当前没有已忽略的建议。' : '当前没有需要补货的商品。' }}</p>
+          <p v-if="!suggestionRows.length" class="system-empty">{{ searching ? `${listTitle}中没有匹配“${search.trim()}”的建议，可看看上方其他品牌的件数。` : suggestionFilter === 'IGNORED' ? '当前没有已忽略的建议。' : '当前没有需要补货的商品。' }}</p>
         </div>
       </section>
       <StockRecountSheet v-if="recountItem" :product-id="recountItem.productId" :request="managementRequest" @close="recountItem = null" @saved="afterRecount" />
@@ -142,11 +182,15 @@ function suggestionNote(item: PurchaseSuggestion) {
 
     <template v-else>
       <section v-if="currentPurchaseOrder?.order" class="procurement-summary"><article><span>进货单状态</span><strong>{{ purchaseStatusLabel(currentPurchaseOrder.order.status) }}</strong><small>{{ currentPurchaseOrder.order.orderNo }}</small></article><article><span>商品与件数</span><strong>{{ currentPurchaseOrder.order.summary.productCount }} 种 · {{ number(currentPurchaseOrder.order.summary.orderedUnits) }} 件</strong><small>系统建议 {{ number(currentPurchaseOrder.order.summary.suggestedUnits) }} 件</small></article><article><span>预计金额</span><strong>{{ money(currentPurchaseOrder.order.summary.totalCostCents / 100) }}</strong><small>仅统计已填写进价</small></article></section>
-      <section v-if="currentPurchaseOrder?.order" class="system-card purchase-order-card"><div class="card-title"><div><h3>本周进货单</h3><p>周期 {{ currentPurchaseOrder.order.weekStart }}<template v-if="currentPurchaseOrder.order.weekEnd"> 至 {{ currentPurchaseOrder.order.weekEnd }}</template>（周二至下周一，每周一 18:00 切换到新一周） · {{ currentPurchaseOrder.order.orderNo }}</p><small v-if="currentPurchaseOrder.generatedAt" class="inventory-source-time">实时库存读取：{{ dateTime(currentPurchaseOrder.generatedAt) }} · 最近库存变更：{{ dateTime(currentPurchaseOrder.inventoryLatestUpdatedAt ?? null) }}</small></div><div class="purchase-order-actions"><button v-if="currentPurchaseOrder.order.status !== 'CANCELLED'" class="glass-pill" type="button" :disabled="!currentPurchaseOrder.order.items.length" @click="previewOpen = true">预览</button><button v-if="currentPurchaseOrder.order.status === 'DRAFT'" class="secondary" type="button" :disabled="purchaseLoading || !currentPurchaseOrder.order.items.length" title="按实时库存和近 28 天销量刷新建议；手动改过的进货数量不变" @click="recalculatePurchaseOrder">按最新数据重算</button><button v-if="currentPurchaseOrder.order.status !== 'CANCELLED'" class="secondary" type="button" :disabled="!currentPurchaseOrder.order.items.length" @click="exportPurchaseOrderExcel">导出 Excel</button><button v-if="currentPurchaseOrder.order.status === 'DRAFT'" type="button" :disabled="purchaseLoading || !currentPurchaseOrder.order.items.length" @click="changePurchaseStatus('CONFIRMED')">确认进货单</button><button v-if="currentPurchaseOrder.order.status === 'CONFIRMED'" class="secondary" type="button" :disabled="purchaseLoading" @click="changePurchaseStatus('DRAFT')">退回草稿</button><button v-if="currentPurchaseOrder.order.status === 'CANCELLED'" class="secondary" type="button" :disabled="purchaseLoading" @click="changePurchaseStatus('DRAFT')">恢复为草稿</button><button v-if="currentPurchaseOrder.order.status === 'CONFIRMED'" type="button" :disabled="purchaseLoading" @click="changePurchaseStatus('ORDERED')">标记已订货</button><button v-if="['DRAFT','CONFIRMED','ORDERED'].includes(currentPurchaseOrder.order.status)" class="danger" type="button" :disabled="purchaseLoading" @click="changePurchaseStatus('CANCELLED')">取消进货单</button></div></div>
+      <section v-if="currentPurchaseOrder?.order" class="system-card purchase-order-card"><div class="card-title"><div><h3>本周进货单</h3><p>周期 {{ currentPurchaseOrder.order.weekStart }}<template v-if="currentPurchaseOrder.order.weekEnd"> 至 {{ currentPurchaseOrder.order.weekEnd }}</template>（周二至下周一，每周一 18:00 切换到新一周） · {{ currentPurchaseOrder.order.orderNo }}</p><small v-if="currentPurchaseOrder.generatedAt" class="inventory-source-time">实时库存读取：{{ dateTime(currentPurchaseOrder.generatedAt) }} · 最近库存变更：{{ dateTime(currentPurchaseOrder.inventoryLatestUpdatedAt ?? null) }}</small></div><div class="purchase-order-actions"><button v-if="currentPurchaseOrder.order.status !== 'CANCELLED'" class="glass-pill" type="button" :disabled="!orderBrandItems.length" @click="previewOpen = true">预览</button><button v-if="currentPurchaseOrder.order.status === 'DRAFT'" class="secondary" type="button" :disabled="purchaseLoading || !currentPurchaseOrder.order.items.length" title="按实时库存和近 28 天销量刷新建议；手动改过的进货数量不变" @click="recalculatePurchaseOrder">按最新数据重算</button><button v-if="currentPurchaseOrder.order.status !== 'CANCELLED'" class="secondary" type="button" :disabled="!orderBrandItems.length" @click="exportOrder">下载 Excel</button><button v-if="currentPurchaseOrder.order.status === 'DRAFT'" type="button" :disabled="purchaseLoading || !currentPurchaseOrder.order.items.length" @click="changePurchaseStatus('CONFIRMED')">确认进货单</button><button v-if="currentPurchaseOrder.order.status === 'CONFIRMED'" class="secondary" type="button" :disabled="purchaseLoading" @click="changePurchaseStatus('DRAFT')">退回草稿</button><button v-if="currentPurchaseOrder.order.status === 'CANCELLED'" class="secondary" type="button" :disabled="purchaseLoading" @click="changePurchaseStatus('DRAFT')">恢复为草稿</button><button v-if="currentPurchaseOrder.order.status === 'CONFIRMED'" type="button" :disabled="purchaseLoading" @click="changePurchaseStatus('ORDERED')">标记已订货</button><button v-if="['DRAFT','CONFIRMED','ORDERED'].includes(currentPurchaseOrder.order.status)" class="danger" type="button" :disabled="purchaseLoading" @click="changePurchaseStatus('CANCELLED')">取消进货单</button></div></div>
+        <div class="buy-panel order-filter-panel">
+          <nav class="buy-brands" aria-label="品牌进货单"><button v-for="list in orderBrandTabs" :key="list.key" type="button" :class="{ active: brandList === list.key }" @click="brandList = list.key">{{ list.label }}<b>{{ list.count }}</b></button></nav>
+          <div class="buy-search"><input v-model="search" type="search" placeholder="搜索商品名、品牌、条码或SKU" aria-label="搜索本周进货单" /><button v-if="suggestionMatchCount" class="buy-link" type="button" @click="purchaseView = 'suggestions'">进货建议中有 {{ suggestionMatchCount }} 项 →</button><span v-else-if="searching">进货建议中没有匹配的商品</span></div>
+        </div>
         <p v-if="currentPurchaseOrder.order.status === 'CANCELLED'" class="purchase-cancelled">本周进货单已取消，不会用于订货，也不能预览或导出。需要继续使用时点“恢复为草稿”。</p>
-        <div class="purchase-order-table-wrap"><table class="purchase-order-table"><thead><tr><th>商品</th><th>数量与供应商</th><th>进价与整箱</th><th>备货周期</th><th>备注与操作</th></tr></thead><tbody><tr v-for="item in currentPurchaseOrder.order.items" :key="item.id"><td data-k="商品"><strong>{{ item.productName }}</strong><small>{{ item.barcode || item.sku }} · {{ purchaseSourceLabel(item.source) }}</small><em>实时库存 {{ item.currentInventory }} · 周销量 {{ item.recentSevenDayQty }} · 建议 {{ item.suggestedQuantity }}<template v-if="item.quantityEdited"> · 已手动调整</template></em></td><td data-k="数量与供应商"><label>进货数量<input v-model.number="item.orderedQuantity" type="number" min="1" inputmode="numeric" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label><label>供应商<input v-model="item.supplierName" type="text" maxlength="120" placeholder="可稍后填写" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label></td><td data-k="进价与整箱"><label>单件进价（分）<input v-model.number="item.unitCostCents" type="number" min="0" inputmode="numeric" placeholder="可选" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label><label>整箱规格<input v-model.number="item.caseSize" type="number" min="1" inputmode="numeric" placeholder="可选" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label></td><td data-k="备货周期"><div class="coverage-cell"><strong>{{ item.coverageWeeks }} 周</strong><small>建议 {{ item.suggestedQuantity }} 件</small><div v-if="currentPurchaseOrder.order.status === 'DRAFT'" class="coverage-stepper"><button type="button" :aria-label="`${item.productName} 备货周期减少一周`" :disabled="purchaseLoading || item.coverageWeeks <= MIN_COVERAGE_WEEKS" @click="setPurchaseItemCoverage(item, item.coverageWeeks - 1)">−</button><button type="button" :aria-label="`${item.productName} 备货周期增加一周`" :disabled="purchaseLoading || item.coverageWeeks >= MAX_COVERAGE_WEEKS" @click="setPurchaseItemCoverage(item, item.coverageWeeks + 1)">＋</button></div></div></td><td data-k="备注与操作"><label>备注<input v-model="item.notes" type="text" maxlength="255" placeholder="采购或到货说明" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label><div v-if="currentPurchaseOrder.order.status === 'DRAFT'" class="purchase-row-actions"><button type="button" :disabled="purchaseLoading" @click="savePurchaseItem(item)">保存</button><button class="danger" type="button" :disabled="purchaseLoading" @click="removePurchaseItem(item)">移除</button><span class="buy-skip"><select :value="weeksFor(item.productId)" :aria-label="`${item.productName} 不进货周数`" @change="skipWeeks[item.productId] = Number(($event.target as HTMLSelectElement).value)"><option v-for="option in SKIP_OPTIONS" :key="option.weeks" :value="option.weeks">{{ option.label }}</option></select><button type="button" :disabled="purchaseLoading" @click="skipPurchaseItem(item, weeksFor(item.productId))">不进货</button></span></div></td></tr></tbody></table></div>
+        <div class="purchase-order-table-wrap"><table class="purchase-order-table"><thead><tr><th>商品</th><th>数量与供应商</th><th>进价与整箱</th><th>备货周期</th><th>备注与操作</th></tr></thead><tbody><tr v-for="item in orderRows" :key="item.id"><td data-k="商品"><strong>{{ item.productName }}</strong><small>{{ item.barcode || item.sku }} · {{ purchaseSourceLabel(item.source) }}</small><em>实时库存 {{ item.currentInventory }} · 周销量 {{ item.recentSevenDayQty }} · 建议 {{ item.suggestedQuantity }}<template v-if="item.quantityEdited"> · 已手动调整</template></em></td><td data-k="数量与供应商"><label>进货数量<input v-model.number="item.orderedQuantity" type="number" min="1" inputmode="numeric" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label><label>供应商<input v-model="item.supplierName" type="text" maxlength="120" placeholder="可稍后填写" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label></td><td data-k="进价与整箱"><label>单件进价（分）<input v-model.number="item.unitCostCents" type="number" min="0" inputmode="numeric" placeholder="可选" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label><label>整箱规格<input v-model.number="item.caseSize" type="number" min="1" inputmode="numeric" placeholder="可选" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label></td><td data-k="备货周期"><div class="coverage-cell"><strong>{{ item.coverageWeeks }} 周</strong><small>建议 {{ item.suggestedQuantity }} 件</small><div v-if="currentPurchaseOrder.order.status === 'DRAFT'" class="coverage-stepper"><button type="button" :aria-label="`${item.productName} 备货周期减少一周`" :disabled="purchaseLoading || item.coverageWeeks <= MIN_COVERAGE_WEEKS" @click="setPurchaseItemCoverage(item, item.coverageWeeks - 1)">−</button><button type="button" :aria-label="`${item.productName} 备货周期增加一周`" :disabled="purchaseLoading || item.coverageWeeks >= MAX_COVERAGE_WEEKS" @click="setPurchaseItemCoverage(item, item.coverageWeeks + 1)">＋</button></div></div></td><td data-k="备注与操作"><label>备注<input v-model="item.notes" type="text" maxlength="255" placeholder="采购或到货说明" :disabled="currentPurchaseOrder.order.status !== 'DRAFT'" /></label><div v-if="currentPurchaseOrder.order.status === 'DRAFT'" class="purchase-row-actions"><button type="button" :disabled="purchaseLoading" @click="savePurchaseItem(item)">保存</button><button class="danger" type="button" :disabled="purchaseLoading" @click="removePurchaseItem(item)">移除</button><span class="buy-skip"><select :value="weeksFor(item.productId)" :aria-label="`${item.productName} 不进货周数`" @change="skipWeeks[item.productId] = Number(($event.target as HTMLSelectElement).value)"><option v-for="option in SKIP_OPTIONS" :key="option.weeks" :value="option.weeks">{{ option.label }}</option></select><button type="button" :disabled="purchaseLoading" @click="skipPurchaseItem(item, weeksFor(item.productId))">不进货</button></span></div></td></tr></tbody></table><p v-if="!orderRows.length" class="system-empty">{{ searching ? `${orderListTitle}中没有匹配“${search.trim()}”的商品。` : `${orderListTitle}还没有商品。` }}</p></div>
       </section>
-      <PurchaseOrderPreview v-if="previewOpen && currentPurchaseOrder?.order" :order="currentPurchaseOrder.order" :status-label="purchaseStatusLabel(currentPurchaseOrder.order.status)" @close="previewOpen = false" @download="exportPurchaseOrderExcel" />
+      <PurchaseOrderPreview v-if="previewOpen && previewOrder" :order="previewOrder" :status-label="purchaseStatusLabel(previewOrder.status)" @close="previewOpen = false" @download="exportOrder" />
       <section v-else-if="!currentPurchaseOrder?.order" class="system-card procurement-empty"><h3>本周还没有进货单</h3><p>先从进货建议、缺货列表或热销商品中加入商品。</p><button type="button" @click="purchaseView = 'suggestions'">查看进货建议</button></section>
     </template>
   </section>
@@ -203,6 +247,11 @@ function suggestionNote(item: PurchaseSuggestion) {
 :root .management-workspace .buy-btn.primary{border-color:var(--buy-accent);color:var(--buy-accent)}
 :root .management-workspace .buy-btn.primary:hover:not(:disabled){background:var(--buy-accent);color:var(--buy-accent-ink)}
 :root .management-workspace .buy-btn:disabled{border-color:var(--buy-line);color:var(--buy-muted);cursor:default}
+:root .management-workspace .buy-download{width:auto;min-height:30px;padding:0 14px}
+:root .management-workspace .buy-search{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+:root .management-workspace .buy-search input{flex:1 1 260px;max-width:420px;min-height:36px;padding:0 12px;border:1px solid var(--buy-line,rgb(128 145 170 / 35%));border-radius:8px;background:transparent;color:inherit;font-size:13.5px}
+:root .management-workspace .buy-search span{color:var(--buy-muted,#93a1b5);font-size:12.5px}
+:root .management-workspace .order-filter-panel{gap:10px;margin-bottom:12px;padding:0}
 /* A narrower page (e.g. beside the open 阳光小助手 column) tightens the table so the actions stay visible. */
 @container page (max-width: 940px){:root .management-workspace .buy-actions{width:196px;min-width:196px}:root .management-workspace .buy-product{min-width:180px;white-space:normal}:root .management-workspace .buy-table :is(th,td){padding-inline:8px}}
 @media(max-width:720px){

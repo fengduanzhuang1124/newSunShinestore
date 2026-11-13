@@ -156,6 +156,52 @@ describe('经营管理页面组织', () => {
     }
   });
 
+  it('splits the order by brand, searches both lists and downloads each brand on its own (CR-024)', async () => {
+    const line = (id: string, productName: string, brandGroup: string | null) => ({
+      id, productId: id, sku: `S${id}`, barcode: `94${id}`, productName, brandName: brandGroup ? '帕氏' : '品牌A', categoryName: '保健品', source: 'MANUAL',
+      currentInventory: 1, recentSevenDayQty: 5, suggestedQuantity: 6, orderedQuantity: 6, receivedQuantity: 0, supplierName: null,
+      unitCostCents: null, caseSize: null, notes: null, coverageWeeks: 2, quantityEdited: false, brandGroup,
+    });
+    const items = [line('1', '高之源白瓶', null), line('2', '帕氏绵羊油', 'PARRS'), line('3', '帕氏蜂胶', 'PARRS')];
+    fixtures['purchase-orders/current'] = { currency: 'NZD', order: { id: '9', orderNo: 'PO-1', weekStart: '2026-11-11', weekEnd: '2026-11-17', status: 'DRAFT', createdAt: '', updatedAt: '', confirmedAt: null, orderedAt: null, summary: { productCount: 3, suggestedUnits: 18, orderedUnits: 18, receivedUnits: 0, totalCostCents: 0 }, items } };
+    const files: { name: string; text: string }[] = [];
+    vi.stubGlobal('Blob', class { constructor(public parts: string[]) {} });
+    const createObjectURL = vi.fn((blob: { parts: string[] }) => { files.push({ name: '', text: blob.parts.join('') }); return 'blob:x'; });
+    Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { files[files.length - 1].name = this.download; });
+    try {
+      const { wrapper } = setup(); await flushPromises();
+      await go(wrapper, '本周进货');
+
+      // Suggestions: download the general list; the search finds the order line too.
+      await click(wrapper, '下载 Excel');
+      await flushPromises();
+      expect(files[0].name).toMatch(/^总进货建议-\d{4}-\d{2}-\d{2}\.xls$/);
+      expect(files[0].text).toContain('高之源白瓶');
+      await wrapper.get('input[aria-label="搜索进货建议"]').setValue('高之源');
+      expect(wrapper.findAll('.buy-table tbody tr')).toHaveLength(1);
+      expect(wrapper.get('.buy-search').text()).toContain('本周进货单中也有 1 项');
+      await wrapper.get('.buy-search .buy-link').trigger('click');
+
+      // Order: brand tabs, the search carried over, then the 帕氏 list on its own.
+      expect(wrapper.findAll('.purchase-order-table tbody tr').map((row) => row.get('strong').text())).toEqual(['高之源白瓶']);
+      await wrapper.get('input[aria-label="搜索本周进货单"]').setValue('');
+      const parrs = wrapper.findAll('.order-filter-panel .buy-brands button').find((button) => button.text().startsWith('帕氏'))!;
+      expect(parrs.text()).toBe('帕氏2');
+      await parrs.trigger('click');
+      expect(wrapper.findAll('.purchase-order-table tbody tr').map((row) => row.get('strong').text())).toEqual(['帕氏绵羊油', '帕氏蜂胶']);
+      await click(wrapper, '下载 Excel');
+      await flushPromises();
+      expect(files[1].name).toBe('PO-1-本周帕氏进货单.xls');
+      expect(files[1].text).toContain('帕氏蜂胶');
+      expect(files[1].text).not.toContain('高之源白瓶');
+    } finally {
+      clickSpy.mockRestore();
+      vi.unstubAllGlobals();
+      fixtures['purchase-orders/current'] = { order: null };
+    }
+  });
+
   it('skips a suggested product for the chosen weeks and hides preview of a cancelled order (CR-018)', async () => {
     fixtures['purchase-suggestions/ignore'] = { productId: '1', ignored: true };
     fixtures['purchase-orders/current'] = { currency: 'NZD', order: {
@@ -472,12 +518,29 @@ describe('经营管理页面组织', () => {
   it('keeps stock status filtering and removes duplicate alert lists', async () => {
     const { wrapper } = setup(); await flushPromises(); await go(wrapper, '库存经营');
     expect(wrapper.findAll('.inventory-alert-list')).toHaveLength(0);
-    expect(wrapper.text()).toContain('查询商品范围'); expect(wrapper.text()).toContain('筛选当前结果');
+    expect(wrapper.text()).toContain('查询商品范围'); expect(wrapper.text()).toContain('搜索商品'); expect(wrapper.text()).toContain('库存从低到高');
     await wrapper.get('[aria-label="筛选缺货商品"]').trigger('click');
     expect(wrapper.findAll('.inventory-scroll-table tbody tr')).toHaveLength(0);
     expect(wrapper.text()).not.toContain('库存覆盖结构');
     await click(wrapper, '清除筛选');
     expect(wrapper.findAll('.inventory-scroll-table tbody tr')).toHaveLength(1);
+  });
+
+  it('finds any product by barcode, including ignored ones, and sorts stock low to high (CR-024)', async () => {
+    const original = fixtures['inventory-operations'];
+    const row = (productId: string, productName: string, currentInventory: number, extra: Record<string, unknown> = {}) => ({ ...inventoryProduct, productId, productName, currentInventory, barcodes: [`94${productId}`], replenishmentHidden: false, replenishmentHiddenUntil: null, directShipExcluded: false, ...extra });
+    fixtures['inventory-operations'] = { ...(original as object), products: [row('1', '高库存', 50), row('2', '低库存', 3), row('3', '已忽略商品', 8, { replenishmentHidden: true })] };
+    try {
+      const { wrapper } = setup(); await flushPromises(); await go(wrapper, '库存经营');
+      const names = () => wrapper.findAll('.inventory-scroll-table tbody tr').map((tr) => tr.get('strong').text());
+      expect(names()).toEqual(['高库存', '低库存']);
+      await wrapper.findAll('.inventory-detail-filters select').at(-1)!.setValue('INVENTORY_ASC');
+      expect(names()).toEqual(['低库存', '高库存']);
+      await wrapper.get('[aria-label="筛选缺货商品"]').trigger('click');
+      await wrapper.get('.inventory-detail-filters input[type=search]').setValue('943');
+      expect(names()).toEqual(['已忽略商品']);
+      expect(wrapper.get('.inventory-scroll-table tbody tr').text()).toContain('已忽略');
+    } finally { fixtures['inventory-operations'] = original; }
   });
 
   it('separates tag dictionary from assignments and opens editors only on demand', async () => {

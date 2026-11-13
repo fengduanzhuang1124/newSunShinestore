@@ -205,6 +205,9 @@ model Store {
   code                 String                    @db.VarChar(32)
   name                 String                    @db.VarChar(120)
   address              String?                   @db.VarChar(255)
+  latitude             Decimal?                  @db.Decimal(9, 6)
+  longitude            Decimal?                  @db.Decimal(9, 6)
+  loginRadiusM         Int                       @default(300) @map("login_radius_m") @db.UnsignedInt
   status               RecordStatus              @default(ACTIVE)
   posInventoryBaselineAt DateTime?               @map("pos_inventory_baseline_at")
   createdAt            DateTime                  @default(now()) @map("created_at")
@@ -402,6 +405,7 @@ model User {
   username                   String                        @db.VarChar(80)
   passwordHash               String                        @map("password_hash") @db.VarChar(255)
   mustChangePassword         Boolean                       @default(true) @map("must_change_password")
+  inStoreOnly                Boolean                       @default(false) @map("in_store_only")
   displayName                String                        @map("display_name") @db.VarChar(120)
   status                     RecordStatus                  @default(ACTIVE)
   createdAt                  DateTime                      @default(now()) @map("created_at")

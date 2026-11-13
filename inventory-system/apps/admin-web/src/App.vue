@@ -562,7 +562,7 @@ async function apiRequest(path: string, options: RequestInit = {}) {
     if (text.includes('expiryMonth') || text.includes('expiryDate')) {
       throw new Error('到期日期格式不正确，请重新选择年月和日期');
     }
-    throw new Error(text);
+    throw Object.assign(new Error(text), { status: response.status });
   }
   if (!responseText.trim()) throw new Error('库存 API 返回空响应，请检查后端和数据库是否已启动');
   return body.data;
@@ -596,14 +596,36 @@ function clearStatus() {
   error.value = '';
 }
 
+// CR-025: an account limited to the store is asked for the phone's position (HTTP 428), then signs in again with it.
+function currentPosition() {
+  return new Promise<{ latitude: number; longitude: number; accuracy: number }>((resolve, reject) => {
+    if (!window.isSecureContext || !navigator.geolocation) {
+      reject(new Error('该账号只能在门店内登录，需要定位：请用 https 地址打开系统后再登录'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => resolve({ latitude: coords.latitude, longitude: coords.longitude, accuracy: Math.round(coords.accuracy) }),
+      (reason) => reject(new Error(reason.code === reason.PERMISSION_DENIED
+        ? '该账号只能在门店内登录，需要允许本网站使用位置：请在浏览器设置中允许定位后重试'
+        : '定位失败，请打开手机定位、到窗边后重试')),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+    );
+  });
+}
+
 async function login() {
   loading.value = true;
   clearStatus();
   try {
-    const data = await apiRequest('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ username: username.value, password: password.value }),
-    });
+    const credentials = { username: username.value, password: password.value };
+    const signIn = (extra = {}) => apiRequest('/auth/login', { method: 'POST', body: JSON.stringify({ ...credentials, ...extra }) });
+    let data;
+    try {
+      data = await signIn();
+    } catch (reason) {
+      if ((reason as { status?: number }).status !== 428) throw reason;
+      data = await signIn(await currentPosition());
+    }
     token.value = data.accessToken;
     userId.value = data.user.id;
     displayName.value = data.user.displayName;
