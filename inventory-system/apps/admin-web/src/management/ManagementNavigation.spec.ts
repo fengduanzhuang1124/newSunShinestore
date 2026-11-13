@@ -174,7 +174,7 @@ describe('经营管理页面组织', () => {
       await go(wrapper, '本周进货');
 
       // Suggestions: download the general list; the search finds the order line too.
-      await click(wrapper, '下载 Excel');
+      await click(wrapper, '一键下载生成');
       await flushPromises();
       expect(files[0].name).toMatch(/^总进货建议-\d{4}-\d{2}-\d{2}\.xls$/);
       expect(files[0].text).toContain('高之源白瓶');
@@ -190,7 +190,7 @@ describe('经营管理页面组织', () => {
       expect(parrs.text()).toBe('帕氏2');
       await parrs.trigger('click');
       expect(wrapper.findAll('.purchase-order-table tbody tr').map((row) => row.get('strong').text())).toEqual(['帕氏绵羊油', '帕氏蜂胶']);
-      await click(wrapper, '下载 Excel');
+      await click(wrapper, '一键下载生成');
       await flushPromises();
       expect(files[1].name).toBe('PO-1-本周帕氏进货单.xls');
       expect(files[1].text).toContain('帕氏蜂胶');
